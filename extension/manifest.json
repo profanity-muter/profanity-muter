@@ -1,23 +1,38 @@
 {
   "manifest_version": 3,
   "name": "Profanity Muter",
-  "version": "0.1.25",
+  "version": "0.1.26",
   "description": "On-device YouTube profanity muting: transcribes pre-buffered audio locally (Whisper) and mutes/censors matched words.",
-  "permissions": ["storage", "offscreen"],
-  "host_permissions": ["https://www.youtube.com/*"],
+  "permissions": [
+    "storage",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "https://www.youtube.com/*"
+  ],
   "background": {
     "service_worker": "background.js"
   },
   "content_scripts": [
     {
-      "matches": ["https://www.youtube.com/*"],
-      "js": ["capture.js"],
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "capture.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://www.youtube.com/*"],
-      "js": ["shared/wordlist.js", "content.js", "captions.js"],
+      "matches": [
+        "https://www.youtube.com/*"
+      ],
+      "js": [
+        "shared/wordlist.js",
+        "content.js",
+        "captions.js"
+      ],
       "run_at": "document_start"
     }
   ],
@@ -29,8 +44,12 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["dist/*.js", "dist/*.wasm", "dist/*.mjs"],
-      "matches": ["chrome-extension://*/*"]
+      "resources": [
+        "shared/packs/*.json"
+      ],
+      "matches": [
+        "https://www.youtube.com/*"
+      ]
     }
   ]
 }
