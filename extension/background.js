@@ -142,6 +142,7 @@ chrome.runtime.onConnect.addListener(function (port) {
           isInit: msg.isInit,
           segIndex: msg.segIndex,
           currentTime: msg.currentTime,
+          duration: msg.duration,
           localTimeSec: msg.localTimeSec,
           growthAbsStart: msg.growthAbsStart,
           growthAbsEnd: msg.growthAbsEnd,

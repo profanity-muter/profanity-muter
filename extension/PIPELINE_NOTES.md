@@ -2427,6 +2427,168 @@ no browser session this pass; the next live pass should confirm the pill
 actually flips to `Protected` in the final seconds of a real video, not
 just in the isolated harness's model of the logic.
 
+## 0.1.23: fed-data clamp + end-of-stream flush (fixes the idle-loop AND the AAC hang), structural idle-gate choke point
+
+Two coordinator messages, superseding each other: the first asked to
+trace why maybeProcess's loop went idle (a fresh video, paused at t=2.01,
+captured-but-uncovered audio sitting at [2.5,5.06)) with zero diagnostics
+for 5+s; the second arrived with the ACTUAL live evidence that explains
+both this bug and 0.1.21's AAC/fMP4 mystery in one shot: `"[PM-SKIP]
+window [2.51,19.60) skipped: sink.buffers ... stage 'decode' did not
+settle within 25000ms (hung promise)"` — requested while only `[0,5.06]`
+had actually reached the run's demux stream, and the same hang recurred
+twice more at the true end of the video (`[55.61,63.40)`, where the stream
+is never closed so mediabunny can't flush trailing samples). Root cause
+class: **we request decode ranges beyond what's actually been fed to the
+run's stream** — `ReadableStreamSource._read()` has no way to distinguish
+"no more data YET" from "no more data EVER" until the stream is explicitly
+closed, so it just waits, forever, for bytes that either haven't arrived
+yet or (at end-of-video) never will.
+
+### 1. Fed-data clamp — the actual root cause of the reported idle loop
+
+`pickNextWindow`'s `high` bound came from `targetRange.end` — pulled from
+`s.bufferedRanges`, a SESSION-level interval set merged across every
+segment ever reported. This can legitimately race ahead of what any ONE
+specific run's own demux stream has actually been fed (the exact mechanism
+by which they diverge wasn't fully pinned down blind — investigated the
+0.1.20 spurious-run-boundary heuristic, message-ordering across the
+async capture→content→background→offscreen relay, and mediabunny's own
+ISOBMFF/EBML format-detection paths as candidates without conclusively
+proving one; the live evidence made the exact cause moot — see "Not fully
+root-caused" below). Fix: track `run.fedEnd` — the ACTUAL furthest
+absolute video-time a run's stream has been fed, updated ONLY from bytes
+really appended to that specific run (the same `growthAbsEnd` that also
+feeds `s.bufferedRanges`, but scoped per-run instead of session-wide).
+`pickNextWindow(s, run)` (now takes `run` as a second parameter, passed
+from `maybeProcess`'s already-in-scope `s.currentRun`) clamps `high` to
+`run.fedEnd - DECODE_FED_GUARD_S` (0.25s) whenever the run's stream isn't
+yet closed — never requesting a decode range beyond verified fed data. If
+nothing has been fed to the run at all yet, the clamp evaluates to
+`-Infinity`, correctly deferring rather than requesting anything. A new
+`not-yet-fed-to-run` diag reason (distinct from the pre-existing
+`not-enough-buffered`) names this specific case when it's the active
+limiting factor, per the "defer with a mandatory idle-reason diag instead
+of requesting" instruction.
+
+### 2. End-of-stream flush — the true-end-of-video variant
+
+The final window (`[55.61,63.40)`, duration 63.8) hung twice for a
+DIFFERENT reason than item 1: fed data genuinely HAD reached the end, but
+the run's `ReadableStream` is never `close()`d while a video could still
+receive more bytes — so mediabunny's demuxer has no signal that it's safe
+to flush trailing samples, and a request for the true tail hangs waiting
+for bytes that will never come. Fix: `maybeCloseRunAtEndOfStream(s)`, run
+on a new lightweight 2s `setInterval` (nothing else re-triggers on pure
+"went quiet forever" — every other check in this file piggybacks on the
+next segment arriving, but there IS no next segment once capture has
+genuinely finished) — once a run's `fedEnd` reaches within
+`EOF_CLOSE_SLACK_S` (1.0s) of `video.duration` (relayed end-to-end from
+`capture.js` through `content.js`/`background.js`, new `duration` field on
+the segment message — read ONLY for this end-of-stream check, never for
+timestamp construction, per the "media time in, media time out" doctrine)
+AND capture has reported no further growth for `EOF_CLOSE_QUIET_MS` (3s),
+`closeRunStream(run)` (a new helper, closes JUST the stream controller —
+distinct from the existing `closeRun()`, which also nulls track/sink/input
+for PRUNING and is never used again) closes the run's stream and re-kicks
+`maybeProcess(s)` so the now-flushable tail window gets picked up. Also
+handles the "may already, verify" ask: a run superseded by a NEW init
+segment (real OR 0.1.20's synthetic run-boundary) now explicitly calls
+`closeRunStream()` on the OLD run immediately at supersession time, rather
+than leaving its stream open until the 0.1.15 `KEEP_RUNS=2` pruning
+eventually tears it down fully — confirmed via a fresh read of the code
+that pruning alone did NOT close it promptly before this fix.
+
+### 3. Structural idle-gate choke point (the observability invariant, enforced this time)
+
+Independently of the fed-data root cause, tracing this bug by reading code
+found THREE genuinely silent-to-the-tab exit paths in `maybeProcess`'s
+loop and `transcribeWindow` (a `s.disabled`/`s.unanalyzable` bare `break`
+with no log at all, and TWO generation-mismatch checks using plain `log()`
+— this document's own console, invisible from the tab's console/Copy Logs
+output the rest of this file's observability convention is built around)
+— any of which could have produced the exact reported symptom on its own.
+Per the explicit ask, this is now fixed STRUCTURALLY rather than by
+patching each path found: every exit from `maybeProcess`'s loop funnels
+through ONE choke point. Each iteration starts by setting
+`exitGate = 'unknown-gate'` (so ANY `break` — even a hypothetical future
+one that forgets to name itself — still gets attributed to something,
+never silence) and a per-branch `exitGate`/`exitDetail`; after the loop,
+`reportIdleGate(s, exitGate, exitDetail)` independently RE-DERIVES whether
+there's genuinely uncovered-and-captured audio within `WORK_CHECK_HORIZON_S`
+(5s, mirroring content.js's own `PROTECT_MARGIN`) of the playhead via
+`hasUncoveredCapturedWorkNearPlayhead(s)` — using `s.bufferedRanges`/
+`s.covered` directly, never trusting the call site to have logged
+correctly — and ONLY THEN alarms (throttled 5s per gate via
+`[PM-IDLE-GATE]`). A legitimate exit (nothing left to do) stays silent;
+only an exit that's ACTUALLY leaving real work on the table alarms,
+regardless of which specific gate caused it, present or future.
+
+### 4. Debug overlay / pill coverage-semantics alignment
+
+The debug overlay's `coverage=` line only ever showed the PLAYHEAD POINT's
+coverage (`isCovered(t)`), while the status pill (0.1.19) judges the whole
+`[t, t+PROTECT_MARGIN]` horizon — the two surfaces could disagree
+confusingly (overlay says "COVERED" the instant `t` itself is covered,
+while the pill still shows "Analyzing" because the horizon ahead isn't).
+`content.js`'s end-of-video horizon clamp (0.1.22) is now factored into a
+shared `clampedHorizonEnd(video, t)`, called by BOTH `computeStatusState`
+and `renderDebugOverlay` — they can no longer diverge by construction. The
+overlay's `coverage=` line now reads e.g. `COVERED-NOW/horizon 2.5s short`
+or `UNCOVERED-NOW/horizon OK` (point state / horizon state, matching the
+example in the ask), or `.../horizon n/a (live)` for a live stream.
+
+### 5. Hang-threshold downgrade
+
+Now that the fed-data clamp and end-of-stream flush eliminate the two
+known hang-causing races, a genuine stage-timeout HANG should be much
+rarer than before — `s.hangAttempts`/`HANG_THRESHOLD` (6) is now a
+SEPARATE counter/threshold from `s.sinkErrorAttempts`/`SINK_ERROR_THRESHOLD`
+(3, unchanged), which is reserved for genuinely THROWN decode errors
+(DRM/undecodable content — still a fast, confident signal).
+`withStageTimeout`'s rejection now carries `err.isStageTimeout = true` so
+the shared decode-loop catch block (which used to treat a thrown error and
+a timeout identically) can route each to its own counter.
+
+### Not fully root-caused
+
+The exact mechanism by which `s.bufferedRanges` (session-level) got ahead
+of a specific run's actually-fed data was not conclusively pinned down
+blind — the fix (clamp to independently-tracked, per-run ground truth)
+is architecturally correct and defensible regardless of the precise
+mechanism, but if a future paste shows the SAME symptom recurring even
+with `run.fedEnd` in place, the message-ordering theory (capture→content→
+background→offscreen is a multi-hop async relay; `chrome.runtime.sendMessage`
+calls from `background.js` are NOT guaranteed to preserve order across
+separate calls) is the next thing to investigate, followed by the
+still-unfixed 0.1.20 spurious-run-boundary heuristic bug found (but not
+fixed) during this investigation: `findGrowth()` in `capture.js` reports
+`isNewRange: true` for the FIRST-EVER real growth of any fresh video
+(`before=[]` makes `.some()` always return false), which fires a spurious
+synthetic run-boundary at the SECOND real segment of every video —
+harmless in isolation (the new run still gets valid init+cluster data)
+but worth fixing for its own sake in a future pass.
+
+**Verification status**: `node --check`/module-check on all touched files,
+`node build.js` clean. Unit-verified in isolation (standalone Node
+harness, mirroring `pickNextWindow`'s exact fed-clamp math and the
+idle-gate choke point's exact logic): the reported bug shape (session
+bufferedRanges at 20+, run fedEnd at 5.06) is correctly clamped to never
+request beyond `fedEnd - guard`; a run with nothing fed yet correctly
+defers with the new `not-yet-fed-to-run` reason; a run whose `fedEnd`
+already matches `bufferedRanges` (the normal case) is completely
+unaffected by the clamp (byte-identical picked window); a `streamClosed`
+run skips the clamp and reaches the true tail; the idle-gate choke point
+alarms exactly on the reported scenario, stays silent on a legitimately
+resolved exit, and correctly throttles repeated identical-gate alarms
+while still firing again once the throttle window passes. All prior
+0.1.20/0.1.21/0.1.22 harnesses re-run clean (no regressions). **Not
+verified live** — no browser session this pass; the next live pass should
+confirm the exact reported repro (fresh video, pause early, watch for
+`[PM-WINDOW]` progress past the first window instead of silence) and the
+end-of-video tail (watch for `[PM-EOF-FLUSH]` followed by a final
+successful window instead of the repeated hang).
+
 ## Known gaps
 
 - **`shared/wordlist.js` `pm_wordlist:undefined`-default bug** (finding #2
@@ -2449,11 +2611,17 @@ just in the isolated harness's model of the logic.
 - **fMP4/AAC path exercised for the first time in 0.1.21** (a live stream,
   `audio/mp4`/`mp4a.40.2`) and found to silently hang somewhere inside
   mediabunny/WebCodecs's demux/decode with no thrown error — bounded stage
-  timeouts now make that failure loud and recoverable (see "0.1.21" above),
-  but the ACTUAL AAC decode path is still not confirmed working end-to-end;
-  whether the hang is a real bug or just needs a longer timeout is not yet
-  known (needs a live `[PM-HANG]` capture to distinguish). `ADTS` (bare AAC,
-  no MP4 container) remains fully unexercised.
+  timeouts made that failure loud (0.1.21). **Likely actually fixed by
+  0.1.23**: the live stream's own access pattern (a moving live edge,
+  playback typically starting somewhere into an already-large DVR buffer)
+  begins requesting decode ranges beyond fed data almost immediately —
+  exactly the same "request beyond what's actually been fed to the run's
+  stream" root cause class 0.1.23's `run.fedEnd` clamp fixes for ordinary
+  VOD. Not independently re-verified live against a real live stream this
+  pass (no browser session) — the next live-stream session should confirm
+  whether `[PM-HANG]`/`[PM-UNANALYZABLE]` still fires there at all now, or
+  whether it was this same bug the whole time. `ADTS` (bare AAC, no MP4
+  container) remains fully unexercised regardless.
 - **0.1.21's stage-timeout guard intentionally does NOT cover the
   worker-side `transcribeInWorker()` call** — a hang there would still wedge
   the global cross-tab transcribe mutex even with a local timeout on our

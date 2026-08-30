@@ -212,7 +212,23 @@ function newRun() {
     input: null,
     track: null,
     sink: null,
-    trackReadyPromise: null
+    trackReadyPromise: null,
+    // 0.1.23 — see PIPELINE_NOTES "0.1.23": a live session requested
+    // sink.buffers(2.51,19.60) while this run's stream had actually only
+    // been fed bytes through 5.06s, hanging forever (ReadableStreamSource
+    // waits indefinitely for bytes that haven't arrived instead of
+    // erroring — it has no way to know "no more is coming yet" vs. "no
+    // more will EVER come"). `fedEnd` is the ground truth for what THIS
+    // run's stream has actually been fed (updated only from bytes really
+    // appended to it — see the pm-segment handler), decoupled from
+    // s.bufferedRanges (session-level, can legitimately be ahead of any
+    // one specific run). `streamClosed` is set once we've explicitly
+    // closed this run's stream (end-of-stream flush, or superseded by a
+    // new run) — once true, the fed-data clamp in pickNextWindow is no
+    // longer needed, since a genuinely closed stream reports "no more
+    // data" cleanly instead of hanging.
+    fedEnd: null,
+    streamClosed: false
   };
   const stream = new ReadableStream({
     start(controller) {
@@ -226,16 +242,31 @@ function newRun() {
   return run;
 }
 
-// Releases a superseded run's demux state (0.1.15 memory-leak fix — see the
-// pruning call site in the pm-segment handler). Closing the stream lets the
-// ReadableStreamSource drop its cache; nulling the rest lets everything else
-// (Input, track, sink) become GC-eligible once nothing else references it.
-function closeRun(run) {
+// Closes JUST a run's underlying stream (0.1.23) — distinct from closeRun()
+// below, which fully tears down track/sink/input for PRUNING (the run is
+// never used again). This is used when a run is still the one we intend to
+// decode from (the final tail window of a finished run, or a run that was
+// just superseded but might still be read from momentarily) but we know for
+// certain no MORE bytes are coming — closing lets mediabunny/WebCodecs see
+// a definite end and flush trailing samples instead of waiting forever.
+// Idempotent (checks streamClosed first) and safe to call on an
+// already-closed/never-open stream.
+function closeRunStream(run) {
+  if (!run || run.streamClosed) return;
   try {
     if (run.streamController) run.streamController.close();
   } catch (e) {
     // already closed/errored elsewhere — fine, this is just cleanup
   }
+  run.streamClosed = true;
+}
+
+// Releases a superseded run's demux state (0.1.15 memory-leak fix — see the
+// pruning call site in the pm-segment handler). Closing the stream lets the
+// ReadableStreamSource drop its cache; nulling the rest lets everything else
+// (Input, track, sink) become GC-eligible once nothing else references it.
+function closeRun(run) {
+  closeRunStream(run);
   run.track = null;
   run.sink = null;
   run.input = null;
@@ -379,7 +410,9 @@ function getOrCreateSession(tabId, videoId) {
       disabled: false, // pm_enabled=false (0.1.13) — see pm-disable/pm-enable handlers
       bufferedRanges: [], // merged [{start,end}] in ABSOLUTE video time — real interval set of what our hook has actually captured (see pickNextWindow); 0.1.15 deleted the old single-scalar bufferedEndS entirely
       windowAttempts: new Map(), // rounded-start-location key -> attempt count, for the stuck-location loop-breaker (0.1.14, made location-based in 0.1.20 — see transcribeWindow's loop-breaker section for why exact-span keying stopped catching this)
-      sinkErrorAttempts: new Map(), // "start.toFixed(2),end.toFixed(2)" -> consecutive decode-failure count (a thrown sink.buffers() error, OR — 0.1.21 — a track-ready/decode stage TIMEOUT with no thrown error at all), for DRM/undecodable/permanently-unworkable detection (0.1.15, extended 0.1.21)
+      sinkErrorAttempts: new Map(), // "start.toFixed(2),end.toFixed(2)" -> consecutive THROWN sink.buffers() decode-error count, for DRM/undecodable detection (0.1.15) — a fast, confident signal, unchanged threshold
+      hangAttempts: new Map(), // "start.toFixed(2),end.toFixed(2)" -> consecutive stage-TIMEOUT (no thrown error at all) count, separate map/threshold from sinkErrorAttempts (0.1.21, split out 0.1.23) — a hang is now a much rarer signal after the fed-data clamp + end-of-stream-flush fixes (see pickNextWindow/maybeCloseRunAtEndOfStream), so it gets a higher threshold before giving up rather than sharing the DRM-detection map's fast one
+      videoDurationS: null, // 0.1.23 — video.duration, relayed from capture.js; used ONLY for end-of-stream run-close detection (maybeCloseRunAtEndOfStream), never for timestamp construction
       unanalyzable: false, // set true once DRM/undecodable content is detected — maybeProcess stops entirely, content.js releases safe-mode muting for this session
       processing: false,
       pendingRerun: false,
@@ -596,7 +629,8 @@ const MIN_TAIL_S = 2;
 const TAIL_STALL_MS = 3000;
 const WINDOW_LOOP_THRESHOLD = 3; // same exact [absStart,absEnd) attempted this many times without ever registering covered -> force-cover and alarm (see transcribeWindow)
 const ALL_WORDS_CAP = 2000; // trailing-window cap for s.allWords/s.emittedKeys — see the memory-leak note at the trim site
-const SINK_ERROR_THRESHOLD = 3; // same exact window failing sink.buffers() this many times in a row -> DRM/undecodable, see markUnanalyzable
+const SINK_ERROR_THRESHOLD = 3; // same exact window THROWING a decode error this many times in a row -> DRM/undecodable, see markUnanalyzable
+const HANG_THRESHOLD = 6; // 0.1.23: same exact window HANGING (stage timeout, no thrown error) this many times in a row -> unanalyzable — higher than SINK_ERROR_THRESHOLD on purpose: after the 0.1.23 fed-data clamp + end-of-stream-flush fixes, a genuine hang should be much rarer, so a couple of stray timeouts shouldn't give up as fast as a confident thrown DRM-style error does
 
 // Stage-timeout guard (0.1.21) — a live user session on a LIVE STREAM
 // (audio/mp4, codecs="mp4a.40.2" — the never-before-exercised AAC/fMP4
@@ -621,7 +655,11 @@ const STAGE_TIMEOUT_MS = 25000; // generously above any legitimate stage per the
 function withStageTimeout(promise, label) {
   let timer;
   const timeout = new Promise((_, reject) => {
-    timer = setTimeout(() => reject(new Error('stage "' + label + '" did not settle within ' + STAGE_TIMEOUT_MS + 'ms (hung promise, not a thrown error)')), STAGE_TIMEOUT_MS);
+    timer = setTimeout(() => {
+      const err = new Error('stage "' + label + '" did not settle within ' + STAGE_TIMEOUT_MS + 'ms (hung promise, not a thrown error)');
+      err.isStageTimeout = true; // 0.1.23: lets callers route a genuine hang to a SEPARATE counter/threshold than a real thrown decode error — see HANG_THRESHOLD
+      reject(err);
+    }, STAGE_TIMEOUT_MS);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -670,7 +708,19 @@ function coverageViewForPicking(s) {
   return s.covered.concat(extra).sort((a, b) => a.start - b.start);
 }
 
-function pickNextWindow(s) {
+// DECODE_FED_GUARD_S (0.1.23): see PIPELINE_NOTES "0.1.23" — a live session
+// requested sink.buffers(2.51,19.60) while the run's stream had actually
+// only been fed audio through 5.06s. ReadableStreamSource._read() has no
+// way to distinguish "no more data YET" from "no more data EVER" until the
+// stream is explicitly closed, so it just waits — forever, if the extra
+// bytes never arrive within the caller's own patience. `targetRange.end`
+// (from s.bufferedRanges, SESSION-level, merged across every segment ever
+// reported) can legitimately race ahead of what any ONE specific run's own
+// stream has actually been fed — this guard keeps window requests within
+// what's verifiably already in the run's stream.
+const DECODE_FED_GUARD_S = 0.25;
+
+function pickNextWindow(s, run) {
   const ct = s.currentTimeS;
   let containing = null;
   let nearestAhead = null;
@@ -688,12 +738,29 @@ function pickNextWindow(s) {
   }
 
   const lowBound = Math.max(targetRange.start, ct - OVERLAP_S);
-  const high = targetRange.end - TAIL_SAFETY_S;
+  const bufferedHigh = targetRange.end - TAIL_SAFETY_S;
+  let high = bufferedHigh;
+  // Fed-data clamp (0.1.23) — see DECODE_FED_GUARD_S above. Skipped once the
+  // run's stream has been explicitly closed (end-of-stream flush, or
+  // superseded by a newer run) — a closed stream reports "no more data"
+  // cleanly instead of hanging, so there's nothing left to guard against.
+  let fedClampActive = false;
+  if (run && !run.streamClosed) {
+    const fedHigh = run.fedEnd != null ? run.fedEnd - DECODE_FED_GUARD_S : -Infinity;
+    if (fedHigh < high) {
+      high = fedHigh;
+      fedClampActive = true;
+    }
+  }
   if (high <= lowBound) {
     logNoWindowReason(
       s,
-      'not-enough-buffered',
-      'range [' + targetRange.start.toFixed(2) + ',' + targetRange.end.toFixed(2) + ') at the playhead not far enough ahead yet (currentTimeS=' + ct.toFixed(2) + ')'
+      fedClampActive ? 'not-yet-fed-to-run' : 'not-enough-buffered',
+      fedClampActive
+        ? ('session-level buffered range reaches ' + bufferedHigh.toFixed(2) + ' but this run has only actually been fed audio through ' +
+            (run.fedEnd != null ? run.fedEnd.toFixed(2) : 'nothing yet') +
+            ' — deferring rather than requesting a decode range beyond fed data (would hang forever, see PIPELINE_NOTES "0.1.23")')
+        : ('range [' + targetRange.start.toFixed(2) + ',' + targetRange.end.toFixed(2) + ') at the playhead not far enough ahead yet (currentTimeS=' + ct.toFixed(2) + ')')
     );
     return null;
   }
@@ -819,12 +886,15 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       // is bounded.
       track = await withStageTimeout(run.trackReadyPromise, 'track-ready');
     } catch (e) {
-      const hangCount = (s.sinkErrorAttempts.get(windowKeyForErrors) || 0) + 1;
-      s.sinkErrorAttempts.set(windowKeyForErrors, hangCount);
-      if (hangCount >= SINK_ERROR_THRESHOLD) {
+      // 0.1.23: hangs get their OWN counter/threshold (s.hangAttempts /
+      // HANG_THRESHOLD), separate from s.sinkErrorAttempts's fast
+      // DRM-detection threshold — see HANG_THRESHOLD's own comment for why.
+      const hangCount = (s.hangAttempts.get(windowKeyForErrors) || 0) + 1;
+      s.hangAttempts.set(windowKeyForErrors, hangCount);
+      if (hangCount >= HANG_THRESHOLD) {
         markUnanalyzable(s, 'window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') track resolution hung ' + hangCount + 'x in a row: ' + String(e));
       } else {
-        notifyTab(s, '[PM-HANG] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') ' + String(e && e.message ? e.message : e) + ' (' + hangCount + '/' + SINK_ERROR_THRESHOLD + ')');
+        notifyTab(s, '[PM-HANG] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') ' + String(e && e.message ? e.message : e) + ' (' + hangCount + '/' + HANG_THRESHOLD + ')');
       }
       return false;
     }
@@ -837,7 +907,13 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     try {
       run.nativeRate = await withStageTimeout(run.track.getSampleRate(), 'get-sample-rate');
     } catch (e) {
-      notifyTab(s, '[PM-HANG] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') ' + String(e && e.message ? e.message : e));
+      const hangCount = (s.hangAttempts.get(windowKeyForErrors) || 0) + 1;
+      s.hangAttempts.set(windowKeyForErrors, hangCount);
+      if (hangCount >= HANG_THRESHOLD) {
+        markUnanalyzable(s, 'window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') get-sample-rate hung ' + hangCount + 'x in a row: ' + String(e));
+      } else {
+        notifyTab(s, '[PM-HANG] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') ' + String(e && e.message ? e.message : e) + ' (' + hangCount + '/' + HANG_THRESHOLD + ')');
+      }
       return false;
     }
   }
@@ -859,27 +935,34 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       'decode'
     );
   } catch (e) {
-    // DRM/undecodable-content detection (0.1.15) / silent-hang detection
-    // (0.1.21, same counter+threshold): if the SAME exact window fails to
-    // decode (thrown error) OR hangs (timeout, no error at all) 3 times in
-    // a row, this isn't a transient "not enough data yet" — it's
-    // structurally undecodable/unworkable (protected/DRM content is the
-    // expected real-world cause for a genuine throw; an unaudited
-    // container/codec path is the expected cause for a hang). Give up on
-    // this session entirely rather than retrying forever — releases
-    // safe-mode muting via `pm-unanalyzable` (see below) so content that
-    // will never decode is never left permanently muted with no way to
-    // actually protect it.
-    const errCount = (s.sinkErrorAttempts.get(windowKeyForErrors) || 0) + 1;
-    s.sinkErrorAttempts.set(windowKeyForErrors, errCount);
-    if (errCount >= SINK_ERROR_THRESHOLD) {
-      markUnanalyzable(s, 'window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') failed to decode ' + errCount + 'x in a row: ' + String(e));
+    // DRM/undecodable-content detection (0.1.15) vs. silent-hang detection
+    // (0.1.21, split into its OWN counter/threshold in 0.1.23 — see
+    // HANG_THRESHOLD's comment): a THROWN decode error (protected/DRM
+    // content is the expected real-world cause) is a fast, confident
+    // signal — SINK_ERROR_THRESHOLD stays low. A stage TIMEOUT (no thrown
+    // error — an unaudited container/codec path, OR the exact fed-data-
+    // beyond-what's-fed race this version's clamp is meant to prevent in
+    // the first place) is now expected to be much rarer, so it gets the
+    // higher HANG_THRESHOLD before giving up. Either way, repeated failure
+    // on the SAME exact window isn't a transient "not enough data yet" —
+    // give up on this session entirely rather than retrying forever,
+    // releasing safe-mode muting via `pm-unanalyzable` (see below) so
+    // content that will never decode is never left permanently muted with
+    // no way to actually protect it.
+    const isHang = !!(e && e.isStageTimeout);
+    const attempts = isHang ? s.hangAttempts : s.sinkErrorAttempts;
+    const threshold = isHang ? HANG_THRESHOLD : SINK_ERROR_THRESHOLD;
+    const errCount = (attempts.get(windowKeyForErrors) || 0) + 1;
+    attempts.set(windowKeyForErrors, errCount);
+    if (errCount >= threshold) {
+      markUnanalyzable(s, 'window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') failed to decode ' + errCount + 'x in a row (' + (isHang ? 'hang' : 'thrown error') + '): ' + String(e));
     } else {
-      notifyTab(s, '[PM-SKIP] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') skipped: sink.buffers error/hang (' + errCount + '/' + SINK_ERROR_THRESHOLD + '): ' + String(e && e.message ? e.message : e));
+      notifyTab(s, '[PM-SKIP] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') skipped: sink.buffers ' + (isHang ? 'hang' : 'error') + ' (' + errCount + '/' + threshold + '): ' + String(e && e.message ? e.message : e));
     }
     return false;
   }
-  s.sinkErrorAttempts.delete(windowKeyForErrors); // a successful decode clears any prior error count for this exact span
+  s.sinkErrorAttempts.delete(windowKeyForErrors); // a successful decode clears any prior error/hang count for this exact span
+  s.hangAttempts.delete(windowKeyForErrors);
   if (wrapped.length === 0) {
     notifyTab(s, '[PM-SKIP] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') skipped: no decodable audio in this run at that time yet (waiting for more data)');
     return false;
@@ -1293,6 +1376,48 @@ function sendHeartbeat(s) {
   chrome.runtime.sendMessage({ type: 'pm-heartbeat', tabId: s.tabId, videoId: s.videoId }).catch(() => {});
 }
 
+// OBSERVABILITY CHOKE POINT (0.1.23) — see PIPELINE_NOTES "0.1.23": a live
+// session showed maybeProcess's loop go completely silent (no [PM-WINDOW],
+// no [PM-NO-WINDOW], no skip) for 5+s despite captured, uncovered audio
+// sitting available within the playhead horizon. The loop had SEVERAL exit
+// paths that used plain log() (this document's own console) instead of
+// notifyTab() (tab-visible) — invisible from the tab's own console/Copy
+// Logs output, which the rest of this file's observability convention is
+// built around. Rather than patch each individual silent path found this
+// pass (and trust every FUTURE gate added to this loop to remember to log
+// correctly), every exit from the loop below now funnels through this ONE
+// choke point, which independently RE-DERIVES "is there actually
+// uncovered-and-captured work being left on the table right now" and, if
+// so, ALWAYS names the specific gate that stopped — a future gate that
+// forgets to log explicitly can no longer idle silently, because this
+// choke point doesn't trust any call site to have logged correctly; it
+// checks the real state itself.
+const IDLE_GATE_DIAG_THROTTLE_MS = 5000;
+// Mirrors content.js's own "playhead horizon" concept (PROTECT_MARGIN, 5s)
+// so the two surfaces agree on what "work available near the playhead"
+// means — see the debug-overlay alignment note in content.js for the other
+// half of this.
+const WORK_CHECK_HORIZON_S = 5;
+function hasUncoveredCapturedWorkNearPlayhead(s) {
+  const ct = s.currentTimeS;
+  const horizonEnd = ct + WORK_CHECK_HORIZON_S;
+  for (const r of s.bufferedRanges) {
+    const lo = Math.max(r.start, ct);
+    const hi = Math.min(r.end, horizonEnd);
+    if (hi <= lo) continue; // this captured range doesn't reach the playhead horizon
+    if (firstUncoveredPoint(s.covered, lo, hi) !== null) return true;
+  }
+  return false;
+}
+function reportIdleGate(s, gateName, detail) {
+  if (!hasUncoveredCapturedWorkNearPlayhead(s)) return; // nothing left to do near the playhead right now — this exit is legitimate, not a bug, don't alarm
+  const now = Date.now();
+  const lastByGate = s.lastIdleGateDiagWall || (s.lastIdleGateDiagWall = {});
+  if (lastByGate[gateName] && now - lastByGate[gateName] < IDLE_GATE_DIAG_THROTTLE_MS) return;
+  lastByGate[gateName] = now;
+  notifyTab(s, '[PM-IDLE-GATE] maybeProcess stopped (' + gateName + ') while captured-but-uncovered audio exists within ' + WORK_CHECK_HORIZON_S + 's of the playhead: ' + detail);
+}
+
 async function maybeProcess(s) {
   if (s.disabled || s.unanalyzable) return; // pm_enabled=false (0.1.13), or DRM/undecodable content (0.1.15) — idle, no transcription CPU
   if (s.processing) {
@@ -1318,25 +1443,44 @@ async function maybeProcess(s) {
   // transcribeWindow for the belt-and-suspenders check on the RESULT of an
   // already-in-flight call that can't be aborted mid-way.
   const loopGeneration = s.generation;
+  // Choke-point bookkeeping (0.1.23): every iteration starts by naming a
+  // generic fallback gate — since the loop only ever exits via `break`,
+  // this guarantees `exitGate` is ALWAYS something meaningful by the time
+  // the loop ends, even for a hypothetical future `break` that forgets to
+  // name itself. Set to null right before a successful iteration's normal
+  // continue (bottom of the loop body) so a clean re-loop doesn't leave a
+  // stale gate name lying around for reportIdleGate() to (mis)report later.
+  let exitGate = null, exitDetail = '';
   try {
     for (;;) {
+      exitGate = 'unknown-gate';
+      exitDetail = '(a loop-exit path did not name itself — see maybeProcess source)';
       // Re-checked every iteration (0.1.15): pm_enabled could flip false
       // mid-loop (each transcribeWindow await is a real yield point) — the
       // top-of-function check alone only caught it BEFORE the loop started,
       // so a session disabled mid-catch-up would keep burning CPU on
       // already-queued windows for the rest of that loop.
-      if (s.disabled || s.unanalyzable) break;
+      if (s.disabled) { exitGate = 'disabled'; exitDetail = 'pm_enabled=false'; break; }
+      if (s.unanalyzable) { exitGate = 'unanalyzable'; exitDetail = 'DRM/undecodable content — transcription given up for this session'; break; }
       if (s.generation !== loopGeneration) {
         log('[PM-STALE] maybeProcess loop stopping: generation changed (' + loopGeneration + ' -> ' + s.generation + ')');
+        exitGate = 'generation-changed';
+        exitDetail = 'generation ' + loopGeneration + ' -> ' + s.generation + ' (a seek or reset superseded this loop)';
         break;
       }
       const run = s.currentRun;
       if (!run) {
         logNoWindowReason(s, 'no-run', 'no active byte run yet for this session (no init segment captured) — nothing to transcribe until one arrives');
+        exitGate = 'no-run';
+        exitDetail = 'no active byte run yet for this session';
         break;
       }
-      const target = pickNextWindow(s);
-      if (!target) break;
+      const target = pickNextWindow(s, run);
+      if (!target) {
+        exitGate = 'no-target';
+        exitDetail = 'pickNextWindow found nothing to pick (see its own [PM-NO-WINDOW] reason above, if any)';
+        break;
+      }
       // [PM-FIRST-COVERAGE] milestone (0.1.18): "picked" — the first time
       // ANY window gets picked for this session. Calls are strictly
       // sequential within this loop (each fully awaited before the next
@@ -1355,12 +1499,19 @@ async function maybeProcess(s) {
       } finally {
         s.inFlightWindows.delete(inFlightKey);
       }
-      if (!ok) break;
+      if (!ok) {
+        exitGate = 'transcribe-failed';
+        exitDetail = 'transcribeWindow returned false for [' + target.start.toFixed(2) + ',' + target.end.toFixed(2) + ') (see its own diag above, if any)';
+        break;
+      }
       s.hadFirstWindow = true; // cold-start window sizing only applies until the first one actually lands
+      exitGate = null; // this iteration completed normally and is about to loop again — no exit to report yet
     }
   } catch (e) {
+    exitGate = null; // already loudly reported via [PM-ERROR] below — the choke point would be redundant
     notifyTab(s, '[PM-ERROR] maybeProcess: ' + String(e && e.stack ? e.stack : e));
   } finally {
+    if (exitGate) reportIdleGate(s, exitGate, exitDetail);
     clearInterval(heartbeatTimer);
     s.processing = false;
     if (s.pendingRerun) {
@@ -1369,6 +1520,48 @@ async function maybeProcess(s) {
     }
   }
 }
+
+// END-OF-STREAM FLUSH (0.1.23) — see PIPELINE_NOTES "0.1.23" item 2. A
+// run's ReadableStream is normally never closed while a video is loading
+// (more bytes could always arrive), which means mediabunny's demuxer has no
+// way to know it's safe to flush trailing samples near the TRUE end of a
+// video — a final-tail window request there would hang forever waiting for
+// bytes that will never come (the same failure CLASS as the fed-data-clamp
+// bug above, just at the opposite end: "no more data is EVER coming" rather
+// than "not enough has arrived YET"). Once a run's fed data has reached
+// close to the video's own duration AND capture has reported no further
+// growth for a few seconds, explicitly close the run's stream controller so
+// mediabunny sees a clean, definite end — the final tail window can then
+// decode (and correctly report "nothing more exists past here" rather than
+// hang) normally. Nothing here re-triggers on its own from a message (there
+// IS no further message once capture has genuinely gone quiet for good), so
+// this needs its own lightweight timer rather than piggybacking on
+// pm-segment like every other check in this file.
+const EOF_CLOSE_SLACK_S = 1.0; // fed-through-duration counts as "reached the end" within this much
+const EOF_CLOSE_QUIET_MS = 3000; // no further buffered growth for this long -> capture is genuinely done, not just between segments
+function maybeCloseRunAtEndOfStream(s) {
+  const run = s.currentRun;
+  if (!run || run.streamClosed || run.fedEnd == null) return;
+  if (s.videoDurationS == null) return; // unknown (still loading) or a live stream (Infinity, filtered out when set — see the pm-segment handler)
+  if (run.fedEnd < s.videoDurationS - EOF_CLOSE_SLACK_S) return;
+  if (Date.now() - (s.lastBufferedGrowthWall || 0) < EOF_CLOSE_QUIET_MS) return;
+  closeRunStream(run);
+  notifyTab(
+    s,
+    '[PM-EOF-FLUSH] run stream closed (fed through ' + run.fedEnd.toFixed(2) + 's, duration=' + s.videoDurationS.toFixed(2) +
+      's, quiet ' + Math.round((Date.now() - s.lastBufferedGrowthWall) / 1000) + 's) — letting mediabunny flush trailing samples for the tail window'
+  );
+  maybeProcess(s); // re-kick in case a tail window was previously deferred waiting for exactly this
+}
+setInterval(() => {
+  for (const s of sessions.values()) {
+    try {
+      maybeCloseRunAtEndOfStream(s);
+    } catch (e) {
+      log('maybeCloseRunAtEndOfStream error:', String(e));
+    }
+  }
+}, 2000);
 
 chrome.runtime.onMessage.addListener((msg) => {
   if (!msg || !msg.type) return;
@@ -1496,6 +1689,13 @@ chrome.runtime.onMessage.addListener((msg) => {
     const bytes = base64ToUint8(msg.dataB64);
 
     if (msg.isInit) {
+      // 0.1.23: a run superseded by a new one is never going to be fed
+      // more bytes — close JUST its stream (not the full closeRun() teardown
+      // used by the KEEP_RUNS pruning below, since it might still be read
+      // from momentarily for a backward-seek-adjacent window) so mediabunny
+      // sees a definite end for it instead of its stream sitting open
+      // forever with nothing left to feed it.
+      if (s.currentRun) closeRunStream(s.currentRun);
       const run = newRun();
       s.runs.push(run);
       s.currentRun = run;
@@ -1513,6 +1713,18 @@ chrome.runtime.onMessage.addListener((msg) => {
     }
     if (s.currentRun) {
       appendToRun(s.currentRun, bytes);
+      // Fed-data ground truth (0.1.23) — see DECODE_FED_GUARD_S/
+      // pickNextWindow's fed-data clamp: `run.fedEnd` tracks how far THIS
+      // run's stream has actually been fed real audio, from the SAME
+      // growthAbsEnd value that also feeds s.bufferedRanges (session-level)
+      // just below — but scoped to the run that ACTUALLY received these
+      // bytes, so it can never race ahead the way the session-level value
+      // apparently can. A synthetic run-boundary segment (0.1.20) carries no
+      // growth (null), so it correctly does not advance fedEnd on its own —
+      // only the real segment that follows it does.
+      if (typeof msg.growthAbsEnd === 'number' && !Number.isNaN(msg.growthAbsEnd)) {
+        s.currentRun.fedEnd = s.currentRun.fedEnd == null ? msg.growthAbsEnd : Math.max(s.currentRun.fedEnd, msg.growthAbsEnd);
+      }
       // Cross-check ONLY (never an input to any timestamp): does the
       // container's own EBML Cluster>Timecode (capture.js's localTimeSec)
       // roughly agree with the independently-measured buffered-range growth
@@ -1541,6 +1753,13 @@ chrome.runtime.onMessage.addListener((msg) => {
 
     if (typeof msg.currentTime === 'number' && !Number.isNaN(msg.currentTime)) {
       s.currentTimeS = msg.currentTime;
+    }
+    // End-of-stream detection input (0.1.23) — used ONLY by
+    // maybeCloseRunAtEndOfStream below, never for timestamp construction
+    // (per the "media time in, media time out" doctrine). A live stream
+    // reports Infinity here and is correctly never treated as "reachable".
+    if (typeof msg.duration === 'number' && !Number.isNaN(msg.duration) && isFinite(msg.duration)) {
+      s.videoDurationS = msg.duration;
     }
     // Real interval-set availability (0.1.14) — every segment's own
     // growthAbsStart/growthAbsEnd (this append's actual contribution to the

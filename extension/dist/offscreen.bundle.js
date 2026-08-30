@@ -13943,7 +13943,23 @@
           input: null,
           track: null,
           sink: null,
-          trackReadyPromise: null
+          trackReadyPromise: null,
+          // 0.1.23 — see PIPELINE_NOTES "0.1.23": a live session requested
+          // sink.buffers(2.51,19.60) while this run's stream had actually only
+          // been fed bytes through 5.06s, hanging forever (ReadableStreamSource
+          // waits indefinitely for bytes that haven't arrived instead of
+          // erroring — it has no way to know "no more is coming yet" vs. "no
+          // more will EVER come"). `fedEnd` is the ground truth for what THIS
+          // run's stream has actually been fed (updated only from bytes really
+          // appended to it — see the pm-segment handler), decoupled from
+          // s.bufferedRanges (session-level, can legitimately be ahead of any
+          // one specific run). `streamClosed` is set once we've explicitly
+          // closed this run's stream (end-of-stream flush, or superseded by a
+          // new run) — once true, the fed-data clamp in pickNextWindow is no
+          // longer needed, since a genuinely closed stream reports "no more
+          // data" cleanly instead of hanging.
+          fedEnd: null,
+          streamClosed: false
         };
         const stream = new ReadableStream({
           start(controller) {
@@ -13956,11 +13972,16 @@
         });
         return run;
       }
-      function closeRun(run) {
+      function closeRunStream(run) {
+        if (!run || run.streamClosed) return;
         try {
           if (run.streamController) run.streamController.close();
         } catch (e) {
         }
+        run.streamClosed = true;
+      }
+      function closeRun(run) {
+        closeRunStream(run);
         run.track = null;
         run.sink = null;
         run.input = null;
@@ -14066,7 +14087,11 @@
             windowAttempts: /* @__PURE__ */ new Map(),
             // rounded-start-location key -> attempt count, for the stuck-location loop-breaker (0.1.14, made location-based in 0.1.20 — see transcribeWindow's loop-breaker section for why exact-span keying stopped catching this)
             sinkErrorAttempts: /* @__PURE__ */ new Map(),
-            // "start.toFixed(2),end.toFixed(2)" -> consecutive decode-failure count (a thrown sink.buffers() error, OR — 0.1.21 — a track-ready/decode stage TIMEOUT with no thrown error at all), for DRM/undecodable/permanently-unworkable detection (0.1.15, extended 0.1.21)
+            // "start.toFixed(2),end.toFixed(2)" -> consecutive THROWN sink.buffers() decode-error count, for DRM/undecodable detection (0.1.15) — a fast, confident signal, unchanged threshold
+            hangAttempts: /* @__PURE__ */ new Map(),
+            // "start.toFixed(2),end.toFixed(2)" -> consecutive stage-TIMEOUT (no thrown error at all) count, separate map/threshold from sinkErrorAttempts (0.1.21, split out 0.1.23) — a hang is now a much rarer signal after the fed-data clamp + end-of-stream-flush fixes (see pickNextWindow/maybeCloseRunAtEndOfStream), so it gets a higher threshold before giving up rather than sharing the DRM-detection map's fast one
+            videoDurationS: null,
+            // 0.1.23 — video.duration, relayed from capture.js; used ONLY for end-of-stream run-close detection (maybeCloseRunAtEndOfStream), never for timestamp construction
             unanalyzable: false,
             // set true once DRM/undecodable content is detected — maybeProcess stops entirely, content.js releases safe-mode muting for this session
             processing: false,
@@ -14215,11 +14240,16 @@
       var WINDOW_LOOP_THRESHOLD = 3;
       var ALL_WORDS_CAP = 2e3;
       var SINK_ERROR_THRESHOLD = 3;
+      var HANG_THRESHOLD = 6;
       var STAGE_TIMEOUT_MS = 25e3;
       function withStageTimeout(promise, label) {
         let timer;
         const timeout = new Promise((_, reject) => {
-          timer = setTimeout(() => reject(new Error('stage "' + label + '" did not settle within ' + STAGE_TIMEOUT_MS + "ms (hung promise, not a thrown error)")), STAGE_TIMEOUT_MS);
+          timer = setTimeout(() => {
+            const err = new Error('stage "' + label + '" did not settle within ' + STAGE_TIMEOUT_MS + "ms (hung promise, not a thrown error)");
+            err.isStageTimeout = true;
+            reject(err);
+          }, STAGE_TIMEOUT_MS);
         });
         return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
       }
@@ -14239,7 +14269,8 @@
         }
         return s.covered.concat(extra).sort((a, b) => a.start - b.start);
       }
-      function pickNextWindow(s) {
+      var DECODE_FED_GUARD_S = 0.25;
+      function pickNextWindow(s, run) {
         const ct = s.currentTimeS;
         let containing = null;
         let nearestAhead = null;
@@ -14256,12 +14287,21 @@
           return null;
         }
         const lowBound = Math.max(targetRange.start, ct - OVERLAP_S);
-        const high = targetRange.end - TAIL_SAFETY_S;
+        const bufferedHigh = targetRange.end - TAIL_SAFETY_S;
+        let high = bufferedHigh;
+        let fedClampActive = false;
+        if (run && !run.streamClosed) {
+          const fedHigh = run.fedEnd != null ? run.fedEnd - DECODE_FED_GUARD_S : -Infinity;
+          if (fedHigh < high) {
+            high = fedHigh;
+            fedClampActive = true;
+          }
+        }
         if (high <= lowBound) {
           logNoWindowReason(
             s,
-            "not-enough-buffered",
-            "range [" + targetRange.start.toFixed(2) + "," + targetRange.end.toFixed(2) + ") at the playhead not far enough ahead yet (currentTimeS=" + ct.toFixed(2) + ")"
+            fedClampActive ? "not-yet-fed-to-run" : "not-enough-buffered",
+            fedClampActive ? "session-level buffered range reaches " + bufferedHigh.toFixed(2) + " but this run has only actually been fed audio through " + (run.fedEnd != null ? run.fedEnd.toFixed(2) : "nothing yet") + ' \u2014 deferring rather than requesting a decode range beyond fed data (would hang forever, see PIPELINE_NOTES "0.1.23")' : "range [" + targetRange.start.toFixed(2) + "," + targetRange.end.toFixed(2) + ") at the playhead not far enough ahead yet (currentTimeS=" + ct.toFixed(2) + ")"
           );
           return null;
         }
@@ -14337,12 +14377,12 @@
           try {
             track = await withStageTimeout(run.trackReadyPromise, "track-ready");
           } catch (e) {
-            const hangCount = (s.sinkErrorAttempts.get(windowKeyForErrors) || 0) + 1;
-            s.sinkErrorAttempts.set(windowKeyForErrors, hangCount);
-            if (hangCount >= SINK_ERROR_THRESHOLD) {
+            const hangCount = (s.hangAttempts.get(windowKeyForErrors) || 0) + 1;
+            s.hangAttempts.set(windowKeyForErrors, hangCount);
+            if (hangCount >= HANG_THRESHOLD) {
               markUnanalyzable(s, "window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") track resolution hung " + hangCount + "x in a row: " + String(e));
             } else {
-              notifyTab(s, "[PM-HANG] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") " + String(e && e.message ? e.message : e) + " (" + hangCount + "/" + SINK_ERROR_THRESHOLD + ")");
+              notifyTab(s, "[PM-HANG] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") " + String(e && e.message ? e.message : e) + " (" + hangCount + "/" + HANG_THRESHOLD + ")");
             }
             return false;
           }
@@ -14355,7 +14395,13 @@
           try {
             run.nativeRate = await withStageTimeout(run.track.getSampleRate(), "get-sample-rate");
           } catch (e) {
-            notifyTab(s, "[PM-HANG] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") " + String(e && e.message ? e.message : e));
+            const hangCount = (s.hangAttempts.get(windowKeyForErrors) || 0) + 1;
+            s.hangAttempts.set(windowKeyForErrors, hangCount);
+            if (hangCount >= HANG_THRESHOLD) {
+              markUnanalyzable(s, "window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") get-sample-rate hung " + hangCount + "x in a row: " + String(e));
+            } else {
+              notifyTab(s, "[PM-HANG] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") " + String(e && e.message ? e.message : e) + " (" + hangCount + "/" + HANG_THRESHOLD + ")");
+            }
             return false;
           }
         }
@@ -14370,16 +14416,20 @@
             "decode"
           );
         } catch (e) {
-          const errCount = (s.sinkErrorAttempts.get(windowKeyForErrors) || 0) + 1;
-          s.sinkErrorAttempts.set(windowKeyForErrors, errCount);
-          if (errCount >= SINK_ERROR_THRESHOLD) {
-            markUnanalyzable(s, "window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") failed to decode " + errCount + "x in a row: " + String(e));
+          const isHang = !!(e && e.isStageTimeout);
+          const attempts = isHang ? s.hangAttempts : s.sinkErrorAttempts;
+          const threshold = isHang ? HANG_THRESHOLD : SINK_ERROR_THRESHOLD;
+          const errCount = (attempts.get(windowKeyForErrors) || 0) + 1;
+          attempts.set(windowKeyForErrors, errCount);
+          if (errCount >= threshold) {
+            markUnanalyzable(s, "window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") failed to decode " + errCount + "x in a row (" + (isHang ? "hang" : "thrown error") + "): " + String(e));
           } else {
-            notifyTab(s, "[PM-SKIP] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") skipped: sink.buffers error/hang (" + errCount + "/" + SINK_ERROR_THRESHOLD + "): " + String(e && e.message ? e.message : e));
+            notifyTab(s, "[PM-SKIP] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") skipped: sink.buffers " + (isHang ? "hang" : "error") + " (" + errCount + "/" + threshold + "): " + String(e && e.message ? e.message : e));
           }
           return false;
         }
         s.sinkErrorAttempts.delete(windowKeyForErrors);
+        s.hangAttempts.delete(windowKeyForErrors);
         if (wrapped.length === 0) {
           notifyTab(s, "[PM-SKIP] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") skipped: no decodable audio in this run at that time yet (waiting for more data)");
           return false;
@@ -14606,6 +14656,27 @@
         chrome.runtime.sendMessage({ type: "pm-heartbeat", tabId: s.tabId, videoId: s.videoId }).catch(() => {
         });
       }
+      var IDLE_GATE_DIAG_THROTTLE_MS = 5e3;
+      var WORK_CHECK_HORIZON_S = 5;
+      function hasUncoveredCapturedWorkNearPlayhead(s) {
+        const ct = s.currentTimeS;
+        const horizonEnd = ct + WORK_CHECK_HORIZON_S;
+        for (const r of s.bufferedRanges) {
+          const lo = Math.max(r.start, ct);
+          const hi = Math.min(r.end, horizonEnd);
+          if (hi <= lo) continue;
+          if (firstUncoveredPoint(s.covered, lo, hi) !== null) return true;
+        }
+        return false;
+      }
+      function reportIdleGate(s, gateName, detail) {
+        if (!hasUncoveredCapturedWorkNearPlayhead(s)) return;
+        const now = Date.now();
+        const lastByGate = s.lastIdleGateDiagWall || (s.lastIdleGateDiagWall = {});
+        if (lastByGate[gateName] && now - lastByGate[gateName] < IDLE_GATE_DIAG_THROTTLE_MS) return;
+        lastByGate[gateName] = now;
+        notifyTab(s, "[PM-IDLE-GATE] maybeProcess stopped (" + gateName + ") while captured-but-uncovered audio exists within " + WORK_CHECK_HORIZON_S + "s of the playhead: " + detail);
+      }
       async function maybeProcess(s) {
         if (s.disabled || s.unanalyzable) return;
         if (s.processing) {
@@ -14616,20 +14687,40 @@
         sendHeartbeat(s);
         const heartbeatTimer = setInterval(() => sendHeartbeat(s), HEARTBEAT_MS);
         const loopGeneration = s.generation;
+        let exitGate = null, exitDetail = "";
         try {
           for (; ; ) {
-            if (s.disabled || s.unanalyzable) break;
+            exitGate = "unknown-gate";
+            exitDetail = "(a loop-exit path did not name itself \u2014 see maybeProcess source)";
+            if (s.disabled) {
+              exitGate = "disabled";
+              exitDetail = "pm_enabled=false";
+              break;
+            }
+            if (s.unanalyzable) {
+              exitGate = "unanalyzable";
+              exitDetail = "DRM/undecodable content \u2014 transcription given up for this session";
+              break;
+            }
             if (s.generation !== loopGeneration) {
               log("[PM-STALE] maybeProcess loop stopping: generation changed (" + loopGeneration + " -> " + s.generation + ")");
+              exitGate = "generation-changed";
+              exitDetail = "generation " + loopGeneration + " -> " + s.generation + " (a seek or reset superseded this loop)";
               break;
             }
             const run = s.currentRun;
             if (!run) {
               logNoWindowReason(s, "no-run", "no active byte run yet for this session (no init segment captured) \u2014 nothing to transcribe until one arrives");
+              exitGate = "no-run";
+              exitDetail = "no active byte run yet for this session";
               break;
             }
-            const target = pickNextWindow(s);
-            if (!target) break;
+            const target = pickNextWindow(s, run);
+            if (!target) {
+              exitGate = "no-target";
+              exitDetail = "pickNextWindow found nothing to pick (see its own [PM-NO-WINDOW] reason above, if any)";
+              break;
+            }
             if (!s.firstCoverageLogged && s.firstWindowPickedAt == null) s.firstWindowPickedAt = Date.now();
             const inFlightKey = target.start.toFixed(2) + "," + target.end.toFixed(2);
             s.inFlightWindows.add(inFlightKey);
@@ -14639,12 +14730,19 @@
             } finally {
               s.inFlightWindows.delete(inFlightKey);
             }
-            if (!ok) break;
+            if (!ok) {
+              exitGate = "transcribe-failed";
+              exitDetail = "transcribeWindow returned false for [" + target.start.toFixed(2) + "," + target.end.toFixed(2) + ") (see its own diag above, if any)";
+              break;
+            }
             s.hadFirstWindow = true;
+            exitGate = null;
           }
         } catch (e) {
+          exitGate = null;
           notifyTab(s, "[PM-ERROR] maybeProcess: " + String(e && e.stack ? e.stack : e));
         } finally {
+          if (exitGate) reportIdleGate(s, exitGate, exitDetail);
           clearInterval(heartbeatTimer);
           s.processing = false;
           if (s.pendingRerun) {
@@ -14653,6 +14751,30 @@
           }
         }
       }
+      var EOF_CLOSE_SLACK_S = 1;
+      var EOF_CLOSE_QUIET_MS = 3e3;
+      function maybeCloseRunAtEndOfStream(s) {
+        const run = s.currentRun;
+        if (!run || run.streamClosed || run.fedEnd == null) return;
+        if (s.videoDurationS == null) return;
+        if (run.fedEnd < s.videoDurationS - EOF_CLOSE_SLACK_S) return;
+        if (Date.now() - (s.lastBufferedGrowthWall || 0) < EOF_CLOSE_QUIET_MS) return;
+        closeRunStream(run);
+        notifyTab(
+          s,
+          "[PM-EOF-FLUSH] run stream closed (fed through " + run.fedEnd.toFixed(2) + "s, duration=" + s.videoDurationS.toFixed(2) + "s, quiet " + Math.round((Date.now() - s.lastBufferedGrowthWall) / 1e3) + "s) \u2014 letting mediabunny flush trailing samples for the tail window"
+        );
+        maybeProcess(s);
+      }
+      setInterval(() => {
+        for (const s of sessions.values()) {
+          try {
+            maybeCloseRunAtEndOfStream(s);
+          } catch (e) {
+            log("maybeCloseRunAtEndOfStream error:", String(e));
+          }
+        }
+      }, 2e3);
       chrome.runtime.onMessage.addListener((msg) => {
         if (!msg || !msg.type) return;
         if (msg.type === "pm-reset") {
@@ -14727,6 +14849,7 @@
           }
           const bytes = base64ToUint8(msg.dataB64);
           if (msg.isInit) {
+            if (s.currentRun) closeRunStream(s.currentRun);
             const run = newRun();
             s.runs.push(run);
             s.currentRun = run;
@@ -14736,6 +14859,9 @@
           }
           if (s.currentRun) {
             appendToRun(s.currentRun, bytes);
+            if (typeof msg.growthAbsEnd === "number" && !Number.isNaN(msg.growthAbsEnd)) {
+              s.currentRun.fedEnd = s.currentRun.fedEnd == null ? msg.growthAbsEnd : Math.max(s.currentRun.fedEnd, msg.growthAbsEnd);
+            }
             if (msg.localTimeSec != null && msg.growthAbsStart != null) {
               const delta = msg.growthAbsStart - msg.localTimeSec;
               if (Math.abs(delta) > CHECK_SLACK_S) {
@@ -14749,6 +14875,9 @@
           }
           if (typeof msg.currentTime === "number" && !Number.isNaN(msg.currentTime)) {
             s.currentTimeS = msg.currentTime;
+          }
+          if (typeof msg.duration === "number" && !Number.isNaN(msg.duration) && isFinite(msg.duration)) {
+            s.videoDurationS = msg.duration;
           }
           if (typeof msg.growthAbsStart === "number" && typeof msg.growthAbsEnd === "number" && !Number.isNaN(msg.growthAbsStart) && !Number.isNaN(msg.growthAbsEnd)) {
             mergeRangeInto(s.bufferedRanges, msg.growthAbsStart, msg.growthAbsEnd);

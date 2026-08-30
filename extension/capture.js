@@ -772,6 +772,7 @@
         segIndex: item.segmentCount,
         bytes: item.ab, // structured-cloned, MAIN -> ISOLATED
         currentTime: item.currentTime,
+        duration: item.duration,
         localTimeSec: item.localTimeSec,
         growthAbsStart: growth ? growth.absStart : null,
         growthAbsEnd: growth ? growth.absEnd : null,
@@ -788,6 +789,10 @@
       try {
         var video = getRealVideo();
         var currentTime = video ? video.currentTime : NaN;
+        // 0.1.23: video.duration, relayed alongside currentTime, so offscreen
+        // can detect end-of-stream and safely close a run's demux stream for
+        // final-tail flushing — see PIPELINE_NOTES "0.1.23" item 2.
+        var duration = video ? video.duration : NaN;
 
         var ab = toArrayBuffer(chunk);
         var localTicks = scanForTimecode(new Uint8Array(ab), timecodeScale);
@@ -822,6 +827,7 @@
         pendingAppends.push({
           rangesBefore: rangesBefore,
           currentTime: currentTime,
+          duration: duration,
           localTicks: localTicks,
           localTimeSec: localTimeSec,
           ab: ab,

@@ -845,8 +845,26 @@
       .map(function (iv) { return '[' + iv.start.toFixed(2) + '-' + iv.end.toFixed(2) + '] ' + escapeHtml(iv.word); })
       .join('  ');
 
+    // Coverage indicator alignment (0.1.23) — see PIPELINE_NOTES "0.1.23"
+    // item 3: this used to show only the PLAYHEAD POINT's coverage
+    // (COVERED/UNCOVERED), while the status pill judges the whole
+    // [t, t+PROTECT_MARGIN] HORIZON — the two surfaces could disagree
+    // confusingly (overlay says "COVERED" the instant t itself is covered,
+    // while the pill still shows "Analyzing" because the horizon ahead
+    // isn't). Now shows BOTH, using the exact same clampedHorizonEnd() the
+    // pill itself calls, so they can never diverge.
+    var coverageLabel;
+    if (isLiveStream(video)) {
+      coverageLabel = (covered ? 'COVERED-NOW' : 'UNCOVERED-NOW') + '/horizon n/a (live)';
+    } else {
+      var horizonEnd = clampedHorizonEnd(video, t);
+      var horizonShortS = uncoveredDurationWithin(session.coveredIntervals, t, horizonEnd);
+      var horizonLabel = horizonShortS <= COVERAGE_EPS ? 'horizon OK' : 'horizon ' + horizonShortS.toFixed(1) + 's short';
+      coverageLabel = (covered ? 'COVERED-NOW' : 'UNCOVERED-NOW') + '/' + horizonLabel;
+    }
+
     debugOverlayContentEl.innerHTML =
-      '<b>[PM debug]</b> t=' + t.toFixed(2) + '  coverage=' + (covered ? 'COVERED' : 'UNCOVERED') + '\n' +
+      '<b>[PM debug]</b> t=' + t.toFixed(2) + '  coverage=' + coverageLabel + '\n' +
       'words (t±5s): ' + (strip || '(none yet)') + '\n' +
       'upcoming mutes: ' + (upcoming || '(none)');
   }
@@ -941,6 +959,29 @@
     }
   }
 
+  // End-of-video clamp (0.1.22), factored out (0.1.23) so the pill
+  // (computeStatusState) and the debug overlay's "coverage=" line
+  // (renderDebugOverlay) can never disagree about what the playhead
+  // "protection horizon" even IS — see PIPELINE_NOTES "0.1.23" item 3: the
+  // two surfaces used different notions of coverage (pill: whole-horizon;
+  // overlay: playhead point only) and could contradict each other
+  // confusingly. Both now call this SAME function. A user report showed the
+  // pill stuck on "Analyzing" forever at the end of a video — the
+  // [t, t+PROTECT_MARGIN] horizon extends past video.duration into audio
+  // that doesn't exist and can never be captured/transcribed, so a raw
+  // uncovered-check against the UNCLAMPED horizon could never succeed even
+  // once everything real had actually finished transcribing. Clamping to
+  // video.duration whenever it's finite (a live stream is handled
+  // separately by isLiveStream(), before this is ever called) means once
+  // the clamped horizon collapses to <= t (i.e. we're already at/past the
+  // last coverable point), a real uncovered-check naturally reports zero
+  // uncovered duration with no separate near-the-end special case needed.
+  function clampedHorizonEnd(video, t) {
+    var horizonEnd = t + PROTECT_MARGIN;
+    if (isFinite(video.duration)) horizonEnd = Math.min(horizonEnd, video.duration);
+    return horizonEnd;
+  }
+
   function computeStatusState() {
     if (!session) return null;
     if (session.unanalyzable) return { kind: 'off' };
@@ -948,26 +989,7 @@
     if (!video) return null;
     if (isLiveStream(video)) return { kind: 'live' };
     var t = video.currentTime;
-    var horizonEnd = t + PROTECT_MARGIN;
-    // End-of-video clamp (0.1.22): a user report showed the pill stuck on
-    // "Analyzing" forever at the end of a video — the [t, t+PROTECT_MARGIN]
-    // horizon extends past video.duration into audio that doesn't exist and
-    // can never be captured/transcribed, so the "protected" check below
-    // (which compares against the UNCLAMPED horizon) could never succeed
-    // even once everything real had actually finished transcribing. Clamp
-    // the horizon to video.duration whenever it's finite (a live stream
-    // already short-circuited above, via isLiveStream(), before this ever
-    // runs) — every downstream use of horizonEnd (the "protected" check
-    // right below, and the ETA's own `Math.min(horizonEnd,
-    // playheadRange.end)`) inherits the clamp automatically from this one
-    // assignment, and once the clamped horizon collapses to <= t (i.e. we're
-    // already at/past the last coverable point), uncoveredDurationWithin's
-    // own `hi <= lo` case naturally reports zero uncovered duration — so
-    // "protected" is reached directly with no separate near-the-end special
-    // case needed, which also means the buffering/needs-play branches below
-    // (which only run after that check fails) can never be reached for a
-    // region past the end either.
-    if (isFinite(video.duration)) horizonEnd = Math.min(horizonEnd, video.duration);
+    var horizonEnd = clampedHorizonEnd(video, t);
     // "Protected" means the whole [t, t+margin] window is covered, not just
     // its two endpoints — a gap in the middle (real, given how transcription
     // windows land) must not read as protected.
@@ -1712,6 +1734,7 @@
         isInit: data.isInit,
         segIndex: data.segIndex,
         currentTime: data.currentTime,
+        duration: data.duration, // 0.1.23: relayed on to offscreen for end-of-stream run-close detection
         localTimeSec: data.localTimeSec,
         growthAbsStart: data.growthAbsStart,
         growthAbsEnd: data.growthAbsEnd,
