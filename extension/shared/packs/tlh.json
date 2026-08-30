@@ -1,0 +1,18 @@
+{
+  "lang": "tlh",
+  "quality": "community",
+  "words": {
+    "core": [
+      "ghuy'cha'",
+      "qi'yah",
+      "qu'vatlh"
+    ],
+    "extended": []
+  },
+  "matchConfig": {
+    "stemming": "none",
+    "foldDiacritics": true,
+    "substringMode": false,
+    "wildcards": true
+  }
+}

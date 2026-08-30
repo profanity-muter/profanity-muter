@@ -1,0 +1,36 @@
+{
+  "lang": "kab",
+  "quality": "community",
+  "words": {
+    "core": [
+      "abbuc",
+      "ajeḥniḍ",
+      "aqerqur",
+      "asxuẓeḍ",
+      "awellaq",
+      "axuzziḍ",
+      "aεeṭṭuḍ",
+      "aḥeččun",
+      "iwellaqen",
+      "iḥeččan",
+      "iḥeččunen",
+      "qqan",
+      "qqant",
+      "qqiɣ",
+      "qqu",
+      "qquɣ",
+      "taxna",
+      "taḥeččunt",
+      "tteqqun",
+      "tteqqunt",
+      "uqan"
+    ],
+    "extended": []
+  },
+  "matchConfig": {
+    "stemming": "none",
+    "foldDiacritics": true,
+    "substringMode": false,
+    "wildcards": true
+  }
+}

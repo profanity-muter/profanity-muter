@@ -1,0 +1,28 @@
+{
+  "lang": "fil",
+  "quality": "community",
+  "words": {
+    "core": [
+      "anak ka ng puta",
+      "bayag",
+      "bobo",
+      "burat",
+      "jakol",
+      "kantot",
+      "nognog",
+      "puta ka",
+      "putang ina",
+      "tang ina",
+      "tanga",
+      "tangina",
+      "ulol"
+    ],
+    "extended": []
+  },
+  "matchConfig": {
+    "stemming": "none",
+    "foldDiacritics": true,
+    "substringMode": false,
+    "wildcards": true
+  }
+}

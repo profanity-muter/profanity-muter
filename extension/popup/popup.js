@@ -1,8 +1,22 @@
 // popup/popup.js
 // Popup UI logic. Reads/writes chrome.storage.sync directly (pm_enabled,
 // pm_muteAudio, pm_censorCaptions, pm_catchupMode, pm_debugOverlay,
-// pm_showStatus, pm_strictness, pm_padding, pm_wordlist) per the shared
-// schema used by shared/wordlist.js and captions.js.
+// pm_showStatus, pm_strictness, pm_padding, pm_multilingual, pm_wordlist)
+// per the shared schema used by shared/wordlist.js and captions.js.
+//
+// pm_multilingual (boolean, default true) — "Filter other languages"
+// toggle. This popup only stores the setting; the audio pipeline's
+// Whisper-based language detection reads it (via
+// PMWordlist.settings.multilingual) to decide whether to call
+// PMWordlist.setLanguage(lang) when it detects non-English speech.
+// pm_strictness/pm_wordlist (the whole Strictness section below) is an
+// ENGLISH-ONLY concept — it has no effect on which words are filtered
+// for any other language a pack was loaded for; every non-English pack
+// always uses its own full (core + extended) word list. The Word list
+// section below shows which non-English pack, if any, is currently
+// active (via chrome.storage.LOCAL's pm_activeLanguage, written by
+// shared/wordlist.js's setLanguage() — see "Active non-English language
+// pack display" further down).
 //
 // pm_strictness ("standard" | "strict" | "custom", default "strict")
 // selects which word list is ACTIVE, and interacts with pm_wordlist
@@ -86,6 +100,8 @@
   var enabledEl = document.getElementById("pm-enabled");
   var muteAudioEl = document.getElementById("pm-mute-audio");
   var censorCaptionsEl = document.getElementById("pm-censor-captions");
+  var multilingualEl = document.getElementById("pm-multilingual");
+  var activeLanguageNoteEl = document.getElementById("pm-active-language-note");
   var catchupModeEls = document.getElementsByName("pm-catchup-mode");
   var debugOverlayEl = document.getElementById("pm-debug-overlay");
   var showStatusEl = document.getElementById("pm-show-status");
@@ -451,6 +467,7 @@
         "pm_showStatus",
         "pm_strictness",
         "pm_padding",
+        "pm_multilingual",
         "pm_safeMode", // read-only, for the legacy-migration display below
         "pm_wordlist"
       ],
@@ -474,6 +491,7 @@
         censorCaptionsEl.checked = items.pm_censorCaptions !== false;
         debugOverlayEl.checked = items.pm_debugOverlay === true;
         showStatusEl.checked = items.pm_showStatus !== false;
+        multilingualEl.checked = items.pm_multilingual !== false;
         // Invalid/unset pm_catchupMode falls back to the default
         // ("mute") UNLESS the legacy pm_safeMode was explicitly saved
         // as false, in which case the radio group should reflect the
@@ -556,6 +574,7 @@
         pm_showStatus: !!showStatusEl.checked,
         pm_strictness: getStrictness(),
         pm_padding: getPadding(),
+        pm_multilingual: !!multilingualEl.checked,
         // pm_safeMode is intentionally NOT written here — it's been
         // merged into pm_catchupMode. Leaving pm_safeMode untouched in
         // storage is fine: once pm_catchupMode is explicitly saved
@@ -603,7 +622,8 @@
         pm_debugOverlay: !!debugOverlayEl.checked,
         pm_showStatus: !!showStatusEl.checked,
         pm_strictness: getStrictness(),
-        pm_padding: getPadding()
+        pm_padding: getPadding(),
+        pm_multilingual: !!multilingualEl.checked
         // pm_safeMode intentionally not written — see save() comment.
         // pm_wordlist is intentionally NOT written here either — this
         // is the fire-and-forget settings-only save path shared by
@@ -633,6 +653,54 @@
     // Always refresh (not just `if (masked)`) — see save()'s comment.
     renderMasked();
     setStatus("Defaults loaded — click Save to keep");
+  }
+
+  // ---- Active non-English language pack display (chrome.storage.LOCAL) ----
+  //
+  // shared/wordlist.js's PMWordlist.setLanguage() (called by the audio
+  // pipeline's Whisper-based language detection, when pm_multilingual is
+  // on) runs in the YouTube TAB's isolated-world content-script realm —
+  // a completely separate JS context from this popup page, so this
+  // popup can't just read PMWordlist.activeLanguage directly. Instead,
+  // setLanguage() persists {lang, quality, available} to
+  // chrome.storage.LOCAL (pm_activeLanguage) as a display-only
+  // convenience; this section reads it the same way the STATS section
+  // reads pm_stats (own onChanged listener filtered to areaName ===
+  // "local", zeros/absent-safe). Only shown when a non-English pack is
+  // actually active (English is the assumed baseline, not called out).
+  var LANGUAGE_NAMES = {
+    ar: "Arabic", cs: "Czech", da: "Danish", de: "German", eo: "Esperanto",
+    es: "Spanish", fa: "Persian", fi: "Finnish", fil: "Filipino",
+    fr: "French", "fr-CA-u-sd-caqc": "Québec French", hi: "Hindi",
+    hu: "Hungarian", it: "Italian", ja: "Japanese", kab: "Kabyle",
+    ko: "Korean", nl: "Dutch", no: "Norwegian", pl: "Polish",
+    pt: "Portuguese", ru: "Russian", sv: "Swedish", th: "Thai",
+    tlh: "Klingon", tr: "Turkish", zh: "Chinese"
+  };
+
+  function renderActiveLanguage(info) {
+    if (!info || !info.lang || info.lang === "en") {
+      activeLanguageNoteEl.textContent = "";
+      activeLanguageNoteEl.classList.add("pm-hidden");
+      activeLanguageNoteEl.setAttribute("aria-hidden", "true");
+      return;
+    }
+    var name = LANGUAGE_NAMES[info.lang] || info.lang;
+    var qualityLabel = info.quality === "community" ? "community-sourced" : "curated";
+    var text = info.available === false
+      ? "Detected language not supported yet (" + name + ") — using your English list only"
+      : "Also filtering: " + name + " (" + qualityLabel + " word list)";
+    activeLanguageNoteEl.textContent = text;
+    activeLanguageNoteEl.classList.remove("pm-hidden");
+    activeLanguageNoteEl.setAttribute("aria-hidden", "false");
+  }
+
+  function loadActiveLanguage() {
+    if (!hasLocalStorage) return;
+    chrome.storage.local.get(["pm_activeLanguage"], function (items) {
+      if (chrome.runtime && chrome.runtime.lastError) return;
+      renderActiveLanguage(items && items.pm_activeLanguage);
+    });
   }
 
   // ---- Stats section (chrome.storage.LOCAL, not sync) ----
@@ -695,6 +763,9 @@
         if (changes.pm_stats) {
           renderStats(changes.pm_stats.newValue);
         }
+        if (changes.pm_activeLanguage) {
+          renderActiveLanguage(changes.pm_activeLanguage.newValue);
+        }
       });
     } catch (e) {
       // ignore — non-fatal if listener registration fails
@@ -706,6 +777,7 @@
   censorCaptionsEl.addEventListener("change", saveTogglesOnly);
   debugOverlayEl.addEventListener("change", saveTogglesOnly);
   showStatusEl.addEventListener("change", saveTogglesOnly);
+  multilingualEl.addEventListener("change", saveTogglesOnly);
   for (var ci = 0; ci < catchupModeEls.length; ci++) {
     catchupModeEls[ci].addEventListener("change", saveTogglesOnly);
   }
@@ -730,4 +802,6 @@
   load();
   renderStats(null); // synchronous zeros first, same correct-by-default pattern as settings
   loadStats();
+  renderActiveLanguage(null); // hidden by default until/unless a non-English pack is confirmed active
+  loadActiveLanguage();
 })();

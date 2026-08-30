@@ -147,6 +147,65 @@
   var PADDING_MODES = ["tight", "normal", "wide"];
   var DEFAULT_PADDING = "normal";
 
+  var DEFAULT_MULTILINGUAL = true;
+
+  // ---- Language pack architecture (2026-08-30) ----
+  //
+  // A "pack" is: { lang, quality: "curated"|"community", words: { core,
+  // extended }, matchConfig: { stemming: "en-suffix"|"none",
+  // foldDiacritics: bool, substringMode: bool, wildcards: bool } }.
+  //
+  // English is pack "en" — inlined here (CORE_WORDLIST/EXTENDED_WORDLIST
+  // above), matching exactly its pre-pack-architecture behavior via
+  // EN_MATCH_CONFIG. Every OTHER language pack is a plain JSON file under
+  // shared/packs/<lang>.json, loaded on demand via fetch(chrome.runtime.
+  // getURL(...)) the first time PMWordlist.setLanguage(lang) is called
+  // for it (see "Lazy pack loading" below) — packs never bloat every
+  // page load, only the one that actually needs a non-English pack.
+  //
+  // pm_strictness (standard/strict/custom) and the user's custom
+  // pm_wordlist are an ENGLISH-ONLY concept: they only apply while the
+  // active language is "en". Any other active pack always uses its own
+  // full word list (core + extended combined, same idea as English's
+  // "strict") — there is no per-pack strictness split and the custom
+  // list is not consulted at all while a non-English pack is active.
+  var EN_MATCH_CONFIG = {
+    stemming: "en-suffix",
+    foldDiacritics: false,
+    substringMode: false,
+    wildcards: true
+  };
+
+  // Registry of loaded packs, keyed by lang code. "en" is always present
+  // (inline, never fetched). Others are populated lazily by setLanguage().
+  var PACKS = {
+    en: {
+      lang: "en",
+      quality: "curated",
+      words: { core: CORE_WORDLIST, extended: EXTENDED_WORDLIST },
+      matchConfig: EN_MATCH_CONFIG
+    }
+  };
+
+  function packFullWordlist(pack) {
+    var core = (pack.words && pack.words.core) || [];
+    var extended = (pack.words && pack.words.extended) || [];
+    return core.concat(extended);
+  }
+
+  function validatePack(pack, expectedLang) {
+    return !!(
+      pack &&
+      typeof pack === "object" &&
+      pack.lang === expectedLang &&
+      (pack.quality === "curated" || pack.quality === "community") &&
+      pack.words &&
+      Array.isArray(pack.words.core) &&
+      pack.matchConfig &&
+      typeof pack.matchConfig === "object"
+    );
+  }
+
   var CAPTION_PLACEHOLDER = "[ __ ]";
 
   var SUFFIXES = ["ing", "es", "ed", "er", "s", "y"];
@@ -210,12 +269,25 @@
   // A trailing apostrophe (e.g. "fuckin'") is also stripped, since it's
   // almost always a dropped-g marker or a stray quote rather than part
   // of the word itself.
-  function normalizeToken(token) {
+  //
+  // Uses Unicode property escapes (\p{L}/\p{N}, "core" = any letter/digit
+  // in any language, not just a-z0-9) so this works correctly for
+  // non-English packs (accented Spanish "coño", etc.) without changing
+  // English behavior at all (\p{L} already covers a-z; ASCII digits are
+  // \p{N}). foldDiacritics (per the active pack's matchConfig, default
+  // false — preserves exact pre-pack-architecture behavior when omitted)
+  // additionally strips combining diacritical marks via NFD
+  // decomposition, so e.g. "coño"/"dios" match consistently regardless
+  // of accents in the source text vs. the word-list entry.
+  function normalizeToken(token, foldDiacritics) {
     if (typeof token !== "string") return "";
-    return token
-      .toLowerCase()
-      .replace(/^[^a-z0-9'*]+/i, "")
-      .replace(/[^a-z0-9'*]+$/i, "")
+    var s = token.toLowerCase();
+    if (foldDiacritics) {
+      s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    }
+    return s
+      .replace(/^[^\p{L}\p{N}'*]+/u, "")
+      .replace(/[^\p{L}\p{N}'*]+$/u, "")
       .replace(/'+$/, "");
   }
 
@@ -228,7 +300,18 @@
   // let "damns"/"damned"/"damning" match "damn", and "fuckin"/"fuckin'"
   // match "fucking"/"fuck", in both directions (applied to both list
   // entries and input tokens).
-  function stemsOf(word) {
+  // matchConfig controls whether suffix-stemming applies at all —
+  // defaults to EN_MATCH_CONFIG ("en-suffix") when omitted, so every
+  // pre-existing call site (which always passed just `word`) keeps
+  // producing byte-for-byte the same stems as before the pack
+  // architecture existed. Community-tier packs (matchConfig.stemming ===
+  // "none") have no per-language stemmer built, so a "stem" is just the
+  // word itself — the pack's own data file is expected to list common
+  // inflected forms explicitly instead (this is what the curated
+  // Spanish pack does).
+  function stemsOf(word, matchConfig) {
+    matchConfig = matchConfig || EN_MATCH_CONFIG;
+    if (matchConfig.stemming !== "en-suffix") return [word];
     var stems = [word];
     for (var i = 0; i < SUFFIXES.length; i++) {
       var suf = SUFFIXES[i];
@@ -307,21 +390,48 @@
 
   // Build a Set of every stem of every list entry (single-token entries
   // only — multi-word phrases are handled separately by censorText).
-  function buildStemSet(wordlist) {
+  // matchConfig defaults to EN_MATCH_CONFIG when omitted — see stemsOf.
+  function buildStemSet(wordlist, matchConfig) {
+    matchConfig = matchConfig || EN_MATCH_CONFIG;
     var set = new Set();
     for (var i = 0; i < wordlist.length; i++) {
-      var entry = normalizeToken(wordlist[i]);
-      if (!entry || entry.indexOf(" ") !== -1) continue; // phrase, skip here
-      var stems = stemsOf(entry);
+      var entry = normalizeToken(wordlist[i], matchConfig.foldDiacritics);
+      if (!entry) continue;
+      if (!matchConfig.substringMode && entry.indexOf(" ") !== -1) continue; // phrase, skip here
+      var stems = stemsOf(entry, matchConfig);
       for (var j = 0; j < stems.length; j++) set.add(stems[j]);
     }
     return set;
   }
 
-  function buildPhraseList(wordlist) {
+  // Substring matching, for languages with no reliable whitespace word
+  // boundaries (matchConfig.substringMode — Chinese/Japanese/Thai/Korean
+  // community packs). `stemSet` here holds whole (possibly multi-
+  // character) list entries verbatim (no stemming), and `norm` is the
+  // already-normalized token/text being checked; a match is any entry
+  // appearing anywhere inside it.
+  function isProfaneSubstring(norm, stemSet) {
+    if (!norm) return false;
+    var it = stemSet.values();
+    var next = it.next();
+    while (!next.done) {
+      var entry = next.value;
+      if (entry && norm.indexOf(entry) !== -1) return true;
+      next = it.next();
+    }
+    return false;
+  }
+
+  // Substring-mode packs (no reliable word boundaries) don't use the
+  // phrase machinery at all — a multi-character list entry already
+  // matches as a substring via isProfaneSubstring, so "phrases" would be
+  // redundant with the plain stem set for those packs.
+  function buildPhraseList(wordlist, matchConfig) {
+    matchConfig = matchConfig || EN_MATCH_CONFIG;
     var phrases = [];
+    if (matchConfig.substringMode) return phrases;
     for (var i = 0; i < wordlist.length; i++) {
-      var entry = normalizeSpaces(wordlist[i]);
+      var entry = normalizeSpaces(wordlist[i], matchConfig.foldDiacritics);
       if (entry && entry.indexOf(" ") !== -1) phrases.push(entry);
     }
     // Longest first so overlapping phrases match the most specific one.
@@ -329,9 +439,13 @@
     return phrases;
   }
 
-  function normalizeSpaces(s) {
+  function normalizeSpaces(s, foldDiacritics) {
     if (typeof s !== "string") return "";
-    return s.toLowerCase().trim().replace(/\s+/g, " ");
+    var out = s.toLowerCase().trim().replace(/\s+/g, " ");
+    if (foldDiacritics) {
+      out = out.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    }
+    return out;
   }
 
   // Index phrases by their first (normalized) word, so findMatchesCore
@@ -339,9 +453,9 @@
   // the current token — O(tokens) overall rather than O(tokens *
   // phrases). Each bucket is sorted longest-first (by word count) so
   // the longest phrase starting at a position wins.
-  function buildPhraseIndex(wordlist) {
+  function buildPhraseIndex(wordlist, matchConfig) {
     var index = new Map();
-    var phrases = buildPhraseList(wordlist);
+    var phrases = buildPhraseList(wordlist, matchConfig);
     for (var i = 0; i < phrases.length; i++) {
       var words = phrases[i].split(" ");
       var first = words[0];
@@ -354,21 +468,24 @@
     return index;
   }
 
-  // findMatchesCore(tokens, stemSet, phraseIndex) -> [{index, length}]
+  // findMatchesCore(tokens, stemSet, phraseIndex, matchConfig) ->
+  // [{index, length}]
   //
   // `tokens` is an array of already-transcribed words in order (as the
   // audio pipeline produces them). Returns one entry per match — either
   // a multi-word phrase (length = word count) or a single profane word
   // (length = 1, via the same isProfane/wildcard logic as isProfane()).
   // Linear time: each token does one Map lookup plus, at most, a short
-  // scan of same-first-word phrase candidates.
-  function findMatchesCore(tokens, stemSet, phraseIndex) {
+  // scan of same-first-word phrase candidates. matchConfig defaults to
+  // EN_MATCH_CONFIG when omitted (pre-pack-architecture call sites).
+  function findMatchesCore(tokens, stemSet, phraseIndex, matchConfig) {
+    matchConfig = matchConfig || EN_MATCH_CONFIG;
     var matches = [];
     if (!Array.isArray(tokens) || tokens.length === 0) return matches;
 
     var normTokens = new Array(tokens.length);
     for (var t = 0; t < tokens.length; t++) {
-      normTokens[t] = normalizeToken(tokens[t]);
+      normTokens[t] = normalizeToken(tokens[t], matchConfig.foldDiacritics);
     }
 
     for (var i = 0; i < tokens.length; i++) {
@@ -397,7 +514,7 @@
         }
       }
 
-      if (!matchedPhrase && isProfaneCore(tokens[i], stemSet)) {
+      if (!matchedPhrase && isProfaneCore(tokens[i], stemSet, matchConfig)) {
         matches.push({ index: i, length: 1 });
       }
     }
@@ -408,40 +525,94 @@
   // Is `word` (a single token, possibly with punctuation) profane
   // against the given stem set? Tokens containing '*' are routed to
   // the wildcard matcher (see rules documented above) instead of exact
-  // stem lookup.
-  function isProfaneCore(word, stemSet) {
-    var norm = normalizeToken(word);
+  // stem lookup — only when matchConfig.wildcards is true. matchConfig
+  // defaults to EN_MATCH_CONFIG when omitted, so every pre-existing
+  // 2-arg call site keeps its exact prior behavior.
+  function isProfaneCore(word, stemSet, matchConfig) {
+    matchConfig = matchConfig || EN_MATCH_CONFIG;
+    var norm = normalizeToken(word, matchConfig.foldDiacritics);
     if (!norm) return false;
-    if (SAFE_WORDS.has(norm)) return false;
-    if (tokenHasWildcard(norm)) {
+    // SAFE_WORDS is an English-specific set of verified stemming-collision
+    // fixes (see its own comment above) — only meaningful for the "en"
+    // pack's suffix-stemming matcher, not other-language packs.
+    if (matchConfig.stemming === "en-suffix" && SAFE_WORDS.has(norm)) {
+      return false;
+    }
+    if (matchConfig.substringMode) {
+      return isProfaneSubstring(norm, stemSet);
+    }
+    if (matchConfig.wildcards && tokenHasWildcard(norm)) {
       return isProfaneWildcard(norm, stemSet);
     }
-    var stems = stemsOf(norm);
+    var stems = stemsOf(norm, matchConfig);
     for (var i = 0; i < stems.length; i++) {
       if (stemSet.has(stems[i])) return true;
     }
     return false;
   }
 
+  // Unicode-aware "core word character" regex pieces, used by both
+  // censorWord and censorTextCore's tokenizer. \p{L}/\p{N} (any
+  // letter/digit in any language) replaces the old plain a-z0-9 class so
+  // non-English packs' accented/non-Latin text censors correctly — for
+  // English this is exactly equivalent (\p{L} already covers a-z, case
+  // included, so the old /i flag is no longer even needed here).
+  var CORE_CHAR_CLASS = "\\p{L}\\p{N}'*";
+  var NON_CORE_CHAR_CLASS = "^" + CORE_CHAR_CLASS;
+  var CENSOR_WORD_RE = new RegExp(
+    "^([" + NON_CORE_CHAR_CLASS + "]*)([" + CORE_CHAR_CLASS + "]*)([" + NON_CORE_CHAR_CLASS + "]*)$",
+    "u"
+  );
+  var TOKEN_SCAN_RE = new RegExp(
+    "[" + CORE_CHAR_CLASS + "]+(?:[" + NON_CORE_CHAR_CLASS + "]*)",
+    "gu"
+  );
+
   function censorWord(word) {
     // Preserve any leading/trailing punctuation, censor the core token.
     // Asterisks are treated as part of the "core" (not punctuation) so
     // an already partially-censored token like "sh*t" is recognized as
     // one 4-character core and fully re-censored to "s***".
-    var m = word.match(/^([^a-z0-9'*]*)([a-z0-9'*]*)([^a-z0-9'*]*)$/i);
+    var m = word.match(CENSOR_WORD_RE);
     if (!m) return word;
     var lead = m[1], core = m[2], trail = m[3];
     if (!core) return word;
-    return lead + core[0] + "*".repeat(Math.max(core.length - 1, 1)) + trail;
+    // Use Array.from (not .length/slice) so a censored word with
+    // multi-code-unit characters (rare, but \p{L} can match astral-plane
+    // letters) still censors the whole visible character correctly.
+    var coreChars = Array.from(core);
+    return lead + coreChars[0] + "*".repeat(Math.max(coreChars.length - 1, 1)) + trail;
   }
 
-  function censorTextCore(text, stemSet, phrases) {
+  // censorTextCore(text, stemSet, phrases, matchConfig) — matchConfig
+  // defaults to EN_MATCH_CONFIG when omitted (pre-pack-architecture call
+  // sites keep exact prior behavior). Substring-mode packs (no reliable
+  // word boundaries — CJK/Thai community packs) skip the token-regex
+  // path entirely and instead scan the raw text for each list entry as
+  // a literal substring, longest-first so overlapping entries censor as
+  // their most specific match.
+  function censorTextCore(text, stemSet, phrases, matchConfig) {
+    matchConfig = matchConfig || EN_MATCH_CONFIG;
     if (typeof text !== "string" || !text) return text;
 
     var result = text;
 
     // 1. YouTube auto-caption profanity placeholder is always censored.
     result = result.split(CAPTION_PLACEHOLDER).join("[ *** ]");
+
+    if (matchConfig.substringMode) {
+      var entries = Array.from(stemSet).sort(function (a, b) { return b.length - a.length; });
+      for (var e = 0; e < entries.length; e++) {
+        var entry = entries[e];
+        if (!entry) continue;
+        var subRe = new RegExp(escapeRegExp(entry), "gi");
+        result = result.replace(subRe, function (match) {
+          var chars = Array.from(match);
+          return chars[0] + "*".repeat(Math.max(chars.length - 1, 1));
+        });
+      }
+      return result;
+    }
 
     // 2. Multi-word phrases (case-insensitive, whitespace-normalized).
     for (var i = 0; i < phrases.length; i++) {
@@ -455,10 +626,10 @@
     // 3. Single-token words (asterisks count as core word characters so
     // already partially-censored tokens like "sh*t" are matched as one
     // token rather than split on the asterisk).
-    result = result.replace(/[A-Za-z0-9'*]+(?:[^\sA-Za-z0-9'*]*)/g, function (token) {
+    result = result.replace(TOKEN_SCAN_RE, function (token) {
       // token here is a word plus any trailing punctuation glued to it by
       // the regex; re-split via censorWord's own punctuation handling.
-      if (isProfaneCore(token, stemSet)) {
+      if (isProfaneCore(token, stemSet, matchConfig)) {
         return censorWord(token);
       }
       return token;
@@ -494,7 +665,8 @@
     "pm_debugOverlay",
     "pm_showStatus",
     "pm_strictness",
-    "pm_padding"
+    "pm_padding",
+    "pm_multilingual"
   ];
 
   var CATCHUP_MODES = ["mute", "pause", "play"];
@@ -584,6 +756,14 @@
   // interaction with anything else — validated and defaulted exactly
   // like pm_catchupMode, just with no migration path (there was no
   // prior padding concept to migrate from).
+  //
+  // pm_multilingual (2026-08-30) is a simple boolean, default true —
+  // "Filter other languages (auto-detect)". This file only stores/
+  // exposes it (PMWordlist.settings.multilingual); the audio pipeline's
+  // Whisper-based language detection reads it to decide whether to call
+  // PMWordlist.setLanguage(lang) at all when it detects non-English
+  // speech. It has no effect on which word list is active by itself —
+  // setLanguage() is what actually switches packs.
   function resolveSettingsFromStorage(items) {
     items = items || {};
 
@@ -631,6 +811,7 @@
       showStatus: items.pm_showStatus !== false,
       strictness: strictness,
       padding: padding,
+      multilingual: items.pm_multilingual !== false,
       wordlist: wordlist
     };
   }
@@ -656,7 +837,12 @@
     STRICTNESS_MODES: STRICTNESS_MODES,
     DEFAULT_STRICTNESS: DEFAULT_STRICTNESS,
     PADDING_MODES: PADDING_MODES,
-    DEFAULT_PADDING: DEFAULT_PADDING
+    DEFAULT_PADDING: DEFAULT_PADDING,
+    DEFAULT_MULTILINGUAL: DEFAULT_MULTILINGUAL,
+    EN_MATCH_CONFIG: EN_MATCH_CONFIG,
+    validatePack: validatePack,
+    packFullWordlist: packFullWordlist,
+    isProfaneSubstring: isProfaneSubstring
   };
 
   // ---- Stateful wrapper wired to chrome.storage.sync ----
@@ -670,15 +856,24 @@
     showStatus: true,
     strictness: DEFAULT_STRICTNESS,
     padding: DEFAULT_PADDING,
+    multilingual: DEFAULT_MULTILINGUAL,
+    lang: "en",
+    matchConfig: EN_MATCH_CONFIG,
+    // Last wordlist resolveSettingsFromStorage computed for "en" (per
+    // pm_strictness/pm_wordlist) — cached here even while a non-English
+    // pack is active, so switching setLanguage("en") back doesn't have
+    // to wait for another refresh() to restore the right strictness/
+    // custom selection. See setLanguage below.
+    enWordlist: DEFAULT_WORDLIST.slice(),
     wordlist: DEFAULT_WORDLIST.slice(),
-    stemSet: buildStemSet(DEFAULT_WORDLIST),
-    phrases: buildPhraseList(DEFAULT_WORDLIST),
-    phraseIndex: buildPhraseIndex(DEFAULT_WORDLIST)
+    stemSet: buildStemSet(DEFAULT_WORDLIST, EN_MATCH_CONFIG),
+    phrases: buildPhraseList(DEFAULT_WORDLIST, EN_MATCH_CONFIG),
+    phraseIndex: buildPhraseIndex(DEFAULT_WORDLIST, EN_MATCH_CONFIG)
   };
 
   // Minimal, stable-shape settings object handed to other content
   // scripts (the audio pipeline's content.js reads PMWordlist.settings
-  // directly). Deliberately exactly these nine keys — no internal
+  // directly). Deliberately exactly these ten keys — no internal
   // Set/Map/array fields — so consumers can safely read or even
   // serialize it without pulling in wordlist/stemSet/phrase internals.
   // The SAME object reference is mutated in place on every refresh()
@@ -692,7 +887,8 @@
     debugOverlay: false,
     showStatus: true,
     strictness: DEFAULT_STRICTNESS,
-    padding: DEFAULT_PADDING
+    padding: DEFAULT_PADDING,
+    multilingual: DEFAULT_MULTILINGUAL
   };
 
   function hasChromeStorage() {
@@ -705,17 +901,31 @@
     );
   }
 
+  function hasChromeRuntimeFetch() {
+    return (
+      typeof chrome !== "undefined" &&
+      chrome &&
+      chrome.runtime &&
+      typeof chrome.runtime.getURL === "function" &&
+      typeof fetch === "function"
+    );
+  }
+
   // Note: pm_wordlist is respected AS-IS (even an empty array, meaning
   // "no words") whenever the key has actually been saved. Built-in
   // defaults are only used when the key has never been saved at all
   // (items.pm_wordlist === undefined — see refresh()'s storage.get
-  // default below).
-  function rebuildFrom(list) {
+  // default below). matchConfig defaults to EN_MATCH_CONFIG (so plain
+  // rebuildFrom(list) calls, as before the pack architecture, are
+  // unaffected).
+  function rebuildFrom(list, matchConfig) {
+    matchConfig = matchConfig || EN_MATCH_CONFIG;
     var wl = Array.isArray(list) ? list : DEFAULT_WORDLIST;
+    state.matchConfig = matchConfig;
     state.wordlist = wl;
-    state.stemSet = buildStemSet(wl);
-    state.phrases = buildPhraseList(wl);
-    state.phraseIndex = buildPhraseIndex(wl);
+    state.stemSet = buildStemSet(wl, matchConfig);
+    state.phrases = buildPhraseList(wl, matchConfig);
+    state.phraseIndex = buildPhraseIndex(wl, matchConfig);
   }
 
   function refresh() {
@@ -742,7 +952,18 @@
           state.showStatus = resolved.showStatus;
           state.strictness = resolved.strictness;
           state.padding = resolved.padding;
-          rebuildFrom(resolved.wordlist);
+          state.multilingual = resolved.multilingual;
+          // Cache the English-strictness-resolved wordlist regardless of
+          // which language is currently active, so a later
+          // setLanguage("en") can restore it immediately (see below).
+          state.enWordlist = resolved.wordlist;
+          // pm_strictness/pm_wordlist are an "en"-only concept — while a
+          // non-English pack is active, storage changes to them are
+          // cached above but must NOT rebuild the active (non-English)
+          // matching structures.
+          if (state.lang === "en") {
+            rebuildFrom(resolved.wordlist, EN_MATCH_CONFIG);
+          }
 
           settings.enabled = resolved.enabled;
           settings.safeMode = resolved.safeMode;
@@ -753,6 +974,7 @@
           settings.showStatus = resolved.showStatus;
           settings.strictness = resolved.strictness;
           settings.padding = resolved.padding;
+          settings.multilingual = resolved.multilingual;
 
           resolve(state);
         });
@@ -762,14 +984,129 @@
     });
   }
 
+  // PMWordlist.packAvailable — true once the currently-active language
+  // resolved to a real pack (always true for "en"; true for any other
+  // lang whose pack loaded successfully). Set to false by setLanguage()
+  // when asked for an unknown/unfetchable lang — the active matching
+  // state is left completely unchanged in that case (still whatever it
+  // was before the call), this is purely a signal for a consumer (e.g.
+  // an on-player status pill) to show "not supported" rather than
+  // silently claiming coverage it doesn't have.
+  var packAvailable = true;
+
+  function persistActiveLanguage() {
+    if (!hasChromeStorage() || !chrome.storage.local) return;
+    try {
+      var pack = PACKS[state.lang];
+      chrome.storage.local.set({
+        pm_activeLanguage: {
+          lang: state.lang,
+          quality: state.lang === "en" ? "curated" : (pack && pack.quality) || null,
+          available: packAvailable
+        }
+      });
+    } catch (e) {
+      // ignore — non-fatal, this is a display-only convenience for the popup
+    }
+  }
+
+  // PMWordlist.setLanguage(lang) -> Promise<boolean>
+  //
+  // Switches the ACTIVE matching pack. Called by the audio pipeline's
+  // Whisper-based language detection (when pm_multilingual is on) once
+  // it detects the spoken language of a video.
+  //
+  //   - lang === "en" (or falsy/omitted): restores English matching,
+  //     using whatever pm_strictness/pm_wordlist last resolved to
+  //     (state.enWordlist — kept fresh by every refresh(), even while a
+  //     non-English pack was active, so this doesn't need a fresh
+  //     storage round trip).
+  //   - lang already loaded (PACKS[lang] cached from an earlier call):
+  //     applied immediately from cache, no fetch.
+  //   - lang not yet loaded: lazily fetched via
+  //     fetch(chrome.runtime.getURL("shared/packs/" + lang + ".json")) —
+  //     packs are NOT bundled into every page load, only the one that
+  //     actually needs a non-English pack pays for it. On success, the
+  //     pack is validated (validatePack), cached in PACKS, and applied.
+  //   - unknown lang / fetch failure / invalid pack shape / no
+  //     chrome.runtime-fetch available (e.g. under Node tests): resolves
+  //     `false` and sets PMWordlist.packAvailable = false, WITHOUT
+  //     changing whatever pack was already active — a consumer (e.g. the
+  //     pipeline's status pill) can show "not supported for this
+  //     language" while matching continues exactly as before.
+  //
+  // Non-English packs always use their FULL word list (core + extended
+  // combined) — pm_strictness and the user's custom pm_wordlist are an
+  // "en"-only concept and are not consulted at all while another
+  // language is active.
+  function setLanguage(lang) {
+    if (typeof lang !== "string" || !lang) lang = "en";
+
+    if (lang === "en") {
+      state.lang = "en";
+      state.matchConfig = EN_MATCH_CONFIG;
+      rebuildFrom(state.enWordlist, EN_MATCH_CONFIG);
+      packAvailable = true;
+      persistActiveLanguage();
+      return Promise.resolve(true);
+    }
+
+    if (PACKS[lang]) {
+      applyLoadedPack(PACKS[lang]);
+      packAvailable = true;
+      persistActiveLanguage();
+      return Promise.resolve(true);
+    }
+
+    if (!hasChromeRuntimeFetch()) {
+      packAvailable = false;
+      persistActiveLanguage();
+      return Promise.resolve(false);
+    }
+
+    var url;
+    try {
+      url = chrome.runtime.getURL("shared/packs/" + lang + ".json");
+    } catch (e) {
+      packAvailable = false;
+      persistActiveLanguage();
+      return Promise.resolve(false);
+    }
+
+    return fetch(url)
+      .then(function (resp) {
+        if (!resp.ok) throw new Error("pack fetch failed: HTTP " + resp.status);
+        return resp.json();
+      })
+      .then(function (pack) {
+        if (!validatePack(pack, lang)) throw new Error("invalid pack shape for " + lang);
+        PACKS[lang] = pack;
+        applyLoadedPack(pack);
+        packAvailable = true;
+        persistActiveLanguage();
+        return true;
+      })
+      .catch(function () {
+        packAvailable = false;
+        persistActiveLanguage();
+        return false;
+      });
+  }
+
+  function applyLoadedPack(pack) {
+    state.lang = pack.lang;
+    state.matchConfig = pack.matchConfig;
+    rebuildFrom(packFullWordlist(pack), pack.matchConfig);
+  }
+
   function isProfane(word) {
     if (!state.enabled) return false;
-    return isProfaneCore(word, state.stemSet);
+    return isProfaneCore(word, state.stemSet, state.matchConfig);
   }
 
   function censorText(text) {
     if (!state.enabled) return text;
-    return censorTextCore(text, state.stemSet, state.phrases);
+    return censorTextCore(text, state.stemSet, state.phrases, state.matchConfig);
   }
 
   // findMatches(tokens) -> [{index, length}] against the live settings
@@ -777,10 +1114,11 @@
   // disabled, no matches are reported). Intended for the audio
   // pipeline: tokens is an array of already-transcribed words in
   // order; each result covers either one profane word or one matched
-  // multi-word phrase from the word list.
+  // multi-word phrase from the word list. Matches against whichever
+  // pack is currently active (see setLanguage).
   function findMatches(tokens) {
     if (!state.enabled) return [];
-    return findMatchesCore(tokens, state.stemSet, state.phraseIndex);
+    return findMatchesCore(tokens, state.stemSet, state.phraseIndex, state.matchConfig);
   }
 
   // Wire up live updates, guarded for contexts without chrome.*.
@@ -798,7 +1136,8 @@
           changes.pm_debugOverlay ||
           changes.pm_showStatus ||
           changes.pm_strictness ||
-          changes.pm_padding
+          changes.pm_padding ||
+          changes.pm_multilingual
         ) {
           refresh();
         }
@@ -816,16 +1155,31 @@
     censorText: censorText,
     findMatches: findMatches,
     refresh: refresh,
+    setLanguage: setLanguage,
     // Live settings snapshot for other content scripts (e.g. content.js
     // reading pm_muteAudio) — always in sync with the last refresh().
     // Exactly {enabled, muteAudio, censorCaptions, safeMode,
-    // catchupMode, debugOverlay, showStatus, strictness, padding}, no
-    // internal Set/Map/array fields.
+    // catchupMode, debugOverlay, showStatus, strictness, padding,
+    // multilingual}, no internal Set/Map/array fields.
     settings: settings,
     // exposed for the popup and for tests; not part of the "required" contract
     _state: state,
-    _core: PMWordlistCore
+    _core: PMWordlistCore,
+    _packs: PACKS
   };
+
+  // Live getters (not snapshotted values) — a consumer (e.g. an
+  // on-player status pill) reading PMWordlist.activeLanguage /
+  // PMWordlist.packAvailable always sees the current value, not whatever
+  // it was at the moment PMWordlist was first read into a local.
+  Object.defineProperty(root.PMWordlist, "activeLanguage", {
+    enumerable: true,
+    get: function () { return state.lang; }
+  });
+  Object.defineProperty(root.PMWordlist, "packAvailable", {
+    enumerable: true,
+    get: function () { return packAvailable; }
+  });
 
   // Also expose the core for Node-based unit testing via module.exports,
   // without turning this file into an ES module.

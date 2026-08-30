@@ -1,0 +1,22 @@
+{
+  "lang": "fr-CA-u-sd-caqc",
+  "quality": "community",
+  "words": {
+    "core": [
+      "calice",
+      "criss",
+      "crisse",
+      "noune",
+      "osti",
+      "tabarnak",
+      "viarge"
+    ],
+    "extended": []
+  },
+  "matchConfig": {
+    "stemming": "none",
+    "foldDiacritics": true,
+    "substringMode": false,
+    "wildcards": true
+  }
+}
