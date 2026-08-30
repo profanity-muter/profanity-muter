@@ -103,11 +103,16 @@
   // strip already gives everything needed to measure an offset if one is
   // ever found, without a dead knob sitting in the settings surface.)
   var debugSettings = { debugOverlay: false };
+  // pm_showStatus (0.1.15): shows/hides the always-on status pill (separate
+  // from the debug overlay) — default true, owned by the UI agent's popup
+  // toggle, read the same way as the other debugging-adjacent knobs above.
+  var statusSettings = { showStatus: true };
   function loadDebugSettings() {
     try {
-      chrome.storage.sync.get({ pm_debugOverlay: false }, function (items) {
+      chrome.storage.sync.get({ pm_debugOverlay: false, pm_showStatus: true }, function (items) {
         if (chrome.runtime.lastError) return;
         debugSettings.debugOverlay = !!items.pm_debugOverlay;
+        statusSettings.showStatus = items.pm_showStatus !== false;
       });
     } catch (e) {
       /* no chrome.storage available; keep defaults */
@@ -129,6 +134,7 @@
         handleCatchupModeChanged(changes.pm_catchupMode.newValue);
       }
       if (changes.pm_debugOverlay) debugSettings.debugOverlay = !!changes.pm_debugOverlay.newValue;
+      if (changes.pm_showStatus) statusSettings.showStatus = changes.pm_showStatus.newValue !== false;
       // A muteAudio toggle-off must release any currently-engaged mute right
       // away, not wait for the next tick().
       if (changes.pm_muteAudio && changes.pm_muteAudio.newValue === false) releaseMute('mute-audio-disabled');
@@ -171,7 +177,21 @@
       // Fallback ladder (0.1.12): true while pause-catchup has been
       // downgraded to muted PLAYBACK for the CURRENT stall because pausing
       // itself made no coverage progress — see tick(). Reset once covered.
-      catchupFallbackActive: false
+      catchupFallbackActive: false,
+      // DRM/undecodable content (0.1.15): set true on an 'unanalyzable' port
+      // message from offscreen — permanently suppresses safe-mode-uncovered
+      // muting/pausing for this session (see runTickLogic()'s `uncovered`
+      // computation) so a video that will never decode is never left
+      // muted/paused forever waiting for coverage that can't arrive.
+      unanalyzable: false,
+      // Status pill + mute counting (0.1.15) — per-video count of matched
+      // intervals actually muted through; activeMuteCountKey tracks the
+      // CURRENTLY-active counted interval so re-entering the SAME interval
+      // later (e.g. after a seek-back replay) counts again, but sitting
+      // inside one interval across several ticks doesn't double-count it.
+      mutedCount: 0,
+      activeMuteCountKey: null,
+      lifetimeVideoCounted: false // videosProtected (chrome.storage.local pm_stats) increments once per video, on its first counted mute
     };
   }
 
@@ -180,6 +200,7 @@
     releaseMute('video-changed');
     clearArmedTimers();
     session = newSession(videoId);
+    unanalyzableNoticeShown = false; // a new video gets its own fresh chance (and notice) — see the 'unanalyzable' handler
     safePortPost({ type: 'reset', videoId: videoId });
     logVideoInfoOnce(videoId);
   }
@@ -440,6 +461,65 @@
     TLOG(TAG, 'MUTE released t=' + (video ? video.currentTime.toFixed(2) : 'NA') + ' reason=' + reason + ' (was: ' + prevReason + ')');
   }
 
+  // ---- mute counting + lifetime stats (0.1.15) -----------------------------
+  // Per-video count (session.mutedCount) drives the status pill; lifetime
+  // totals persist across videos/sessions in chrome.storage.local under
+  // pm_stats — schema is exactly {totalMuted, videosProtected} per the
+  // popup's contract. chrome.storage.local (not sync) since this is
+  // write-frequent and sync has tighter per-item write-rate limits.
+  var STATS_FLUSH_MS = 10000;
+  var pendingStatsDelta = { totalMuted: 0, newVideoProtected: false };
+  var statsFlushTimer = null;
+
+  function countMute(interval) {
+    if (!session) return;
+    session.mutedCount = (session.mutedCount || 0) + 1;
+    var wordCount = interval.word.split(' ').length;
+    // Ensure the counter and the existing MUTE log lines agree (per the
+    // coordinator's explicit ask) — this is a distinct, greppable line
+    // right alongside the MUTE engaged/released lines already logged by
+    // engageMute()/releaseMute() for the same interval.
+    TLOG(
+      TAG,
+      '[PM-COUNT] muted #' + session.mutedCount + ' this video: "' + interval.word + '"' +
+        (wordCount > 1 ? ' (' + wordCount + '-word phrase)' : '')
+    );
+    var isFirstForVideo = !session.lifetimeVideoCounted;
+    session.lifetimeVideoCounted = true;
+    queueStatsIncrement(1, isFirstForVideo);
+  }
+
+  function queueStatsIncrement(muteDelta, isNewVideoProtected) {
+    pendingStatsDelta.totalMuted += muteDelta;
+    if (isNewVideoProtected) pendingStatsDelta.newVideoProtected = true;
+    if (!statsFlushTimer) statsFlushTimer = setTimeout(flushStats, STATS_FLUSH_MS);
+  }
+
+  function flushStats() {
+    statsFlushTimer = null;
+    var delta = pendingStatsDelta;
+    pendingStatsDelta = { totalMuted: 0, newVideoProtected: false };
+    if (delta.totalMuted === 0 && !delta.newVideoProtected) return;
+    try {
+      chrome.storage.local.get({ pm_stats: { totalMuted: 0, videosProtected: 0 } }, function (items) {
+        if (chrome.runtime.lastError) return;
+        var stats = items.pm_stats || { totalMuted: 0, videosProtected: 0 };
+        stats.totalMuted = (stats.totalMuted || 0) + delta.totalMuted;
+        if (delta.newVideoProtected) stats.videosProtected = (stats.videosProtected || 0) + 1;
+        chrome.storage.local.set({ pm_stats: stats });
+      });
+    } catch (e) {}
+  }
+  // Flush on pagehide too — a throttled 10s timer alone would lose whatever
+  // hadn't flushed yet if the tab/page goes away first.
+  window.addEventListener('pagehide', function () {
+    if (statsFlushTimer) {
+      clearTimeout(statsFlushTimer);
+      statsFlushTimer = null;
+    }
+    flushStats();
+  });
+
   // ---- proactive scheduling: arm setTimeouts against the interval list so
   // muting engages at the exact moment, independent of rAF cadence/throttling
   // (rAF loop below remains as a backstop for drift/pause/resume cases). -----
@@ -553,6 +633,30 @@
       container.style.position = 'relative';
     }
     container.appendChild(banner);
+  }
+
+  // DRM/undecodable content (0.1.15) — see the 'unanalyzable' port message
+  // handler. Never left silent: a rented/protected movie that can't be
+  // transcribed should say so, not just quietly stop muting.
+  var unanalyzableNoticeShown = false;
+  function showUnanalyzableNotice() {
+    if (unanalyzableNoticeShown) return;
+    unanalyzableNoticeShown = true;
+    var video = getVideo();
+    var container = video ? video.closest('.html5-video-player') || video.parentElement : document.body;
+    if (!container) return;
+    var notice = document.createElement('div');
+    notice.textContent = "Profanity Muter can't analyze this video's audio (protected content) — muting disabled for this video";
+    notice.style.cssText =
+      'position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:2147483647;' +
+      'background:#555;color:#fff;font:12px/1.4 sans-serif;padding:5px 12px;border-radius:4px;' +
+      'pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,0.4);';
+    if (container === document.body) {
+      notice.style.position = 'fixed';
+    } else if (getComputedStyle(container).position === 'static') {
+      container.style.position = 'relative';
+    }
+    container.appendChild(notice);
   }
 
   function showAnalyzingOverlay(show) {
@@ -714,6 +818,63 @@
     setDebugOverlayActive(settings.enabled && settings.debugOverlay);
   }, 500);
 
+  // ---- status pill (0.1.15) ------------------------------------------------
+  // Small, always-on, subtle indicator — separate from the debug overlay
+  // (which is off by default and verbose). Three states: "Protected"
+  // (coverage extends >=5s past the playhead), "Analyzing…" (playhead in or
+  // near an uncovered region still being worked), "Off" only on a hard
+  // failure (DRM/unanalyzable). Hideable via pm_showStatus.
+  var statusPillEl = null;
+  function computeStatusState() {
+    if (!session) return null;
+    if (session.unanalyzable) return 'off';
+    var video = getVideo();
+    if (!video) return null;
+    var t = video.currentTime;
+    if (!isCovered(t) || !isCovered(t + 5)) return 'analyzing';
+    return 'protected';
+  }
+  function renderStatusPill() {
+    var settings = currentSettings();
+    if (!settings.enabled || !statusSettings.showStatus) {
+      setStatusPillActive(false);
+      return;
+    }
+    var state = computeStatusState();
+    if (!state) {
+      setStatusPillActive(false);
+      return;
+    }
+    setStatusPillActive(true);
+    if (!statusPillEl) return;
+    var label = state === 'off' ? '🛡 Off' : state === 'analyzing' ? '🛡 Analyzing…' : '🛡 Protected';
+    var count = session ? session.mutedCount || 0 : 0;
+    if (count > 0) label += ' · ' + count + ' muted';
+    statusPillEl.textContent = label;
+  }
+  function setStatusPillActive(active) {
+    if (active && !statusPillEl) {
+      var video = getVideo();
+      var container = video ? video.closest('.html5-video-player') || video.parentElement : document.body;
+      if (!container) return;
+      statusPillEl = document.createElement('div');
+      statusPillEl.style.cssText =
+        'position:absolute;bottom:8px;right:8px;z-index:2147483646;' +
+        'background:rgba(0,0,0,0.55);color:#fff;font:11px/1.4 sans-serif;padding:2px 7px;' +
+        'border-radius:3px;pointer-events:none;white-space:nowrap;';
+      if (container === document.body) {
+        statusPillEl.style.position = 'fixed';
+      } else if (getComputedStyle(container).position === 'static') {
+        container.style.position = 'relative';
+      }
+      container.appendChild(statusPillEl);
+    } else if (!active && statusPillEl) {
+      if (statusPillEl.parentElement) statusPillEl.parentElement.removeChild(statusPillEl);
+      statusPillEl = null;
+    }
+  }
+  setInterval(renderStatusPill, 500); // ~2Hz per spec
+
   // pm_enabled=false must turn the ENTIRE extension off, not just stop
   // future muting decisions (0.1.13). Called synchronously from the
   // storage.onChanged handler, same pattern as handleCatchupModeChanged.
@@ -750,6 +911,7 @@
     if (session) session.catchupFallbackActive = false;
     showAnalyzingOverlay(false);
     setDebugOverlayActive(false);
+    setStatusPillActive(false);
     // Tell offscreen to idle this session's transcription CPU, and stop
     // relaying any further segments from capture.js (which keeps its own
     // lightweight hook installed regardless — it has no knowledge of
@@ -903,13 +1065,23 @@
     } catch (e) {}
   }
 
-  function tick() {
+  // Mute/coverage enforcement logic, split out from tick()'s rAF scheduling
+  // (0.1.15) so the backgrounded-tab backstop below can invoke this exact
+  // logic directly without ALSO enqueueing extra requestAnimationFrame
+  // chains (rAF stays suspended/throttled while hidden regardless — calling
+  // this doesn't fight that, it's just a separate, additional trigger for
+  // the SAME enforcement).
+  function runTickLogic() {
     var video = getVideo();
     var settings = currentSettings();
     if (video && session && settings.enabled) {
       var t = video.currentTime;
       var hit = inMutedInterval(t);
-      var uncovered = settings.safeMode && !isCovered(t);
+      // `&& !session.unanalyzable`: DRM/undecodable content (0.1.15) never
+      // gets any real coverage, ever — without this, safe mode would mute/
+      // pause this video forever waiting for transcription that offscreen
+      // has already given up on (see the 'unanalyzable' handler above).
+      var uncovered = settings.safeMode && !isCovered(t) && !session.unanalyzable;
 
       // Release decisions are based on the CURRENT hit/uncovered state, never
       // on the stored muteReason string. A previous version gated release on
@@ -1015,6 +1187,25 @@
         video.muted = true;
       }
 
+      // Mute counting (0.1.15): count once per word/phrase interval per
+      // actual playthrough — a "playthrough" of an interval is tracked via
+      // activeMuteCountKey (set while the playhead is inside it, cleared
+      // once it leaves), so re-entering the SAME interval later (a seek
+      // back and replay) counts again, but sitting inside one interval
+      // across many ticks only counts once. Gated on video.muted (the real
+      // DOM state, not just session.forcedMute) so it reflects whether
+      // muting was ACTUALLY applied, regardless of which mechanism/reason
+      // caused it.
+      if (hit && video.muted) {
+        var hitKey = hit.start.toFixed(2) + ',' + hit.end.toFixed(2) + ',' + hit.word;
+        if (session.activeMuteCountKey !== hitKey) {
+          session.activeMuteCountKey = hitKey;
+          countMute(hit);
+        }
+      } else if (!hit) {
+        session.activeMuteCountKey = null;
+      }
+
       var stalling = uncovered && (
         settings.catchupMode === 'pause'
           ? (session.catchupFallbackActive ? !video.paused : catchupPausedByUs)
@@ -1034,9 +1225,32 @@
         session.lastStallRequestWall = 0;
       }
     }
+  }
+
+  function tick() {
+    runTickLogic();
     requestAnimationFrame(tick);
   }
   requestAnimationFrame(tick);
+
+  // Backgrounded-tab protection (0.1.15): rAF suspends/heavily throttles
+  // while the document is hidden, but audio keeps playing regardless — a
+  // backgrounded tab is exactly where a stale mute/pause decision (or a
+  // missed release) matters most, since the user has no visual cue
+  // anything is wrong. Chrome's own "intensive throttling" of background
+  // timers explicitly EXEMPTS tabs playing audible media, so a plain 1s
+  // setInterval keeps firing reliably here even hidden. Runs the exact same
+  // enforcement logic as the rAF loop — never a separate/divergent path.
+  var backgroundBackstopInterval = null;
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) {
+      runTickLogic(); // react to the transition immediately, don't wait up to 1s for the first backstop tick
+      if (!backgroundBackstopInterval) backgroundBackstopInterval = setInterval(runTickLogic, 1000);
+    } else if (backgroundBackstopInterval) {
+      clearInterval(backgroundBackstopInterval);
+      backgroundBackstopInterval = null;
+    }
+  });
 
   // Seek/rate changes invalidate the proactively-armed timer delays (they
   // were computed against the old currentTime/rate) — re-arm, but do NOT
@@ -1052,7 +1266,7 @@
       // tick or an armed timer) so there is no gap between "seek lands" and
       // "safe mode notices the new position is uncovered".
       var settings = currentSettings();
-      if (settings.enabled && settings.safeMode && !isCovered(video.currentTime)) {
+      if (settings.enabled && settings.safeMode && !isCovered(video.currentTime) && !(session && session.unanalyzable)) {
         if (settings.catchupMode === 'pause') pauseForCatchup();
         else if (settings.muteAudio) engageMute('safe-mode-uncovered');
       }
@@ -1130,6 +1344,17 @@
         // indefinitely must be visible here, not just in the offscreen
         // document's own (user-inaccessible) console.
         TWARN(TAG, '[from offscreen]', msg.text);
+      } else if (msg.type === 'unanalyzable') {
+        if (session && session.videoId === msg.videoId && !session.unanalyzable) {
+          session.unanalyzable = true;
+          TWARN(TAG, '[PM-UNANALYZABLE] offscreen gave up transcribing this video (likely DRM/protected content) — releasing safe-mode protection');
+          clearArmedTimers();
+          releaseMute('unanalyzable');
+          if (catchupPausedByUs) resumeFromCatchup('unanalyzable');
+          session.catchupFallbackActive = false;
+          showAnalyzingOverlay(false);
+          showUnanalyzableNotice();
+        }
       }
     });
     port.onDisconnect.addListener(function () {

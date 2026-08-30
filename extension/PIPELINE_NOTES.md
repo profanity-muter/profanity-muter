@@ -1414,6 +1414,229 @@ region within the SAME run (see item 1's note above) and confirming no
 the timestamp-discrepancy root cause from item 2 is still live and worth
 digging into further, even though the loop itself is now bounded).
 
+## 0.1.15: four-audit fix batch (backend, page-side, scenario matrix, elegance) + status pill/counting
+
+Large consolidated batch from four adversarial audits, ranked, plus a
+mid-batch feature addition (status pill + mute counting). Grouped by
+severity below; "Your files only" — nothing in `shared/wordlist.js`,
+`captions.js`, or `popup/` was touched.
+
+**CRITICAL**
+
+1. **`getTranscriber` cached a REJECTED promise forever** (`offscreen-src.js`)
+   — one flaky model fetch permanently killed transcription for the whole
+   browser session (every later call just re-returned the same rejected
+   promise). Fixed with `.catch(() => { transcriberPromises.delete(id); throw e; })`,
+   mirroring `trackReadyPromise`'s existing retry pattern.
+
+**HIGH**
+
+2. **`changeType` was treated as a video change** (`capture.js`) — posted a
+   full `'reset'`, which `resetSession()` turns into `releaseMute()`
+   (unmuting an ACTIVE word mute mid-utterance, audible) and wiped
+   otherwise-valid `session.intervals`/`coveredIntervals` on a mere codec/
+   bitrate switch. Fixed: only `segmentCount = 0` (capture-side codec
+   bookkeeping) resets — the next append is correctly flagged `isInit=true`
+   so offscreen starts a fresh demux run (expected/fine), but session-level
+   coverage/word-dedupe (which already spans run boundaries by design) is
+   untouched.
+3. **`port.onDisconnect` deleted `portsByTabId[tabId]` unconditionally**
+   (`background.js`) — a reconnect race (old port's disconnect firing after
+   a new port for the same tab was already stored) could delete the NEWER,
+   live port. Fixed: only delete if the map still holds THIS exact port.
+4. **Memory leak trio**:
+   - (a) `s.runs` (`offscreen-src.js`) was never pruned — every run's
+     mediabunny `Input`/stream (each with up to 64MiB of its own cache)
+     stayed alive for the whole session. New `closeRun()` helper; keeps
+     current + previous run, closes/drops anything older.
+   - (b) No `chrome.tabs.onRemoved` cleanup — closing a tab left its
+     offscreen session resident forever. New listener in `background.js`
+     forwards a `pm-tab-closed` message to offscreen, reusing (now
+     run-closing) `dropSessionsForTab`.
+   - (c) `s.allWords`/`s.emittedKeys` (`offscreen-src.js`) were uncapped —
+     capped to a trailing `ALL_WORDS_CAP` (2000) window; resync only needs
+     recent words (coverage is tracked entirely separately in `s.covered`).
+5. **Armed end-of-interval timer released mute WITHOUT tick()'s coverage
+   check** (`content.js`'s `armSchedule`) — released purely on
+   `!inMutedInterval()`, a real audio leak in an uncovered region if the
+   playhead had also drifted there (worst backgrounded, where this armed
+   timer could be the ONLY thing firing). Now mirrors tick()'s exact
+   condition: `!inMutedInterval(t) && !(safeMode && !isCovered(t))`.
+
+**MEDIUM**
+
+6. Added a `'play'` listener (`content.js`) to re-arm `armSchedule()` —
+   previously only `seeking`/`ratechange` did, so a pause/resume left every
+   armed delay computed against the pre-pause `currentTime`, stale by
+   however long the pause lasted.
+7. `maybeProcess`'s loop (`offscreen-src.js`) now rechecks `s.disabled` (and
+   the new `s.unanalyzable`, see item 13) every iteration, not just before
+   the loop starts — each `transcribeWindow` await is a real yield point
+   where `pm_enabled` could flip mid-loop.
+8. `pm_model` silently reverted to `DEFAULT_MODEL` after an offscreen
+   respawn (e.g. `onInstalled`'s force-recreate) since model config was only
+   ever re-pushed on the next video-change `reset`. Fixed: `background.js`
+   tracks `videoIdByTabId` and calls `resendModelConfigToAllTabs()`
+   whenever `ensureOffscreenDocument()` actually creates a fresh doc.
+9. **Backgrounded-tab protection** (`content.js`): rAF suspends/throttles
+   heavily while hidden, but audio keeps playing. Split `tick()`'s
+   enforcement logic into `runTickLogic()` (callable without also enqueuing
+   more rAF chains) and added a `visibilitychange` listener that runs it
+   immediately on hiding, then a `1s setInterval` backstop for as long as
+   the tab stays hidden (audible tabs are exempt from Chrome's "intensive
+   throttling" of background timers, so this keeps firing reliably) —
+   killed on visible again.
+10. **Repeated-lyric under-muting**: `collapseHallucinationLoops`
+    (`offscreen-src.js`) would drop genuine repeated profanity (a 6+x
+    chorus swear looks structurally identical to a hallucination loop).
+    offscreen-src.js has no access to `shared/wordlist.js` (isolated-world
+    only, not ours to touch), so added a small, independent, deliberately
+    conservative `HALLUCINATION_PROFANITY_GUARD` stem regex used ONLY to
+    decide "never collapse this cycle" — a real match/mute decision still
+    happens downstream in content.js via the actual wordlist. Asymmetric on
+    purpose: a false negative here just falls back to pre-0.1.15 collapsing
+    behavior; a false positive costs a few extra tokens at worst. Unit-
+    verified: a 8x "fuck" chorus is left fully intact; a non-profane 10x
+    "yeah" loop still collapses normally.
+11. **Serialized transcriber calls** (`offscreen-src.js`): a simple
+    promise-chain mutex (`runSerialized`) now guarantees at most one
+    `transcriber()` call in flight at a time, globally — concurrent multi-
+    tab inference sharing one pipeline instance was unverified-safe.
+    `modelRtf`'s timer starts only once a call actually begins executing
+    (not when queued), so it still measures real model compute, not
+    queue-wait time behind another tab's window.
+12. **postMessage bridge hardening**: the public `window.postMessage`
+    broadcast `capture.js`->`content.js` segment/reset messages used
+    exclusively was, by construction, readable AND forgeable by any page
+    script with its own `'message'` listener (a forged `'segment'`, or
+    worse, manufactured coverage defeating safe mode). `capture.js` (runs
+    first, document_start, MAIN world, listed first in `manifest.json`)
+    now creates a `MessageChannel` and hands `content.js` a private port via
+    a one-time handshake — safe because Chrome guarantees document_start
+    content scripts run before the page's own scripts can register a
+    competing listener (the same trust assumption this whole extension
+    already depends on for patching `MediaSource.prototype` before
+    YouTube's player code runs). Once acknowledged, ALL further traffic is
+    trusted ONLY over the private port; the public broadcast handler stops
+    processing anything once the port is confirmed. Falls back to the
+    public path if the handshake ever fails, so hardening can't become a
+    single point of failure for the whole extension. (A simpler "random
+    nonce over the public channel" alternative was considered and rejected:
+    since the public broadcast is visible to every listener on `window`,
+    a nonce delivered over it is trivially readable by the same adversarial
+    script it's meant to stop — a private channel is the only approach that
+    actually changes anything.)
+13. **DRM/undecodable content**: if the exact same window fails
+    `sink.buffers()` 3 times in a row (`SINK_ERROR_THRESHOLD`), it's
+    structurally undecodable (protected content is the expected real cause
+    — mediabunny can demux the container but the audio samples themselves
+    are encrypted), not a transient "not enough data yet". New
+    `markUnanalyzable()` (`offscreen-src.js`) stops `maybeProcess` for that
+    session entirely and sends `pm-unanalyzable` -> `background.js` relays
+    -> `content.js` releases any safe-mode mute/pause immediately, sets
+    `session.unanalyzable` (suppresses safe-mode-uncovered muting/pausing
+    permanently for that video via `runTickLogic`'s `uncovered` check), and
+    shows a small on-player notice — never leaves a rented/protected movie
+    permanently muted with no way to actually protect it.
+
+**CLEANUP (elegance audit)**
+
+14. Deleted content.js's fallback wordlist/matching path (~55 LOC —
+    `isProfane`/`FALLBACK_WORDS`/the no-PMWordlist branch of `findMatches`)
+    and the fallback settings object/legacy `deriveMode`-based migration
+    path (~another chunk) — `manifest.json`'s `content_scripts` entry lists
+    `shared/wordlist.js` before `content.js` in the SAME `js` array, and
+    Chrome guarantees files within one entry's `js` array execute in that
+    order, so `globalThis.PMWordlist` is always present; neither path was
+    ever actually reachable. `currentSettings()` now reads
+    `PMWordlist.settings.catchupMode`/`.safeMode` directly, trusting the
+    wordlist agent's own contract-guaranteed derivation instead of
+    re-deriving a duplicate copy of the same logic. Deleted `pm_timeOffsetMs`
+    (~15 LOC) — the 0.1.7 manual calibration knob was never actually
+    measured/set away from 0; the debug overlay's raw per-word timestamps
+    already give everything needed to measure a real offset if one is ever
+    found. Deleted `s.bufferedEndS` and the `bufferedEnd` wire field
+    end-to-end (`capture.js` -> `content.js` -> `background.js` ->
+    `offscreen-src.js`, ~15 LOC) — fully superseded by 0.1.14's
+    `s.bufferedRanges` interval set; `lastBufferedGrowthWall` now updates
+    off the same `growthAbsStart`/`growthAbsEnd` presence check that already
+    gates `s.bufferedRanges`' own merge.
+15. **Log collapse**: `[PM-CHAIN]` (`capture.js`) now logs only on an actual
+    state change (a new disjoint buffered range, or the container-timecode/
+    buffered-growth cross-check disagreeing beyond
+    `CHAIN_LOG_CROSS_CHECK_SLACK_S`) plus a periodic summary every 25
+    segments or 5s, instead of unconditionally every single append.
+    `[PM-CHECK]`/`[PM-RESAMPLE]` (`offscreen-src.js`) now only log on
+    genuine disagreement/mismatch (the `-WARN` variants already did; the
+    unconditional per-window `[PM-CHECK]`/`[PM-RESAMPLE]` lines are
+    deleted). This IMPROVES the flight-recorder's actual time coverage —
+    the ring buffer was evicting in ~2 minutes under the old unconditional
+    volume, which worked against its own "reconstruct what happened"
+    purpose.
+
+**Feature addition: status pill + mute counting** (mid-batch, folded in)
+
+- **Status pill** (`content.js`): a small, separate-from-the-debug-overlay,
+  always-on indicator — bottom-right, ~11px, `pointer-events:none`, updated
+  at ~2Hz (`renderStatusPill`/`setStatusPillActive`/`computeStatusState`).
+  Three states: `🛡 Protected` (coverage extends >=5s past the playhead,
+  checked via `isCovered(t) && isCovered(t+5)` — independent of the
+  configured catch-up strategy, since coverage is an objective fact about
+  the pipeline regardless of how it's currently being protected), `🛡
+  Analyzing…` (playhead in or within that 5s lookahead of an uncovered
+  region), `🛡 Off` (only on `session.unanalyzable`, item 13's hard-failure
+  state). Appends `· N muted` once `session.mutedCount > 0`. Hideable via
+  new `pm_showStatus` (default true, read the same way as
+  `pm_debugOverlay`); hidden entirely whenever `pm_enabled` is false (same
+  gate as the debug overlay and analyzing overlay).
+- **Mute counting** (`content.js`): `session.mutedCount` increments once per
+  matched interval per actual playthrough — tracked via
+  `session.activeMuteCountKey` (set while the playhead is inside a given
+  interval, cleared on leaving it), gated on the REAL `video.muted` DOM
+  state (not just `session.forcedMute`) so it reflects whether muting was
+  actually applied regardless of which mechanism caused it. A re-entry into
+  the same interval later (seek back, replay) counts again — this is a
+  per-playthrough count, not a per-video-ever-seen count. Each counted mute
+  logs a `[PM-COUNT]` line (labeled with the word count for phrase matches)
+  immediately alongside the existing `MUTE engaged`/`released` lines, so the
+  counter and the log always agree, per the explicit ask.
+- **Lifetime stats** (`content.js` -> `chrome.storage.local`, schema kept
+  EXACTLY as specified for the popup): `pm_stats: {totalMuted,
+  videosProtected}`. `totalMuted` increments by the counted-interval count;
+  `videosProtected` increments once per video on its first counted mute
+  (`session.lifetimeVideoCounted`). Buffered in `pendingStatsDelta` and
+  flushed at most every 10s (`STATS_FLUSH_MS`) via `setTimeout`, plus
+  unconditionally on `pagehide` (so a throttled-but-pending delta isn't
+  lost if the page goes away first). Uses `chrome.storage.local`, not
+  `sync`, per the explicit write-rate-limit reasoning. Known, accepted
+  limitation: the get-then-set flush isn't atomic across multiple tabs
+  writing concurrently (a genuine race could under-count under heavy
+  multi-tab use) — acceptable for a best-effort stats counter, not
+  something billing-critical; not engineered around further here.
+
+**DEFERRED** (per the coordinator's explicit instruction — noted, not done):
+a `computeDesiredState` state-machine refactor of `tick()`/`runTickLogic()`
+(staged behind harness tests later); wasm variant trim in `build.js` (needs
+live instrumentation of which variant actually loads first, not done this
+pass); SSAI/live-stream support (wontfix for now); `all_frames` embeds
+(product call pending).
+
+**Verification status**: every fix above is syntax-checked
+(`node --check`) and bundles clean (`node build.js`). Unit-verified in
+isolation where feasible without live bytes: the hallucination profanity
+guard (chorus-swearing case + non-profane-loop case, both correct). Items
+2/3/5/6/7/8/9/12/13 and the status pill/counting feature are logic changes
+that need a LIVE run to confirm — no live verification has happened yet
+this pass. **Needs, at human pacing once reloaded**: (1) the standing
+0.1.14 jump-heavy verification (multiple >2min forward/backward jumps,
+coverage reaching the playhead within ~8s of each); (2) a quick multi-tab
+smoke test (two videos open simultaneously, confirm both transcribe
+correctly with the new serialized-transcriber mutex in place, no starvation
+of either tab); (3) visual confirmation of the status pill's three states
+and the `pm_showStatus` toggle; (4) a changeType-triggering quality switch
+(if reproducible) confirming an active word mute is NOT interrupted; (5)
+`verify/caption_correlate.mjs` median/IQR sync numbers.
+
 ## Known gaps
 
 - **`shared/wordlist.js` `pm_wordlist:undefined`-default bug** (finding #2

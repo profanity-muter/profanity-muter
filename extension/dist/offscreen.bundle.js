@@ -47292,9 +47292,6 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
         }
         const decodedDurationSum = wrapped.reduce((acc, wb) => acc + wb.buffer.duration, 0);
         const claimedSpan = wrapped.length ? wrapped[wrapped.length - 1].timestamp + wrapped[wrapped.length - 1].duration - wrapped[0].timestamp : 0;
-        log(
-          "[PM-RESAMPLE] nativeRate=" + nativeRate + " decodedDurationSum=" + decodedDurationSum.toFixed(3) + "s claimedSpan=" + claimedSpan.toFixed(3) + "s requestedWindow=" + (absEnd - absStart).toFixed(3) + "s firstBufferTimestamp=" + wrapped[0].timestamp.toFixed(3) + " (this IS the absolute video-time we trust directly \u2014 no offset applied)"
-        );
         if (nativeRate !== 48e3) {
           log("[PM-RESAMPLE-WARN] unexpected nativeRate=" + nativeRate + " (Opus/WebM is normally 48000Hz) \u2014 a wrong rate here would silently corrupt the WebAudio resample and shift every timestamp downstream");
         }
@@ -47555,9 +47552,11 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
             appendToRun(s.currentRun, bytes);
             if (msg.localTimeSec != null && msg.growthAbsStart != null) {
               const delta = msg.growthAbsStart - msg.localTimeSec;
-              log(
-                "[PM-CHECK] seg=" + msg.segIndex + " localTimeSec=" + msg.localTimeSec.toFixed(3) + " growthAbsStart=" + msg.growthAbsStart.toFixed(3) + " delta=" + delta.toFixed(3) + (Math.abs(delta) > CHECK_SLACK_S ? " *** DISAGREEMENT beyond " + CHECK_SLACK_S + "s ***" : " (agrees)")
-              );
+              if (Math.abs(delta) > CHECK_SLACK_S) {
+                log(
+                  "[PM-CHECK] seg=" + msg.segIndex + " localTimeSec=" + msg.localTimeSec.toFixed(3) + " growthAbsStart=" + msg.growthAbsStart.toFixed(3) + " delta=" + delta.toFixed(3) + " *** DISAGREEMENT beyond " + CHECK_SLACK_S + "s ***"
+                );
+              }
             }
           } else {
             log("segment received before an init segment; dropping");

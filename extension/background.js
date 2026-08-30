@@ -229,6 +229,19 @@ chrome.runtime.onMessage.addListener(function (msg) {
         /* stale port; not critical, offscreen's own console still has it */
       }
     }
+  } else if (msg.type === 'pm-unanalyzable') {
+    // DRM/undecodable content (0.1.15): offscreen gave up transcribing this
+    // video entirely — relay to content.js so it can release safe-mode
+    // muting and show a player notice, rather than leaving a rented/
+    // protected video permanently muted with no way to actually analyze it.
+    var uaPort = portsByTabId.get(msg.tabId);
+    if (uaPort) {
+      try {
+        uaPort.postMessage({ type: 'unanalyzable', videoId: msg.videoId });
+      } catch (e) {
+        console.warn('[PM-BG] failed to relay unanalyzable:', String(e));
+      }
+    }
   } else if (msg.type === 'pm-resync-result') {
     var syncPort = portsByTabId.get(msg.tabId);
     if (syncPort) {
