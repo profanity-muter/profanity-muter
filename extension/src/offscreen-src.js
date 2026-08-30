@@ -379,7 +379,7 @@ function getOrCreateSession(tabId, videoId) {
       disabled: false, // pm_enabled=false (0.1.13) — see pm-disable/pm-enable handlers
       bufferedRanges: [], // merged [{start,end}] in ABSOLUTE video time — real interval set of what our hook has actually captured (see pickNextWindow); 0.1.15 deleted the old single-scalar bufferedEndS entirely
       windowAttempts: new Map(), // rounded-start-location key -> attempt count, for the stuck-location loop-breaker (0.1.14, made location-based in 0.1.20 — see transcribeWindow's loop-breaker section for why exact-span keying stopped catching this)
-      sinkErrorAttempts: new Map(), // "start.toFixed(2),end.toFixed(2)" -> consecutive sink.buffers() error count, for DRM/undecodable detection (0.1.15)
+      sinkErrorAttempts: new Map(), // "start.toFixed(2),end.toFixed(2)" -> consecutive decode-failure count (a thrown sink.buffers() error, OR — 0.1.21 — a track-ready/decode stage TIMEOUT with no thrown error at all), for DRM/undecodable/permanently-unworkable detection (0.1.15, extended 0.1.21)
       unanalyzable: false, // set true once DRM/undecodable content is detected — maybeProcess stops entirely, content.js releases safe-mode muting for this session
       processing: false,
       pendingRerun: false,
@@ -598,6 +598,34 @@ const WINDOW_LOOP_THRESHOLD = 3; // same exact [absStart,absEnd) attempted this 
 const ALL_WORDS_CAP = 2000; // trailing-window cap for s.allWords/s.emittedKeys — see the memory-leak note at the trim site
 const SINK_ERROR_THRESHOLD = 3; // same exact window failing sink.buffers() this many times in a row -> DRM/undecodable, see markUnanalyzable
 
+// Stage-timeout guard (0.1.21) — a live user session on a LIVE STREAM
+// (audio/mp4, codecs="mp4a.40.2" — the never-before-exercised AAC/fMP4
+// path) produced ZERO windows, ZERO skips, and ZERO errors for 2+ minutes
+// after one initial [PM-NO-WINDOW]. Traced by elimination against every
+// existing error/skip path in this function (see PIPELINE_NOTES "0.1.21"):
+// getPrimaryAudioTrack() resolving with a falsy track would have logged its
+// own [PM-SKIP] (never seen), and sink.buffers() throwing would have hit
+// the try/catch below (also never seen) — so nothing in THIS file's own
+// code ever threw or rejected. The only remaining explanation is a promise
+// from mediabunny/WebCodecs (getPrimaryAudioTrack, track.getSampleRate, or
+// the sink.buffers() decode generator) that simply never settles — a class
+// of failure this file cannot fully audit from outside a third-party
+// library's internals, and one the standing "every did-not-attempt must
+// surface" rule cannot honor with a plain try/catch, since nothing ever
+// throws. A bounded timeout converts "silently hangs forever" into
+// "loudly fails within STAGE_TIMEOUT_MS", regardless of the underlying
+// reason — this is the deliberate, scoped fix here: make the failure mode
+// visible and recoverable rather than fully root-causing mediabunny's
+// internals (which would need a live AAC/fMP4 repro this pass didn't have).
+const STAGE_TIMEOUT_MS = 25000; // generously above any legitimate stage per the measured RTF table (steady-state well under 1x realtime)
+function withStageTimeout(promise, label) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error('stage "' + label + '" did not settle within ' + STAGE_TIMEOUT_MS + 'ms (hung promise, not a thrown error)')), STAGE_TIMEOUT_MS);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 function markUnanalyzable(s, reason) {
   if (s.unanalyzable) return; // already marked, don't spam
   s.unanalyzable = true;
@@ -763,8 +791,10 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // Track/sink are resolved ONCE per run and cached — re-fetching the
   // primary audio track is cheap once resolved, but constructing a fresh
   // Input/re-parsing from scratch (the old approach) is not. See newRun().
+  const windowKeyForErrors = absStart.toFixed(2) + ',' + absEnd.toFixed(2);
   if (!run.track) {
     if (!run.trackReadyPromise) {
+      notifyTab(s, '[PM-STAGE] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') resolving audio track for this run…');
       run.trackReadyPromise = run.input
         .getPrimaryAudioTrack()
         .then((t) => {
@@ -778,35 +808,74 @@ async function transcribeWindow(s, run, absStart, absEnd) {
           return null;
         });
     }
-    const track = await run.trackReadyPromise;
+    let track;
+    try {
+      // Stage-timeout guard (0.1.21) — see the withStageTimeout comment
+      // above: getPrimaryAudioTrack() can hang with no rejection at all on
+      // an as-yet-unaudited container/codec path (confirmed live on an
+      // AAC/fMP4 live stream). run.trackReadyPromise itself is left
+      // untouched on timeout (not nulled) — if it genuinely resolves later,
+      // the NEXT attempt picks it up for free; only our own wait on it here
+      // is bounded.
+      track = await withStageTimeout(run.trackReadyPromise, 'track-ready');
+    } catch (e) {
+      const hangCount = (s.sinkErrorAttempts.get(windowKeyForErrors) || 0) + 1;
+      s.sinkErrorAttempts.set(windowKeyForErrors, hangCount);
+      if (hangCount >= SINK_ERROR_THRESHOLD) {
+        markUnanalyzable(s, 'window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') track resolution hung ' + hangCount + 'x in a row: ' + String(e));
+      } else {
+        notifyTab(s, '[PM-HANG] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') ' + String(e && e.message ? e.message : e) + ' (' + hangCount + '/' + SINK_ERROR_THRESHOLD + ')');
+      }
+      return false;
+    }
     if (!track) {
       notifyTab(s, '[PM-SKIP] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') skipped: no audio track found yet for this run');
       return false;
     }
   }
-  if (run.nativeRate == null) run.nativeRate = await run.track.getSampleRate();
+  if (run.nativeRate == null) {
+    try {
+      run.nativeRate = await withStageTimeout(run.track.getSampleRate(), 'get-sample-rate');
+    } catch (e) {
+      notifyTab(s, '[PM-HANG] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') ' + String(e && e.message ? e.message : e));
+      return false;
+    }
+  }
   const nativeRate = run.nativeRate;
   const sink = run.sink;
-  const windowKeyForErrors = absStart.toFixed(2) + ',' + absEnd.toFixed(2);
   const wrapped = [];
   try {
-    for await (const wb of sink.buffers(absStart, absEnd)) wrapped.push(wb);
+    // Stage-timeout guard (0.1.21): the decode loop itself is the OTHER
+    // place a container/codec-specific mediabunny/WebCodecs path could hang
+    // with no thrown error at all (a live AAC/fMP4 session produced zero
+    // [PM-SKIP]/[PM-DEMUX-ERR] lines, which rules out every OTHER catch
+    // path in this function — see the withStageTimeout comment above).
+    // Wrapped as one IIFE so the WHOLE decode (not each individual chunk)
+    // is bounded by a single timeout.
+    await withStageTimeout(
+      (async () => {
+        for await (const wb of sink.buffers(absStart, absEnd)) wrapped.push(wb);
+      })(),
+      'decode'
+    );
   } catch (e) {
-    // DRM/undecodable-content detection (0.1.15): if the SAME exact window
-    // fails to decode 3 times in a row, this isn't a transient "not enough
-    // data yet" — it's structurally undecodable (protected/DRM content is
-    // the expected real-world cause: mediabunny can demux the container but
-    // the actual audio samples are encrypted). Give up on this session
-    // entirely rather than retrying forever against a video that will never
-    // decode — releases safe-mode muting via `pm-unanalyzable` (see below)
-    // so a rented/protected movie is never left permanently muted with no
-    // way to actually protect it.
+    // DRM/undecodable-content detection (0.1.15) / silent-hang detection
+    // (0.1.21, same counter+threshold): if the SAME exact window fails to
+    // decode (thrown error) OR hangs (timeout, no error at all) 3 times in
+    // a row, this isn't a transient "not enough data yet" — it's
+    // structurally undecodable/unworkable (protected/DRM content is the
+    // expected real-world cause for a genuine throw; an unaudited
+    // container/codec path is the expected cause for a hang). Give up on
+    // this session entirely rather than retrying forever — releases
+    // safe-mode muting via `pm-unanalyzable` (see below) so content that
+    // will never decode is never left permanently muted with no way to
+    // actually protect it.
     const errCount = (s.sinkErrorAttempts.get(windowKeyForErrors) || 0) + 1;
     s.sinkErrorAttempts.set(windowKeyForErrors, errCount);
     if (errCount >= SINK_ERROR_THRESHOLD) {
       markUnanalyzable(s, 'window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') failed to decode ' + errCount + 'x in a row: ' + String(e));
     } else {
-      notifyTab(s, '[PM-SKIP] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') skipped: sink.buffers error (' + errCount + '/' + SINK_ERROR_THRESHOLD + '): ' + String(e));
+      notifyTab(s, '[PM-SKIP] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') skipped: sink.buffers error/hang (' + errCount + '/' + SINK_ERROR_THRESHOLD + '): ' + String(e && e.message ? e.message : e));
     }
     return false;
   }

@@ -2232,6 +2232,138 @@ either resolving normally or a single `[PM-WINDOW-LOOP]` alarm), and (3) a
 forced stall (e.g. throttle the tab) in "play" mode actually produces a
 `[PM-STALL]`/restart within ~15s instead of silence.
 
+## 0.1.21: silent AAC/fMP4 hang (bounded stage timeouts) + live-stream pill honesty
+
+A 0.1.20 live user session hit a LIVE STREAM (`videoId=/live/yCTJQrXt9x8`,
+`audio/mp4` with `codecs="mp4a.40.2"` — the fMP4/AAC path flagged as
+"never exercised" in every prior version's Known Gaps section, now finally
+exercised for real). Capture worked correctly (segments landed, ranges
+grew, 0.1.20's run-boundary fired correctly on the seek) — but offscreen
+produced ZERO windows, ZERO skips, and ZERO errors for 2+ minutes after one
+initial `[PM-NO-WINDOW]`. Two fixes.
+
+### 1. Silent death: bounded stage timeouts around the demux/decode path
+
+**Traced by elimination, not guessed.** Every existing failure path in
+`transcribeWindow` (`offscreen-src.js`) was audited against the "zero
+skips, zero errors" evidence:
+- `getPrimaryAudioTrack()` resolving with a falsy track logs its own
+  `[PM-SKIP]` — never seen, so track resolution didn't fail that way.
+- `sink.buffers()` throwing is caught and logs `[PM-SKIP]`/`[PM-DEMUX-ERR]`
+  — never seen either.
+- `s.processing` staying `true` forever (masking the stall from
+  content.js's watchdog, since `sendHeartbeat`'s `setInterval` keeps firing
+  regardless of what `maybeProcess`'s `for(;;)` loop is actually stuck
+  awaiting) is consistent with everything observed: a single attempt stuck
+  inside an **unsettled promise with no rejection at all**.
+
+The only remaining explanation is a promise from mediabunny/WebCodecs
+(`getPrimaryAudioTrack()`, `track.getSampleRate()`, or the
+`sink.buffers()` decode generator) that simply never resolves NOR rejects
+on this specific container/codec combination. This is a real gap in what
+this file can audit from outside a third-party library's internals — MP4
+box-header parsing (`readMetadata()`'s box-scanning loop, the
+`Mp4InputFormat`/`WebMInputFormat` format-sniffing checks, and
+`AudioBufferSink`'s WebCodecs-backed decode) were all read end-to-end this
+pass looking for a concrete bug (does anything require WebM-specific
+fields? does the fragmented-MP4 "moof without moov requires
+`InputOptions.initInput`" throw path apply here? — no: every run here
+always starts with a real cached init segment, own or resent per 0.1.20's
+run-boundary fix, so a `moov` should always be found first) — nothing
+conclusively reproducible was found without a live AAC/fMP4 session to
+step through, which this pass didn't have (WebCodecs is a real-browser API
+with no Node polyfill available in this environment, so a from-scratch
+fMP4/AAC fixture couldn't actually be run against mediabunny's real decode
+path here either — noted honestly rather than faked).
+
+**Fix, scoped to what this file CAN own**: per the standing "every
+did-not-attempt must surface" rule, a hang with no rejection can't be
+caught with a plain `try/catch` — so `transcribeWindow` now races the three
+highest-risk mediabunny calls (`getPrimaryAudioTrack()`,
+`track.getSampleRate()`, and the whole `sink.buffers()` decode loop, each
+wrapped as one bounded unit) against a new `withStageTimeout()` helper
+(`STAGE_TIMEOUT_MS` = 25s, well above any legitimate stage per the
+measured RTF table). A timeout converts "silently hangs forever" into a
+loud `[PM-HANG]` diag within a bounded time, REGARDLESS of the underlying
+reason — this makes the failure mode visible and recoverable without fully
+root-causing mediabunny's internals blind. `run.trackReadyPromise` itself
+is left untouched on a track-ready timeout (only OUR wait on it is
+bounded) so a genuinely-slow-but-eventually-resolving promise still gets
+picked up for free by the next attempt. Repeated hangs/errors on the exact
+same window (`s.sinkErrorAttempts`, reused from 0.1.15's DRM-detection
+counter, now covers both a thrown decode error AND a stage timeout under
+one `SINK_ERROR_THRESHOLD`-gated counter) still eventually call
+`markUnanalyzable()` rather than retrying a permanently-broken combination
+forever, loudly, every 25s. A `[PM-STAGE]` breadcrumb now also logs once
+per run right before the track-ready await starts, so a future paste shows
+exactly which stage a stuck attempt is in even before a hang fully
+materializes.
+
+**Explicitly NOT fixed this pass** (documented, not silently dropped): the
+worker-side `transcribeInWorker()` call (the actual Whisper inference,
+serialized globally via `runSerialized`'s promise-chain mutex) is NOT
+wrapped in a stage timeout. A hang there is architecturally worse than the
+demux-stage hangs fixed above — the global mutex chain itself would stay
+blocked even if our own await timed out, wedging transcription for EVERY
+tab, not just the live-stream one, and unwedging it safely (e.g. resetting
+the chain out from under an unabortable worker call) needs more care than
+this pass had room for. The live evidence (zero skips before ever reaching
+this stage) points at the demux side, not this one, so it was left alone
+rather than risk a partial, worse-than-nothing fix. Flagged as a known
+residual gap below.
+
+### 2. Live-stream pill honesty (no full live-stream support — deferred by design)
+
+Per the coordinator's explicit scope: do NOT attempt full live-stream
+support. Two honest, narrow changes:
+
+- **Detection** (`content.js`, `isLiveStream()`): `video.duration ===
+  Infinity` (the standard, spec-level HTML5 signal for a live stream, not
+  YouTube-specific) as the primary check, OR-ed with YouTube's own
+  `#movie_player.ytp-live` class as a defensive fallback in case some live
+  variant ever reports a finite duration.
+- **Pill** (`computeStatusState()`): a live stream now short-circuits
+  straight to a new `{kind:'live'}` state, rendered as `🛡 Live — limited
+  support`, BEFORE any of the coverage-horizon math runs — the existing
+  "Protected"/"Analyzing — safe to pause (~Ns)" states both implicitly
+  promise something (a real ETA, or "nothing to do") that doesn't hold the
+  same way against a moving live edge with no fixed end and a coverage
+  backlog that may never fully close.
+- **Transcription itself is unchanged** — the pipeline already does
+  best-effort transcription against whatever DVR/buffered window exists,
+  with no special-casing needed; this pass only stops the pill from lying
+  about what that best-effort protection actually guarantees. Muting/
+  pause-catchup logic in `runTickLogic()` is also unchanged — safe mode can
+  still mute/pause against a live stream's uncovered regions exactly as it
+  always has (this is the accepted, documented limitation of "limited
+  support," not silently patched over).
+
+**Verification status**: `node --check content.js`, an ES-module check on
+`offscreen-src.js`, and `node build.js` all pass. Unit-verified in
+isolation (standalone Node harness, no mediabunny/WebCodecs dependency
+needed for this specific piece): `withStageTimeout()` converts a
+never-settling promise into a loud, correctly-labeled rejection within its
+bound, lets a fast-resolving promise through untouched, propagates a
+genuine rejection's real message unmodified (not masked by the timeout
+machinery), and clears its timer promptly on the fast path (no leaked
+timer). `isLiveStream()`'s own logic is a two-line pure check not
+exercised by a separate harness — trivial enough to read-verify directly.
+**Not verified live** — no working `claude-in-chrome` session against a
+real live stream this pass, and (per above) no way to run a real AAC/fMP4
+decode through mediabunny/WebCodecs outside an actual browser either. The
+next live pass should confirm: (1) the same live-stream session now
+produces a `[PM-STAGE]`/`[PM-HANG]` line within ~25s instead of eternal
+silence, (2) `s.sinkErrorAttempts`-driven `markUnanalyzable()` eventually
+fires (and the pill correctly falls back to `Off`, taking priority over
+`Live`, per `computeStatusState()`'s existing `unanalyzable` check running
+first) if the hang is genuinely permanent for this stream, (3) the pill
+shows `Live — limited support` immediately on any live video regardless of
+coverage state, and (4) whether the underlying AAC/fMP4 hang is EVER
+actually just a slow-but-real resolve (i.e., whether raising
+`STAGE_TIMEOUT_MS` alone would have "fixed" it) — worth checking once a
+`[PM-HANG]` line is actually captured, since that would redirect the real
+fix toward "give it longer" rather than "something is actually stuck."
+
 ## Known gaps
 
 - **`shared/wordlist.js` `pm_wordlist:undefined`-default bug** (finding #2
@@ -2251,9 +2383,21 @@ forced stall (e.g. throttle the tab) in "play" mode actually produces a
   round, or tiny-model alignment-head collapse specifically), is not yet
   determined — needs the `[PM-RESAMPLE]`/`[PM-ANCHOR]`/`[PM-ENERGY]` evidence
   from a real run to distinguish.
-- fMP4/AAC path (`MP4`, `ADTS` formats passed to mediabunny) is wired but
-  never exercised — every real run observed WebM/Opus only, matching
-  spike-capture's finding.
+- **fMP4/AAC path exercised for the first time in 0.1.21** (a live stream,
+  `audio/mp4`/`mp4a.40.2`) and found to silently hang somewhere inside
+  mediabunny/WebCodecs's demux/decode with no thrown error — bounded stage
+  timeouts now make that failure loud and recoverable (see "0.1.21" above),
+  but the ACTUAL AAC decode path is still not confirmed working end-to-end;
+  whether the hang is a real bug or just needs a longer timeout is not yet
+  known (needs a live `[PM-HANG]` capture to distinguish). `ADTS` (bare AAC,
+  no MP4 container) remains fully unexercised.
+- **0.1.21's stage-timeout guard intentionally does NOT cover the
+  worker-side `transcribeInWorker()` call** — a hang there would still wedge
+  the global cross-tab transcribe mutex even with a local timeout on our
+  own await, and unwedging that safely needs more design than this pass had
+  room for. If a FUTURE live session shows heartbeats continuing forever
+  with genuinely zero `[PM-WINDOW]`/`[PM-STAGE]`/`[PM-HANG]` progress across
+  ALL tabs (not just one), that's the signature to look for here.
 - No explicit test of `SourceBuffer.changeType` firing mid-session (quality
   switch) — the reset-on-changeType behavior is implemented but unverified
   live.

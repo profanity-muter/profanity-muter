@@ -14066,7 +14066,7 @@
             windowAttempts: /* @__PURE__ */ new Map(),
             // rounded-start-location key -> attempt count, for the stuck-location loop-breaker (0.1.14, made location-based in 0.1.20 — see transcribeWindow's loop-breaker section for why exact-span keying stopped catching this)
             sinkErrorAttempts: /* @__PURE__ */ new Map(),
-            // "start.toFixed(2),end.toFixed(2)" -> consecutive sink.buffers() error count, for DRM/undecodable detection (0.1.15)
+            // "start.toFixed(2),end.toFixed(2)" -> consecutive decode-failure count (a thrown sink.buffers() error, OR — 0.1.21 — a track-ready/decode stage TIMEOUT with no thrown error at all), for DRM/undecodable/permanently-unworkable detection (0.1.15, extended 0.1.21)
             unanalyzable: false,
             // set true once DRM/undecodable content is detected — maybeProcess stops entirely, content.js releases safe-mode muting for this session
             processing: false,
@@ -14215,6 +14215,14 @@
       var WINDOW_LOOP_THRESHOLD = 3;
       var ALL_WORDS_CAP = 2e3;
       var SINK_ERROR_THRESHOLD = 3;
+      var STAGE_TIMEOUT_MS = 25e3;
+      function withStageTimeout(promise, label) {
+        let timer;
+        const timeout = new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error('stage "' + label + '" did not settle within ' + STAGE_TIMEOUT_MS + "ms (hung promise, not a thrown error)")), STAGE_TIMEOUT_MS);
+        });
+        return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+      }
       function markUnanalyzable(s, reason) {
         if (s.unanalyzable) return;
         s.unanalyzable = true;
@@ -14311,8 +14319,10 @@
       async function transcribeWindow(s, run, absStart, absEnd) {
         const t0 = performance.now();
         const myGeneration = s.generation;
+        const windowKeyForErrors = absStart.toFixed(2) + "," + absEnd.toFixed(2);
         if (!run.track) {
           if (!run.trackReadyPromise) {
+            notifyTab(s, "[PM-STAGE] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") resolving audio track for this run\u2026");
             run.trackReadyPromise = run.input.getPrimaryAudioTrack().then((t) => {
               run.track = t;
               if (t) run.sink = new AudioBufferSink(t);
@@ -14323,26 +14333,49 @@
               return null;
             });
           }
-          const track = await run.trackReadyPromise;
+          let track;
+          try {
+            track = await withStageTimeout(run.trackReadyPromise, "track-ready");
+          } catch (e) {
+            const hangCount = (s.sinkErrorAttempts.get(windowKeyForErrors) || 0) + 1;
+            s.sinkErrorAttempts.set(windowKeyForErrors, hangCount);
+            if (hangCount >= SINK_ERROR_THRESHOLD) {
+              markUnanalyzable(s, "window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") track resolution hung " + hangCount + "x in a row: " + String(e));
+            } else {
+              notifyTab(s, "[PM-HANG] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") " + String(e && e.message ? e.message : e) + " (" + hangCount + "/" + SINK_ERROR_THRESHOLD + ")");
+            }
+            return false;
+          }
           if (!track) {
             notifyTab(s, "[PM-SKIP] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") skipped: no audio track found yet for this run");
             return false;
           }
         }
-        if (run.nativeRate == null) run.nativeRate = await run.track.getSampleRate();
+        if (run.nativeRate == null) {
+          try {
+            run.nativeRate = await withStageTimeout(run.track.getSampleRate(), "get-sample-rate");
+          } catch (e) {
+            notifyTab(s, "[PM-HANG] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") " + String(e && e.message ? e.message : e));
+            return false;
+          }
+        }
         const nativeRate = run.nativeRate;
         const sink = run.sink;
-        const windowKeyForErrors = absStart.toFixed(2) + "," + absEnd.toFixed(2);
         const wrapped = [];
         try {
-          for await (const wb of sink.buffers(absStart, absEnd)) wrapped.push(wb);
+          await withStageTimeout(
+            (async () => {
+              for await (const wb of sink.buffers(absStart, absEnd)) wrapped.push(wb);
+            })(),
+            "decode"
+          );
         } catch (e) {
           const errCount = (s.sinkErrorAttempts.get(windowKeyForErrors) || 0) + 1;
           s.sinkErrorAttempts.set(windowKeyForErrors, errCount);
           if (errCount >= SINK_ERROR_THRESHOLD) {
             markUnanalyzable(s, "window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") failed to decode " + errCount + "x in a row: " + String(e));
           } else {
-            notifyTab(s, "[PM-SKIP] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") skipped: sink.buffers error (" + errCount + "/" + SINK_ERROR_THRESHOLD + "): " + String(e));
+            notifyTab(s, "[PM-SKIP] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") skipped: sink.buffers error/hang (" + errCount + "/" + SINK_ERROR_THRESHOLD + "): " + String(e && e.message ? e.message : e));
           }
           return false;
         }

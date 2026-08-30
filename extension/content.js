@@ -919,11 +919,34 @@
     return Math.max(0, hi - lo - coveredS);
   }
 
+  // Live-stream detection (0.1.21) — a live user session (audio/mp4,
+  // codecs="mp4a.40.2") showed the pill sitting forever on "Analyzing —
+  // safe to pause" for a live stream, which is a lie: full live-stream
+  // support is explicitly deferred (see PIPELINE_NOTES.md "0.1.21") — the
+  // pipeline still transcribes best-effort against whatever DVR buffer
+  // exists, but coverage racing a moving live edge is not the same
+  // guarantee "Protected"/"Analyzing" imply for on-demand video, and the
+  // ETA math has no real basis for a stream with no fixed end. `duration
+  // === Infinity` is the standard HTML5 signal for a live stream (per spec,
+  // not YouTube-specific); YouTube's own live-badge class is checked too as
+  // a defensive OR in case a specific live variant ever reports a finite
+  // duration.
+  function isLiveStream(video) {
+    if (video && video.duration === Infinity) return true;
+    try {
+      var player = document.getElementById('movie_player');
+      return !!(player && player.classList.contains('ytp-live'));
+    } catch (e) {
+      return false;
+    }
+  }
+
   function computeStatusState() {
     if (!session) return null;
     if (session.unanalyzable) return { kind: 'off' };
     var video = getVideo();
     if (!video) return null;
+    if (isLiveStream(video)) return { kind: 'live' };
     var t = video.currentTime;
     var horizonEnd = t + PROTECT_MARGIN;
     // "Protected" means the whole [t, t+margin] window is covered, not just
@@ -975,6 +998,7 @@
     if (!statusPillEl) return;
     var label;
     if (status.kind === 'off') label = '🛡 Off';
+    else if (status.kind === 'live') label = '🛡 Live — limited support';
     else if (status.kind === 'protected') label = '🛡 Protected';
     else if (status.kind === 'analyzing-safe') label = '🛡 Analyzing — safe to pause (~' + status.etaS + 's)';
     else if (status.kind === 'buffering') label = '🛡 Buffering + analyzing…';
