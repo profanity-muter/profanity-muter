@@ -1637,6 +1637,154 @@ and the `pm_showStatus` toggle; (4) a changeType-triggering quality switch
 (if reproducible) confirming an active word mute is NOT interrupted; (5)
 `verify/caption_correlate.mjs` median/IQR sync numbers.
 
+## 0.1.16: URGENT — appendBuffer-is-async regression (total pipeline failure) + Whisper Web Worker migration
+
+### 1. Root cause: `SourceBuffer.appendBuffer()` is asynchronous — `.buffered` doesn't update until `updateend`
+
+A 0.1.15 log (resume at 3257 on `o-7Fvkq-Nug`) showed offscreen repeating
+`[PM-NO-WINDOW] no captured audio range at or ahead of currentTime` forever,
+while capture.js logged `rangesBefore==rangesAfter` and `growth=none` on
+EVERY line. Root cause, confirmed against historical logs going all the way
+back: `capture.js`'s `appendBuffer` hook diffed `this.buffered` **immediately
+after calling the original `appendBuffer`**, but `appendBuffer()` is async —
+the browser does not actually apply the append (and grow `.buffered`) until
+the SourceBuffer's own `'updateend'` event fires. Reading `.buffered`
+synchronously right after the call reads the OLD, pre-append ranges every
+single time — `growth` has been `none` on every appended segment for this
+codebase's entire history. This was harmless while nothing downstream
+actually depended on `growthAbsStart`/`growthAbsEnd` for anything other than
+the `[PM-CHECK]` cross-check log (a log line that's ALWAYS said "n/a" —
+which, in hindsight, should have been the tell). **0.1.14's picker redesign
+made this fatal for the first time**: it feeds `s.bufferedRanges` — the
+picker's sole source of "what audio is available" — exclusively from
+`growthAbsStart`/`growthAbsEnd`. With growth always empty, `s.bufferedRanges`
+never grew, and offscreen produced ZERO transcription windows, ever, on any
+video. 0.1.14 was verified only with a unit-test harness using synthetic
+growth values fed directly to the picker function in isolation — this was
+the first real live run of that code path, and it immediately surfaced the
+bug the synthetic tests couldn't: they never exercised the actual
+`findGrowth()` call against real (stale) `.buffered` state.
+
+**Fix (`capture.js`)**: `rangesBefore` is still snapshotted synchronously
+(correct — it reflects real pre-append state at the moment of the call).
+Everything that needs the POST-append state (`rangesAfter`, `growth`, the
+eviction-captured-range merge, the `[PM-CHAIN]` log, and `post()` itself) is
+now deferred into a small FIFO queue (`pendingAppends`) drained by a
+`'updateend'` listener on the SourceBuffer, at which point `.buffered` has
+actually updated. `finishAppendProcessing()` does the deferred work using
+the queued item's captured-at-append-time fields (`segmentCount`, `isInit`,
+`localTicks`/`localTimeSec`, the raw bytes) plus the NOW-correct
+`rangesAfter`/`growth`. A defensive (expected to be dead-code-in-practice)
+fallback handles the case where `sb.updating` is somehow already `false`
+immediately after the call, processing inline instead of waiting for an
+event that already fired. Ad-skip detection stays synchronous at append
+time (an ad segment is dropped outright — it never needs growth info since
+it's never posted).
+
+This also retroactively explains and fixes a SECOND long-standing bug: the
+0.1.13 capture-miss eviction mechanism's `evictionState.captured` tracking
+(used to decide whether a buffered-but-uncaptured span exists) was ALSO fed
+exclusively from `growth`, and was therefore ALSO silently broken this
+entire time — the eviction mechanism could never correctly distinguish
+"captured" from "not captured" because "captured" (via growth) never
+registered as true for anything. This is now fixed for free by the same
+change.
+
+Two fix options were on the table; (a) (queue-and-defer to `updateend`,
+implemented above) was chosen over (b) (deriving availability from decoded
+data directly, e.g. from mediabunny's own cluster-timecode/decode progress,
+removing the picker's dependency on growth entirely). (b) is arguably more
+in the "media time in, media time out" spirit and was evaluated, but
+requires the picker to know "what's been fed to the demuxer" in media time
+BEFORE a decode attempt happens — mediabunny doesn't expose that as a
+ready-made signal, and building one would mean tracking cluster timecodes
+independently of decode, a nontrivial new mechanism. Given this was a
+LIVE, TOTAL pipeline failure, (a) was shipped as the safe, bounded,
+well-understood fix; (b) remains a candidate for a future round if the
+`updateend`-queue approach ever proves insufficient.
+
+### 2. Whisper inference moved to a dedicated Web Worker (popup paint fix)
+
+Separate live user report: clicking the extension icon took ~15s for the
+popup to paint. Diagnosis: extension pages can share a renderer process,
+and Whisper inference (`onnxruntime-web` WASM, `numThreads=1`, no proxy) ran
+in multi-second SYNCHRONOUS bursts on the offscreen document's own main
+thread — starving the popup's own load/paint in that shared process.
+
+Two routes were available: (a) turn on `env.backends.onnx.wasm.proxy`
+(onnxruntime-web's own built-in worker-offload mode) if its internal proxy
+worker can load from a packaged file rather than a blob (MV3's CSP blocks
+blob workers, which is exactly why proxy was left off originally — this was
+the never-verified open question), or (b) hand-roll a dedicated worker
+ourselves. Inspected `node_modules/onnxruntime-web`'s bundled output
+directly: its pthread/threading worker uses `new Worker(new
+URL(import.meta.url), {type:'module'})` (not blob-based, promising), but
+tracing exactly how the SEPARATE `wasm.proxy` inference-offload worker gets
+instantiated through the minified bundle was not something that could be
+confirmed with confidence without a live test — and a live test of route
+(a) risks silently breaking transcription entirely if wrong, which is far
+worse than the status quo. **Chose route (b)**, hand-rolled, as the lower-
+risk, fully-verifiable-by-code-review option:
+
+- **New `src/whisper-worker-src.js`**, bundled to `dist/whisper.worker.js`
+  via a second `esbuild.build()` call in `build.js` (kept as two separate
+  builds, not one multi-entry build, so each output keeps its existing
+  fixed filename — `offscreen.html` and the `new Worker(...)` call site
+  both reference these paths directly). This file owns `transformers.js`'s
+  `pipeline`/`env` entirely now (moved out of `offscreen-src.js`, which no
+  longer imports `@huggingface/transformers` at all) — model loading
+  (`getTranscriber`, with the 0.1.15 rejected-promise-cache fix carried
+  over intact) and the actual `transcriber(...)` call both run here, off
+  the offscreen document's main thread.
+- **Scope kept deliberately narrow**: ONLY model load + inference moved.
+  Demux (mediabunny) stays in `offscreen-src.js`'s main thread — WebCodecs
+  decode is comparatively fast/non-blocking in practice (the diagnosed
+  bottleneck is specifically Whisper's synchronous WASM inference, not
+  demux), and mediabunny's `Input`/`ReadableStreamSource`/`AudioBufferSink`
+  objects aren't transferable across a worker boundary anyway — moving
+  demux into the worker too would mean re-architecting session/run state
+  across two execution contexts for zero benefit toward the actual
+  diagnosed problem. `windowToFloat16k`'s output (a plain, fully-resampled
+  Float32Array with zero live mediabunny state left in it) is the natural,
+  self-contained hand-off point.
+- **Transferred, not copied**: `float16k`'s own buffer is transferred into
+  the worker via `postMessage(msg, [float16k.buffer])` — the array is
+  detached/unusable on the main-thread side afterward, which is safe
+  because `transcribeWindow` never reads it again post-transfer. The
+  per-word RMS energy sanity check (`rmsAt`), which used to run against
+  `float16k` back on the main thread after transcription, now runs INSIDE
+  the worker instead (where the PCM actually still is) and is returned
+  per-chunk as `rms`, consumed via `tok.rms` in the word-building loop.
+- **The worker has NO `chrome.*` API access** (deliberately not needed) —
+  the wasm path base is handed over once in an `'init'` message from the
+  main thread (which already has `chrome.runtime.getURL`), avoiding any
+  dependency on uncertain worker-context extension-API availability.
+- The 0.1.15 serialization mutex (`runSerialized`/`transcribeChain`) stays
+  in `offscreen-src.js`'s main thread, now wrapping `transcribeInWorker(...)`
+  calls instead of direct `transcriber(...)` calls — since the worker is a
+  single dedicated thread anyway, this just avoids racing multiple
+  in-flight `requestId` responses against each other for no benefit; it's
+  unchanged in spirit from the 0.1.15 design.
+- Request/response correlation is a simple incrementing `requestId` map
+  (`pendingWorkerRequests`) — no ordering assumptions relied upon beyond
+  what the mutex above already guarantees (at most one request in flight).
+
+**Verification status**: both regression items are code-complete,
+`node build.js` produces both `dist/offscreen.bundle.js` (now ~600KB,
+transformers.js removed) and `dist/whisper.worker.js` (~1.4MB, contains
+transformers.js), and all plain-JS files pass `node --check`. **Per the
+standing constraint that only the user can trigger a `chrome://extensions`
+reload, and that no prior code version's changes are visible until that
+reload happens, the "windows actually produced" live check the coordinator
+explicitly required for this fix could NOT be performed before requesting
+the reload this time either** — there was no way to test 0.1.16's actual
+behavior against the live, currently-loaded 0.1.15 code. This is flagged
+explicitly (rather than silently skipped) per the coordinator's "no more
+synthetic-only verification for picker changes" directive: the very next
+action after this reload is confirmed must be watching a real session's
+log for actual `[PM-WINDOW]` lines (not just `[PM-NO-WINDOW]`) appearing
+after a big forward seek, before reporting this fix as verified.
+
 ## Known gaps
 
 - **`shared/wordlist.js` `pm_wordlist:undefined`-default bug** (finding #2

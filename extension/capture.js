@@ -632,6 +632,92 @@
       };
     }
 
+    // BUG FIXED (0.1.16): SourceBuffer.appendBuffer() is ASYNC — the browser
+    // does not actually apply the append (and grow `.buffered`) until the
+    // 'updateend' event fires. The previous code diffed `.buffered`
+    // synchronously, immediately after calling the original appendBuffer,
+    // which reads the OLD (pre-append) ranges every single time — growth was
+    // ALWAYS `none`, on every line, for the entire life of this codebase
+    // (confirmed against historical logs). 0.1.14's picker redesign made
+    // this fatal for the first time: it feeds `s.bufferedRanges` exclusively
+    // from `growthAbsStart`/`growthAbsEnd`, so with growth always empty,
+    // offscreen never saw ANY available audio and produced zero windows,
+    // ever ("[PM-NO-WINDOW] no captured audio range" forever). Fix: snapshot
+    // `rangesBefore` synchronously (correct, reflects real pre-append
+    // state), then queue the rest of this append's processing (growth
+    // computation, eviction-captured-range bookkeeping, the [PM-CHAIN] log,
+    // and `post()`) until the SourceBuffer's own 'updateend' fires, when
+    // `.buffered` has actually updated. A small FIFO queue (`pendingAppends`)
+    // preserves ordering if multiple appends ever queue up before their
+    // updateend events fire (normally at most one is in flight, since a
+    // well-behaved player waits for updateend before its next append, but
+    // this is correct either way).
+    var pendingAppends = [];
+    sb.addEventListener('updateend', function () {
+      if (!pendingAppends.length) return;
+      var item = pendingAppends.shift();
+      try {
+        finishAppendProcessing(sb, item);
+      } catch (e) {
+        logLine('appendBuffer updateend processing failed: ' + String(e));
+      }
+    });
+
+    function finishAppendProcessing(sbRef, item) {
+      var rangesAfter = snapshotRanges(sbRef.buffered);
+      var growth = findGrowth(item.rangesBefore, rangesAfter);
+
+      // This segment's bytes ARE reaching our hook — record its actual
+      // buffered span as "captured" so the eviction check above never
+      // mistakes normal, currently-in-flight audio for a capture miss.
+      if (growth) mergeRangeIntoList(evictionState.captured, growth.absStart, growth.absEnd);
+
+      // Log collapse (0.1.15): an unconditional per-segment [PM-CHAIN] line
+      // was pure noise at normal append rates. Only log on an actual STATE
+      // CHANGE (a new disjoint buffered range, or the container-timecode/
+      // buffered-growth cross-check disagreeing beyond
+      // CHAIN_LOG_CROSS_CHECK_SLACK_S), plus a periodic summary every 25
+      // segments or 5s.
+      var crossCheckDeltaVal = growth && item.localTimeSec != null ? growth.absStart - item.localTimeSec : null;
+      var isDisagreement = crossCheckDeltaVal != null && Math.abs(crossCheckDeltaVal) > CHAIN_LOG_CROSS_CHECK_SLACK_S;
+      var isNewRange = !!(growth && growth.isNewRange);
+      var nowWall = Date.now();
+      chainSegsSinceLog++;
+      var summaryDue = chainSegsSinceLog >= 25 || nowWall - lastChainLogWall >= 5000;
+      if (isNewRange || isDisagreement || summaryDue) {
+        logLine(
+          '[PM-CHAIN] seg=' + item.segmentCount + ' isInit=' + item.isInit +
+            ' currentTime=' + fmt(item.currentTime) +
+            ' localTicks=' + (item.localTicks == null ? 'null' : item.localTicks) +
+            ' timecodeScale=' + timecodeScale.value +
+            ' localTimeSec=' + (item.localTimeSec == null ? 'null' : item.localTimeSec.toFixed(3)) +
+            ' rangesBefore=' + fmtRanges(item.rangesBefore) +
+            ' rangesAfter=' + fmtRanges(rangesAfter) +
+            ' growth=' + (growth ? '[' + growth.absStart.toFixed(3) + ',' + growth.absEnd.toFixed(3) + ')' + (growth.isNewRange ? ' NEW-RANGE' : '') : 'none') +
+            ' crossCheckDelta=' + (crossCheckDeltaVal != null ? crossCheckDeltaVal.toFixed(3) : 'n/a') +
+            (isDisagreement ? ' *** DISAGREEMENT ***' : '') +
+            (summaryDue && !isNewRange && !isDisagreement ? ' (periodic summary, ' + chainSegsSinceLog + ' segs since last log)' : '')
+        );
+        chainSegsSinceLog = 0;
+        lastChainLogWall = nowWall;
+      }
+
+      post({
+        type: 'segment',
+        videoId: item.vid,
+        mime: item.mime,
+        isInit: item.isInit,
+        segIndex: item.segmentCount,
+        bytes: item.ab, // structured-cloned, MAIN -> ISOLATED
+        currentTime: item.currentTime,
+        localTimeSec: item.localTimeSec,
+        growthAbsStart: growth ? growth.absStart : null,
+        growthAbsEnd: growth ? growth.absEnd : null,
+        growthIsNewRange: growth ? growth.isNewRange : null,
+        wallTime: Date.now()
+      });
+    }
+
     sb.appendBuffer = function (chunk) {
       var rangesBefore = snapshotRanges(this.buffered);
 
@@ -640,8 +726,6 @@
       try {
         var video = getRealVideo();
         var currentTime = video ? video.currentTime : NaN;
-        var rangesAfter = snapshotRanges(this.buffered);
-        var growth = findGrowth(rangesBefore, rangesAfter);
 
         var ab = toArrayBuffer(chunk);
         var localTicks = scanForTimecode(new Uint8Array(ab), timecodeScale);
@@ -655,70 +739,38 @@
         // actively DROPPED REAL, non-ad AUDIO when the parser misfired,
         // which is strictly worse than the rare ad-detection gap it was
         // meant to backstop. Ad exclusion is a player-state fact, not
-        // something to infer from a timestamp).
+        // something to infer from a timestamp). Evaluated synchronously at
+        // append time, before queuing anything — an ad segment never needs
+        // growth info since it's dropped outright, not posted.
         var adShowing = isAdShowing();
         if (adShowing) {
           logLine('[PM-AD-SKIP] dropping segment (ad-showing)');
           return result;
         }
 
-        // This segment's bytes ARE reaching our hook — record its actual
-        // buffered span as "captured" so the eviction check above never
-        // mistakes normal, currently-in-flight audio for a capture miss.
-        if (growth) mergeRangeIntoList(evictionState.captured, growth.absStart, growth.absEnd);
-
         segmentCount++;
         var isInit = segmentCount === 1;
         var vid = currentVideoId();
 
-        // Log collapse (0.1.15): an unconditional per-segment [PM-CHAIN]
-        // line was pure noise at normal append rates and, per the elegance
-        // audit, was actively working against the ring buffer's "flight
-        // recorder" purpose — it evicted genuinely useful history in ~2
-        // minutes. Only log on an actual STATE CHANGE (a new disjoint
-        // buffered range, or the container-timecode/buffered-growth
-        // cross-check disagreeing beyond CHAIN_LOG_CROSS_CHECK_SLACK_S —
-        // ad-skips already log unconditionally at their own point above),
-        // plus a periodic summary line so a quiet stretch still leaves a
-        // trail every 25 segments or 5s, whichever comes first.
-        var crossCheckDeltaVal = growth && localTimeSec != null ? growth.absStart - localTimeSec : null;
-        var isDisagreement = crossCheckDeltaVal != null && Math.abs(crossCheckDeltaVal) > CHAIN_LOG_CROSS_CHECK_SLACK_S;
-        var isNewRange = !!(growth && growth.isNewRange);
-        var nowWall = Date.now();
-        chainSegsSinceLog++;
-        var summaryDue = chainSegsSinceLog >= 25 || nowWall - lastChainLogWall >= 5000;
-        if (isNewRange || isDisagreement || summaryDue) {
-          logLine(
-            '[PM-CHAIN] seg=' + segmentCount + ' isInit=' + isInit +
-              ' currentTime=' + fmt(currentTime) +
-              ' localTicks=' + (localTicks == null ? 'null' : localTicks) +
-              ' timecodeScale=' + timecodeScale.value +
-              ' localTimeSec=' + (localTimeSec == null ? 'null' : localTimeSec.toFixed(3)) +
-              ' rangesBefore=' + fmtRanges(rangesBefore) +
-              ' rangesAfter=' + fmtRanges(rangesAfter) +
-              ' growth=' + (growth ? '[' + growth.absStart.toFixed(3) + ',' + growth.absEnd.toFixed(3) + ')' + (growth.isNewRange ? ' NEW-RANGE' : '') : 'none') +
-              ' crossCheckDelta=' + (crossCheckDeltaVal != null ? crossCheckDeltaVal.toFixed(3) : 'n/a') +
-              (isDisagreement ? ' *** DISAGREEMENT ***' : '') +
-              (summaryDue && !isNewRange && !isDisagreement ? ' (periodic summary, ' + chainSegsSinceLog + ' segs since last log)' : '')
-          );
-          chainSegsSinceLog = 0;
-          lastChainLogWall = nowWall;
-        }
-
-        post({
-          type: 'segment',
-          videoId: vid,
-          mime: mime,
-          isInit: isInit,
-          segIndex: segmentCount,
-          bytes: ab, // structured-cloned, MAIN -> ISOLATED
+        pendingAppends.push({
+          rangesBefore: rangesBefore,
           currentTime: currentTime,
+          localTicks: localTicks,
           localTimeSec: localTimeSec,
-          growthAbsStart: growth ? growth.absStart : null,
-          growthAbsEnd: growth ? growth.absEnd : null,
-          growthIsNewRange: growth ? growth.isNewRange : null,
-          wallTime: Date.now()
+          ab: ab,
+          segmentCount: segmentCount,
+          isInit: isInit,
+          vid: vid,
+          mime: mime
         });
+        // Normal case: the browser hasn't finished applying this append yet
+        // (sb.updating is true) and 'updateend' will fire and drain this
+        // item. Defensive fallback: if updating is somehow already false
+        // RIGHT NOW (observed possible for very small/instant appends in
+        // some browser versions), process immediately rather than leaving
+        // this item stuck in the queue forever waiting for an event that
+        // already happened.
+        if (!sb.updating) finishAppendProcessing(sb, pendingAppends.shift());
       } catch (e) {
         logLine('appendBuffer hook failed: ' + String(e));
       }

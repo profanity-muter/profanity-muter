@@ -29,15 +29,13 @@
 // mediabunny. Since every run's timestamps are already absolute, coverage/
 // word-dedupe live at the SESSION level (spanning run boundaries
 // transparently) rather than per-run.
-import { pipeline, env } from '@huggingface/transformers';
+// 0.1.15: transformers.js's `pipeline`/`env` (and the onnxruntime-web MV3/
+// CSP env config that used to live here) moved entirely to
+// src/whisper-worker-src.js — model load + inference now run in a dedicated
+// Web Worker, not on this document's own main thread. See that file's
+// header for the full diagnosis (popup paint starvation) and why the split
+// is exactly at the transcribe step.
 import { Input, ReadableStreamSource, AudioBufferSink, WEBM, MP4, ADTS } from 'mediabunny';
-
-// --- MV3 / CSP configuration (see spike-whisper gotchas) -------------------
-env.backends.onnx.wasm.wasmPaths = chrome.runtime.getURL('dist/');
-env.backends.onnx.wasm.proxy = false;
-env.backends.onnx.wasm.numThreads = 1;
-env.allowLocalModels = false;
-env.useBrowserCache = true;
 
 // 'small' added 0.1.13 as an opt-in accuracy tier (per the quiet-speech-
 // recall investigation) — Xenova/whisper-small.en is confirmed on the Hub to
@@ -86,41 +84,58 @@ function base64ToUint8(b64) {
   return bytes;
 }
 
-// --- Whisper model(s), loaded once per modelId and reused across sessions --
-const transcriberPromises = new Map(); // modelId -> Promise<pipeline>
-function getTranscriber(modelId) {
-  const id = MODEL_IDS[modelId] ? modelId : DEFAULT_MODEL;
-  if (!transcriberPromises.has(id)) {
-    const t0 = performance.now();
-    transcriberPromises.set(
-      id,
-      pipeline('automatic-speech-recognition', MODEL_IDS[id], {
-        dtype: 'fp32', // quantized decoder hits an onnxruntime-web MatMulNBits bug (see spike notes)
-        device: 'wasm'
-      })
-        .then((t) => {
-          log('model loaded (' + id + ') in', Math.round(performance.now() - t0), 'ms');
-          return t;
-        })
-        .catch((e) => {
-          // CRITICAL (0.1.15): a rejected promise was previously cached
-          // forever by `Map.set` — one flaky model fetch (network hiccup,
-          // CDN blip) permanently killed transcription for the entire
-          // browser session (every future getTranscriber(id) call would
-          // just re-return the SAME rejected promise, never retrying).
-          // Mirrors trackReadyPromise's existing retry pattern: evict the
-          // cache entry on failure so the NEXT call gets a fresh attempt.
-          transcriberPromises.delete(id);
-          throw e;
-        })
-    );
+// --- Whisper worker bridge (0.1.15 perf fix) ---------------------------
+// Model load + inference now run in a DEDICATED WEB WORKER
+// (dist/whisper.worker.js, see src/whisper-worker-src.js's header for the
+// full diagnosis/rationale) instead of on this document's own main thread.
+// Live user report: clicking the extension icon took ~15s to paint the
+// popup — extension pages can share a renderer process, and Whisper's
+// synchronous multi-second WASM bursts (onnxruntime-web, numThreads=1, no
+// proxy) starved the popup's own load/paint in that same process. This
+// offscreen document is now just a thin router around the worker for the
+// transcribe step specifically; everything else (mediabunny demux,
+// session/run/coverage state) is unchanged and still lives here (see that
+// file's header for why the split is at exactly this point).
+const whisperWorker = new Worker(chrome.runtime.getURL('dist/whisper.worker.js'));
+whisperWorker.postMessage({ type: 'init', wasmPathsBase: chrome.runtime.getURL('dist/') });
+let nextWorkerRequestId = 1;
+const pendingWorkerRequests = new Map(); // requestId -> {resolve, reject}
+whisperWorker.onmessage = (ev) => {
+  const msg = ev.data;
+  if (!msg) return;
+  if (msg.type === 'worker-error') {
+    broadcastDiag('[whisper-worker] ' + msg.text);
+    return;
   }
-  return transcriberPromises.get(id);
+  const pending = pendingWorkerRequests.get(msg.requestId);
+  if (!pending) return;
+  pendingWorkerRequests.delete(msg.requestId);
+  if (msg.type === 'result') pending.resolve(msg);
+  else pending.reject(new Error(msg.error || 'unknown whisper worker error'));
+};
+whisperWorker.onerror = (ev) => {
+  broadcastDiag('whisper worker onerror: ' + (ev.message || ev));
+};
+
+// Transfers `float16k`'s own buffer into the worker (0.1.15: "transfer, not
+// copy" — this ~1.1MB-per-18s-window array is detached from this thread by
+// the transfer, which is safe here because the caller (transcribeWindow)
+// never reads float16k again after this call; the per-word RMS energy
+// check that used to run against it on this side now runs INSIDE the
+// worker instead, which is why the worker's result carries `rms` per
+// chunk).
+function transcribeInWorker(modelId, float16k, options) {
+  return new Promise((resolve, reject) => {
+    const requestId = nextWorkerRequestId++;
+    pendingWorkerRequests.set(requestId, { resolve, reject });
+    whisperWorker.postMessage({ type: 'transcribe', requestId, modelId, float16k, options }, [float16k.buffer]);
+  });
 }
 
-// Simple promise-chain mutex (0.1.15) serializing every transcriber() call
-// across ALL sessions/tabs sharing this offscreen document — see the call
-// site in transcribeWindow for why.
+// Simple promise-chain mutex (0.1.15) serializing every transcribeInWorker()
+// call across ALL sessions/tabs sharing this offscreen document — the
+// worker is a single dedicated thread, so this guarantees at most one
+// transcribe request in flight at a time, globally.
 let transcribeChain = Promise.resolve();
 function runSerialized(fn) {
   const run = transcribeChain.then(fn, fn);
@@ -308,14 +323,11 @@ function collapseHallucinationLoops(tokens) {
   return { tokens: out, hallucination };
 }
 
-function rmsAt(float16k, localStartInWindow, localEndInWindow, sampleRate) {
-  const s = Math.max(0, Math.floor(localStartInWindow * sampleRate));
-  const e = Math.min(float16k.length, Math.ceil(localEndInWindow * sampleRate));
-  if (e <= s) return 0;
-  let sum = 0;
-  for (let i = s; i < e; i++) sum += float16k[i] * float16k[i];
-  return Math.sqrt(sum / (e - s));
-}
+// rmsAt() moved to whisper-worker-src.js (0.1.15) — float16k's buffer is
+// TRANSFERRED into the worker for the transcribe call (never copied), so
+// it's no longer available on this side afterward to compute RMS against;
+// the worker computes it itself (it already has the PCM right there) and
+// returns it per chunk instead. See transcribeWindow's use of `chunk.rms`.
 
 function getOrCreateSession(tabId, videoId) {
   const key = sessionKey(tabId, videoId);
@@ -728,24 +740,23 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     const resolvedId = MODEL_IDS[s.modelId] ? s.modelId : DEFAULT_MODEL;
     notifyTab(s, '[PM-MODEL] using model="' + resolvedId + '" (' + MODEL_IDS[resolvedId] + '), default="' + DEFAULT_MODEL + '"' + (resolvedId !== DEFAULT_MODEL ? ' [overridden via pm_model]' : ''));
   }
-  const transcriber = await getTranscriber(s.modelId);
-  // Serialized across ALL sessions/tabs (0.1.15): concurrent multi-tab
-  // inference sharing one pipeline instance is unverified-safe (onnxruntime-
-  // web session reuse under concurrent generate() calls isn't something
-  // this codebase has tested) — a simple promise-chain mutex guarantees at
-  // most one transcriber() call in flight at a time, globally. The
-  // wall-clock timer starts only once this call actually BEGINS executing
-  // (not when it's enqueued), so modelRtf keeps measuring real model
-  // compute, not queue-wait time behind another tab's window.
+  // Serialized across ALL sessions/tabs (0.1.15): the worker is a single
+  // dedicated thread, so a simple promise-chain mutex guarantees at most
+  // one transcribe request in flight at a time, globally, rather than
+  // racing several windows' requestId responses against each other for no
+  // benefit (the worker would just process them one at a time internally
+  // anyway). The wall-clock timer starts only once this call actually
+  // BEGINS executing (not when it's enqueued behind another tab's window),
+  // so modelRtf keeps measuring real transcribe time, not queue-wait.
   let tTranscribeStart = 0;
-  const output = await runSerialized(() => {
+  const workerResult = await runSerialized(() => {
     tTranscribeStart = performance.now();
-    return transcriber(float16k, {
+    return transcribeInWorker(s.modelId, float16k, {
       return_timestamps: 'word',
       chunk_length_s: 30,
       // Repetition mitigation (0.1.13), best-effort: each window is already
-      // its own independent transcriber() call with no prior window's text
-      // fed back in, so cross-window conditioning is already effectively off
+      // its own independent transcribe call with no prior window's text fed
+      // back in, so cross-window conditioning is already effectively off
       // (transformers.js's ASR pipeline doesn't expose a direct
       // condition_on_previous_text toggle to set this explicitly). A SINGLE
       // window's own decode can still degenerate into a repetition loop on
@@ -757,6 +768,11 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     });
   });
   const transcribeMs = performance.now() - tTranscribeStart;
+  // float16k's buffer was TRANSFERRED into the worker above — it must never
+  // be read again on this side (it's detached/zero-length now). `output`
+  // below carries everything needed, including per-chunk `rms` (computed
+  // inside the worker, where the PCM actually still is).
+  const output = { text: workerResult.text, chunks: workerResult.chunks };
   const audioDurationS = absEnd - absStart;
   // Accounting fix (0.1.11): `rtf` used to be transcribeMs-only (the model
   // call's own throughput) while the `wallMs` logged right alongside it in
@@ -806,7 +822,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       droppedOutOfRange++; // claimed timestamp falls outside [windowStart-1, windowEnd+2] - not plausibly this window's own audio
       continue;
     }
-    rawTokens.push({ text, wLocalStart, wLocalEnd });
+    rawTokens.push({ text, wLocalStart, wLocalEnd, rms: chunk.rms });
   }
   if (droppedInverted || droppedOutOfRange) {
     log(
@@ -865,7 +881,10 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     // currentTime, no bufferedEnd, no measured/guessed offset anywhere here.
     const videoStart = absStart + wLocalStart;
     const videoEnd = absStart + wLocalEndResolved;
-    const rms = rmsAt(float16k, wLocalStart, wLocalEndResolved, 16000);
+    // Computed inside the worker (0.1.15) — float16k's buffer was
+    // transferred there for the transcribe call and is no longer readable
+    // on this side. See whisper-worker-src.js's rmsAt.
+    const rms = tok.rms != null ? tok.rms : 0;
     energyReport.push(text + ':' + rms.toFixed(3));
     const dedupeKey = text.toLowerCase() + '@' + videoStart.toFixed(1);
     if (s.emittedKeys.has(dedupeKey)) continue;
