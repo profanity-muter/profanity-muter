@@ -231,25 +231,90 @@
     return ranges;
   }
 
-  // Finds the absolute video-time span this append's bytes landed at, by
-  // diffing buffered ranges before/after: an existing range that grew, or
-  // (after a seek, before the old range clears) a brand-new range.
+  // Finds the absolute video-time span this append's bytes landed at.
+  //
+  // BUG FIXED (0.1.24): the old version matched an after-range to a before-
+  // range by comparing STARTS within 0.5s — correct for the common case
+  // (a range that only ever grows forward from a fixed start), but wrong
+  // for ordinary long-video BUFFER EVICTION: YouTube continuously trims a
+  // SourceBuffer's trailing edge while extending the front once the video
+  // is long enough, on EVERY append (observed live:
+  // rangesBefore=[135.40,808.64] -> rangesAfter=[136.54,809.50] — ~1.14s
+  // trimmed off the START, ~0.86s appended at the END). The start no longer
+  // matches within 0.5s, so the old code fell through to "no existing range
+  // matched" and reported the WHOLE after-range as growth — wrong both in
+  // WHAT counts as new audio (nearly all of it was already fed and
+  // transcribed earlier) and in isNewRange (flagged a genuine disjoint
+  // seek, when this is ordinary continuous playback) — which fired the
+  // 0.1.20 run-boundary logic on every single segment: hundreds of demux
+  // runs per minute, each superseded before it could ever transcribe
+  // anything, on any video long enough to trigger eviction. See
+  // PIPELINE_NOTES "0.1.24".
+  //
+  // Fix: a REAL interval set-difference (after minus before), matching an
+  // after-range to a before-range by OVERLAP (not exact start proximity) —
+  // trim at the front is invisible to growth by construction (the trimmed
+  // span simply isn't part of the after-range at all), and only the
+  // genuinely new portion (typically the extended tail) is reported.
+  // isNewRange is now determined by whether the after-range overlaps ANY
+  // before-range at all — true "no overlap with anything we already had"
+  // (a genuine backward/forward seek jump) vs. false for "same underlying
+  // range, just trimmed and/or extended" (ordinary continuous playback,
+  // eviction included). `trimmedS` reports how much was evicted off the
+  // front of the matched range, for the [PM-TRIM] debug note below (0, not
+  // present, when nothing was trimmed).
   function findGrowth(before, after) {
+    var bestSpan = null; // {start,end} of the winning new-audio span across all after-ranges
+    var bestIsNewRange = true;
+    var bestTrimmedS = 0;
     for (var i = 0; i < after.length; i++) {
       var a = after[i];
+      // Subtract every overlapping before-range from `a`, leaving only the
+      // genuinely new portion(s). Track the before-range with the largest
+      // overlap too — that's "the same underlying range" for trim
+      // detection (has its own start moved forward, i.e. been evicted?).
+      var spans = [{ start: a.start, end: a.end }];
+      var matchedBefore = null;
+      var matchedOverlapLen = 0;
       for (var j = 0; j < before.length; j++) {
         var b = before[j];
-        if (Math.abs(b.start - a.start) < 0.5 && a.end > b.end + 0.001) {
-          return { absStart: b.end, absEnd: a.end, isNewRange: false };
+        var overlapStart = Math.max(a.start, b.start);
+        var overlapEnd = Math.min(a.end, b.end);
+        if (overlapEnd > overlapStart) {
+          var overlapLen = overlapEnd - overlapStart;
+          if (overlapLen > matchedOverlapLen) {
+            matchedOverlapLen = overlapLen;
+            matchedBefore = b;
+          }
+        }
+        var next = [];
+        for (var k = 0; k < spans.length; k++) {
+          var seg = spans[k];
+          if (b.end <= seg.start || b.start >= seg.end) {
+            next.push(seg); // no overlap with this before-range -- unaffected
+            continue;
+          }
+          if (b.start > seg.start) next.push({ start: seg.start, end: Math.min(b.start, seg.end) });
+          if (b.end < seg.end) next.push({ start: Math.max(b.end, seg.start), end: seg.end });
+        }
+        spans = next;
+      }
+      for (var m = 0; m < spans.length; m++) {
+        var span = spans[m];
+        if (span.end - span.start <= 0.001) continue; // negligible, floating-point noise
+        // Prefer the span closest to the tail if an after-range somehow
+        // yields more than one new piece (not expected in practice — a
+        // single before-range overlap leaves at most one remaining piece,
+        // the extended tail).
+        if (!bestSpan || span.end > bestSpan.end) {
+          bestSpan = span;
+          bestIsNewRange = !matchedBefore;
+          bestTrimmedS = matchedBefore && a.start > matchedBefore.start + 0.001 ? a.start - matchedBefore.start : 0;
         }
       }
     }
-    for (var k = 0; k < after.length; k++) {
-      var ak = after[k];
-      var existedBefore = before.some(function (b) { return Math.abs(b.start - ak.start) < 0.5; });
-      if (!existedBefore) return { absStart: ak.start, absEnd: ak.end, isNewRange: true };
-    }
-    return null;
+    if (!bestSpan) return null;
+    return { absStart: bestSpan.start, absEnd: bestSpan.end, isNewRange: bestIsNewRange, trimmedS: bestTrimmedS };
   }
 
   // ---- capture-miss eviction (0.1.12) ------------------------------------
@@ -605,6 +670,20 @@
     var timecodeScale = { value: 1000000 }; // Matroska default: 1e6 ns/tick = 1ms/tick; updated if Info>TimecodeScale is found
     var chainSegsSinceLog = 0; // [PM-CHAIN] log-collapse state (0.1.15) — see the logging site below
     var lastChainLogWall = Date.now();
+    var lastTrimLogWall = 0; // [PM-TRIM] throttle (0.1.24) — see finishAppendProcessing below
+    // Run-boundary sanity backstop (0.1.24) — see PIPELINE_NOTES "0.1.24":
+    // a real live bug (fixed by 0.1.24's findGrowth rewrite) misclassified
+    // ordinary buffer-eviction trim+extend as a brand-new disjoint range on
+    // EVERY segment, firing a new demux run every single append. This is a
+    // defense-in-depth backstop against THAT class of bug recurring for any
+    // other reason: if run boundaries fire faster than a real seek pattern
+    // plausibly would, stop opening new ones — degraded (stuck on one run,
+    // possibly missing a genuine seek's own coverage) but alive beats churn
+    // death (transcribing nothing at all, forever).
+    var runBoundaryTimestamps = [];
+    var runBoundaryRateLimited = false;
+    var RUN_BOUNDARY_RATE_LIMIT_WINDOW_MS = 10000;
+    var RUN_BOUNDARY_RATE_LIMIT_MAX = 3;
     var evictionState = { captured: [], recentEvictions: [], queue: [], pending: [] };
     sb.addEventListener('updateend', function () { pumpEvictionQueue(sb, evictionState); });
     // Registered as the "active" audio SourceBuffer for the on-demand
@@ -706,8 +785,39 @@
       // init bytes), while the old run(s) are left for the existing 0.1.15
       // pruning (KEEP_RUNS=2) to reclaim — nothing here touches session-level
       // coverage/word-dedupe, which already spans run boundaries by design.
+      // [PM-TRIM] (0.1.24): throttled debug note whenever findGrowth detects
+      // ordinary front-eviction (the matched before-range's start moved
+      // forward) — so a future log visibly distinguishes "this append is
+      // just eviction trim+extend" from an actual run boundary, instead of
+      // the two being indistinguishable the way they used to be.
+      if (growth && growth.trimmedS > 0.001) {
+        var nowTrim = Date.now();
+        if (nowTrim - lastTrimLogWall >= 5000) {
+          lastTrimLogWall = nowTrim;
+          logLine('[PM-TRIM] buffer eviction trimmed ~' + growth.trimmedS.toFixed(2) + 's off the front of the current range (normal on long videos; not a run boundary)');
+        }
+      }
+
       var isDiscontinuity = !!(growth && growth.isNewRange) && !item.isInit;
-      if (isDiscontinuity && cachedInitBytes) {
+      if (isDiscontinuity && !runBoundaryRateLimited) {
+        var nowRB = Date.now();
+        runBoundaryTimestamps.push(nowRB);
+        runBoundaryTimestamps = runBoundaryTimestamps.filter(function (t) { return nowRB - t < RUN_BOUNDARY_RATE_LIMIT_WINDOW_MS; });
+        if (runBoundaryTimestamps.length > RUN_BOUNDARY_RATE_LIMIT_MAX) {
+          runBoundaryRateLimited = true;
+          logLine(
+            '[PM-RUN-BOUNDARY-STORM] ' + runBoundaryTimestamps.length + ' run boundaries fired within ' +
+              (RUN_BOUNDARY_RATE_LIMIT_WINDOW_MS / 1000) + 's -- something is misclassifying growth as disjoint; ' +
+              'giving up on opening further new runs for this SourceBuffer (degraded but alive beats churn death) -- see PIPELINE_NOTES "0.1.24"'
+          );
+        }
+      }
+      if (isDiscontinuity && runBoundaryRateLimited) {
+        logLine(
+          '[PM-RUN-BOUNDARY-SUPPRESSED] would have opened a new run for NEW-RANGE growth=[' + growth.absStart.toFixed(2) + ',' + growth.absEnd.toFixed(2) +
+            ') but the sanity backstop above suppressed it -- feeding into the existing run instead'
+        );
+      } else if (isDiscontinuity && cachedInitBytes) {
         logLine(
           '[PM-RUN-BOUNDARY] NEW-RANGE growth=[' + growth.absStart.toFixed(2) + ',' + growth.absEnd.toFixed(2) +
             ') with no fresh init segment of its own -- opening a new demux run (resending cached init bytes)'

@@ -2589,6 +2589,86 @@ confirm the exact reported repro (fresh video, pause early, watch for
 end-of-video tail (watch for `[PM-EOF-FLUSH]` followed by a final
 successful window instead of the repeated hang).
 
+## 0.1.24: CRITICAL — findGrowth misread ordinary long-video buffer eviction as a run boundary on every segment
+
+User's log on `CG5i-3-qLPo` (a long video, on 0.1.22 — but this bug lives
+in `capture.js`'s `findGrowth`, unchanged since 0.1.20, and is present in
+every version between): once the video is long enough, YouTube
+continuously TRIMS the SourceBuffer's trailing edge while extending the
+front on every append (`rangesBefore=[135.40,808.64] ->
+rangesAfter=[136.54,809.50]` — ~1.14s evicted off the START, ~0.86s
+appended at the END, every single segment). `findGrowth` matched an
+after-range to a before-range by comparing STARTS within 0.5s — correct
+when a range only ever grows forward from a fixed start, but the trimmed
+start no longer matched at all, so the function fell through to "no
+existing range matched" and reported the WHOLE after-range as growth,
+flagged `isNewRange: true`. That fired 0.1.20's run-boundary logic on
+EVERY SEGMENT — hundreds of demux runs per minute, each superseded by the
+next before it could ever transcribe anything: permanent uncovered,
+`[PM-STALL]` storm, the pipeline never producing a single word on any
+video long enough to trigger eviction (i.e. most of this user's actual
+content). **Highest priority — long videos were completely broken.**
+
+### 1. Real interval set-difference, not start-proximity matching
+
+`findGrowth(before, after)` (`capture.js`) now computes actual growth as
+`after MINUS before`, per range, matched by OVERLAP rather than exact
+start proximity. For each after-range, every before-range it overlaps at
+all is subtracted from it — a trimmed front is invisible to growth by
+construction (the trimmed span simply isn't part of the after-range to
+begin with), leaving only the genuinely new portion (the extended tail).
+`isNewRange` is now `true` only when an after-range overlaps NO
+before-range at all (a genuine disjoint seek jump); `false` for "same
+underlying range, trimmed and/or extended" — which correctly covers both
+ordinary growth (no trim) and eviction (trim + extend) as the SAME
+non-boundary case. The function also now returns `trimmedS` (how much was
+evicted off the front of the matched range, 0 when nothing was trimmed).
+
+### 2. `[PM-TRIM]` debug note
+
+A throttled (5s) `[PM-TRIM]` log line fires whenever `findGrowth` reports
+`trimmedS > 0`, so a future paste can visibly distinguish "this append is
+just ordinary eviction trim+extend" from an actual run boundary, rather
+than the two looking identical the way they used to (both showed up as
+"NEW-RANGE" in `[PM-CHAIN]`).
+
+### 3. Sanity backstop: rate-limited run boundaries
+
+Defense-in-depth against this bug CLASS recurring for any other reason in
+the future: `instrumentAudioSourceBuffer`'s closure now tracks
+`runBoundaryTimestamps`. If more than `RUN_BOUNDARY_RATE_LIMIT_MAX` (3)
+run boundaries fire within `RUN_BOUNDARY_RATE_LIMIT_WINDOW_MS` (10s), a
+loud `[PM-RUN-BOUNDARY-STORM]` alarm fires once and
+`runBoundaryRateLimited` is set (stays tripped for this SourceBuffer's
+lifetime — a storm this bad means the classification logic itself is
+untrustworthy right now, so re-arming and risking another storm isn't
+worth it). Every further discontinuity while tripped logs a
+`[PM-RUN-BOUNDARY-SUPPRESSED]` line and feeds into the EXISTING run
+instead of opening a new one — degraded (a genuine seek during a storm
+might not get its own clean run) but alive beats churn death (transcribing
+nothing at all, forever).
+
+**Verification status**: `node --check` passes on all plain-JS files.
+Unit-verified in isolation (standalone Node harness, an exact copy of the
+new `findGrowth`): the precise reported trim+extend snapshot
+(`before=[135.40,808.64]`, `after=[136.54,809.50]`) now yields
+`growth=[808.64,809.50)`, `isNewRange=false`, `trimmedS≈1.14` — no run
+boundary; a 50-step simulated sequence of consecutive trim+extend appends
+(the actual reported failure shape — fires on EVERY segment) produces
+ZERO run boundaries; ordinary forward-only growth (no trim) is unaffected
+(byte-identical to before); the 0.1.20 genuine-backward-seek NEW-RANGE
+case still correctly fires a boundary (no regression); a scenario with
+BOTH an ordinary trimmed range and a genuinely disjoint new range in the
+same snapshot correctly classifies each independently; the rate-limiter
+backstop trips after exactly 3 boundaries within the window, alarms once,
+and suppresses everything after. All prior 0.1.20-0.1.23 harnesses
+re-run clean (no regressions). **Not verified live** — no browser session
+this pass.
+
+**User note**: the reporting user is on 0.1.22 (skipped 0.1.23's
+mid-video-idle-loop fix, which is unrelated but also real). They need to
+reload from 0.1.22 straight to 0.1.24 — two versions behind, not one.
+
 ## Known gaps
 
 - **`shared/wordlist.js` `pm_wordlist:undefined`-default bug** (finding #2
