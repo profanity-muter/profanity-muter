@@ -34,6 +34,11 @@
 // 'init' message from the main thread, which already has chrome.runtime.
 import { pipeline, env } from '@huggingface/transformers';
 
+// Eager warm-up timing (0.1.18) — as early in this file's own execution as
+// possible, so `workerSpawnMs` (below) measures genuine worker-script-start-
+// to-init latency, not anything this file does before reaching here.
+const workerScriptStartWall = performance.now();
+
 function log(...args) {
   console.log('[PM-WHISPER-WORKER]', ...args);
 }
@@ -122,20 +127,34 @@ async function handleTranscribe(msg) {
   }
 }
 
-// Preload fix (0.1.17): a live seek showed the FIRST window paying the
-// model's own load cost inline — wallMs=7634 for a 5s cold-start window
+// Preload fix (0.1.17/0.1.18): a live seek showed the FIRST window paying
+// the model's own load cost inline — wallMs=7634 for a 5s cold-start window
 // (rtf 1.53) vs. a steady-state ~0.2 rtf once warm. Fire getTranscriber()
 // immediately at boot (fire-and-forget — the returned promise isn't
 // awaited here; the first REAL transcribe request just awaits the SAME
 // already-in-flight or already-resolved promise via getTranscriber's own
-// cache) so the model is warm before any video/window ever needs it.
-// Re-fired whenever pm_model changes (see the 'preload' message below), so
-// switching models in the popup warms the NEW one proactively too, instead
-// of paying that cost on the next window after the switch.
-function preload(modelId) {
-  getTranscriber(modelId).catch((e) => {
-    log('preload(' + modelId + ') failed (will retry on next real request):', String(e));
-  });
+// cache) so the model is warm before any video/window ever needs it. This
+// worker itself is created as soon as background.js creates the offscreen
+// document — unconditionally at SW boot/onInstalled/onStartup, NOT gated
+// on any tab opening a video — so in practice this preload usually starts
+// warming well before the user has even navigated to a page, let alone
+// pressed play. Re-fired whenever pm_model changes (see the 'preload'
+// message below), so switching models in the popup warms the NEW one
+// proactively too, instead of paying that cost on the next window after
+// the switch. `reportWarm` is only set for the boot preload — see the
+// 'warm-ready' message this produces, surfaced to whichever tab starts a
+// session first via offscreen-src.js's logWarmToSession().
+function preload(modelId, reportWarm) {
+  const t0 = performance.now();
+  getTranscriber(modelId)
+    .then(() => {
+      if (reportWarm) {
+        self.postMessage({ type: 'warm-ready', workerSpawnMs: reportWarm.workerSpawnMs, modelLoadMs: Math.round(performance.now() - t0) });
+      }
+    })
+    .catch((e) => {
+      log('preload(' + modelId + ') failed (will retry on next real request):', String(e));
+    });
 }
 
 self.addEventListener('message', (ev) => {
@@ -144,8 +163,9 @@ self.addEventListener('message', (ev) => {
   if (msg.type === 'init') {
     wasmPathsBase = msg.wasmPathsBase;
     env.backends.onnx.wasm.wasmPaths = wasmPathsBase;
-    log('initialized, wasmPathsBase=' + wasmPathsBase);
-    preload(DEFAULT_MODEL);
+    const workerSpawnMs = Math.round(performance.now() - workerScriptStartWall);
+    log('initialized, wasmPathsBase=' + wasmPathsBase + ', workerSpawnMs=' + workerSpawnMs);
+    preload(DEFAULT_MODEL, { workerSpawnMs });
     return;
   }
   if (msg.type === 'preload') {

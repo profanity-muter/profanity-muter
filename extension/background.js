@@ -116,6 +116,15 @@ chrome.runtime.onConnect.addListener(function (port) {
       ensureOffscreenDocument().then(function () {
         chrome.runtime.sendMessage({ type: 'pm-restart', tabId: tabId, videoId: msg.videoId }).catch(function () {});
       });
+    } else if (msg.type === 'seek') {
+      // Seek preemption (0.1.18): bump this session's generation counter in
+      // offscreen so any in-flight/queued work for the OLD playhead region
+      // gets its result discarded (or stops picking further old-region
+      // windows) rather than blocking the new position behind a backlog.
+      // Session/coverage state itself is untouched.
+      ensureOffscreenDocument().then(function () {
+        chrome.runtime.sendMessage({ type: 'pm-seek', tabId: tabId, videoId: msg.videoId, currentTime: msg.currentTime }).catch(function () {});
+      });
     } else if (msg.type === 'resync') {
       // content.js just (re)connected its port (fresh page load, or
       // recovering from a port drop) — ask offscreen to resend everything it
@@ -137,6 +146,7 @@ chrome.runtime.onConnect.addListener(function (port) {
           growthAbsStart: msg.growthAbsStart,
           growthAbsEnd: msg.growthAbsEnd,
           growthIsNewRange: msg.growthIsNewRange,
+          wallTime: msg.wallTime,
           dataB64: msg.dataB64
         })
         .catch(function (e) {
@@ -194,7 +204,10 @@ chrome.runtime.onMessage.addListener(function (msg) {
           windowEndS: msg.windowEndS,
           wallMs: msg.wallMs,
           rtf: msg.rtf,
-          modelRtf: msg.modelRtf
+          modelRtf: msg.modelRtf,
+          decodeMs: msg.decodeMs,
+          queueMs: msg.queueMs,
+          computeMs: msg.computeMs
         });
       } catch (e) {
         console.warn('[PM-BG] failed to relay words to content.js (port likely stale):', String(e));
@@ -203,6 +216,9 @@ chrome.runtime.onMessage.addListener(function (msg) {
     console.log(
       '[PM] window start=' + msg.windowStartS.toFixed(2) + ' end=' + msg.windowEndS.toFixed(2) +
         ' wallMs=' + Math.round(msg.wallMs) + ' words=' + msg.words.length +
+        ' decodeMs=' + (msg.decodeMs != null ? Math.round(msg.decodeMs) : 'NA') +
+        ' queueMs=' + (msg.queueMs != null ? Math.round(msg.queueMs) : 'NA') +
+        ' computeMs=' + (msg.computeMs != null ? Math.round(msg.computeMs) : 'NA') +
         ' rtf=' + (msg.rtf != null ? msg.rtf.toFixed(3) : 'NA') +
         ' modelRtf=' + (msg.modelRtf != null ? msg.modelRtf.toFixed(3) : 'NA') +
         ' lagMs=' + Math.round(msg.lagMs) +

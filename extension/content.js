@@ -211,7 +211,15 @@
       // [PM-CATCHUP-TIME] measurement (0.1.17) — set on a seek landing
       // uncovered, cleared (and logged) once coverage reaches the playhead.
       catchupMeasureStart: null,
-      catchupMeasureTargetT: null
+      catchupMeasureTargetT: null,
+      // Actionable status pill inputs (0.1.18) — mirrors what offscreen
+      // tracks internally, built here from data content.js ALREADY sees
+      // flowing through it (capture.js's own segment growth info, and the
+      // rtf/computeMs already returned with every 'words' message) — no
+      // new pipeline plumbing needed, purely local bookkeeping for display.
+      bufferedRanges: [], // merged [{start,end}] — same interval-set concept as offscreen's s.bufferedRanges, built the same way from growthAbsStart/growthAbsEnd
+      lastBufferedGrowthWall: Date.now(), // last time bufferedRanges actually grew — "is capture still making progress" signal
+      lastKnownRtf: null // last computeMs-based rtf, for a rough ETA estimate
     };
   }
 
@@ -223,6 +231,18 @@
     unanalyzableNoticeShown = false; // a new video gets its own fresh chance (and notice) — see the 'unanalyzable' handler
     safePortPost({ type: 'reset', videoId: videoId });
     logVideoInfoOnce(videoId);
+  }
+
+  // Mirrors capture.js's own currentVideoId() — used ONLY to force a reset
+  // at THIS file's own startup (see the call after connectPort() below),
+  // independent of capture.js's video-id-change detection.
+  function currentVideoIdFromLocation() {
+    try {
+      var params = new URLSearchParams(location.search);
+      return params.get('v') || location.pathname;
+    } catch (e) {
+      return location.href;
+    }
   }
 
   // One line establishing ground truth for "which video, which element, how
@@ -327,8 +347,16 @@
     }
   }
 
-  function addWords(videoId, rawWords, windowStartS, windowEndS, wallMs, rtf, modelRtf) {
+  function addWords(videoId, rawWords, windowStartS, windowEndS, wallMs, rtf, modelRtf, decodeMs, queueMs, computeMs) {
     if (!session || session.videoId !== videoId) return;
+
+    // Status-pill ETA input (0.1.18): last measured compute-only rtf, same
+    // basis offscreen uses for its own rtf-aware cold-window sizing.
+    if (computeMs != null && typeof windowStartS === 'number' && typeof windowEndS === 'number' && windowEndS > windowStartS) {
+      session.lastKnownRtf = computeMs / 1000 / (windowEndS - windowStartS);
+    } else if (modelRtf != null) {
+      session.lastKnownRtf = modelRtf;
+    }
 
     var result = applyWordsToIntervals(rawWords);
     var newIntervals = result.intervals;
@@ -358,6 +386,14 @@
       TAG,
       '[PM-WINDOW] mediaSpan=[' + (typeof windowStartS === 'number' ? windowStartS.toFixed(2) : 'NA') + ',' + (typeof windowEndS === 'number' ? windowEndS.toFixed(2) : 'NA') + ')' +
         ' wallMs=' + (wallMs != null ? Math.round(wallMs) : 'NA') +
+        // Split (0.1.18): wallMs used to bundle demux/decode + queue-wait-
+        // for-the-shared-worker-mutex + actual compute into one number — a
+        // live paste showed wallMs-derived rtf of 3-8 next to modelRtf of
+        // 0.2-0.5, hiding that almost all of it was QUEUE wait (a stale
+        // session's backlog competing for the same worker), not compute.
+        ' decodeMs=' + (decodeMs != null ? Math.round(decodeMs) : 'NA') +
+        ' queueMs=' + (queueMs != null ? Math.round(queueMs) : 'NA') +
+        ' computeMs=' + (computeMs != null ? Math.round(computeMs) : 'NA') +
         ' rtf=' + (rtf != null ? rtf.toFixed(3) : 'NA') +
         ' modelRtf=' + (modelRtf != null ? modelRtf.toFixed(3) : 'NA') +
         ' words received=' + rawWords.length + ' muted=' + newIntervals.length +
@@ -840,36 +876,95 @@
     setDebugOverlayActive(settings.enabled && settings.debugOverlay);
   }, 500);
 
-  // ---- status pill (0.1.15) ------------------------------------------------
+  // ---- status pill (0.1.15, made ACTIONABLE in 0.1.18) ---------------------
   // Small, always-on, subtle indicator — separate from the debug overlay
-  // (which is off by default and verbose). Three states: "Protected"
-  // (coverage extends >=5s past the playhead), "Analyzing…" (playhead in or
-  // near an uncovered region still being worked), "Off" only on a hard
-  // failure (DRM/unanalyzable). Hideable via pm_showStatus.
+  // (which is off by default and verbose). Hideable via pm_showStatus.
+  //
+  // User feedback on the plain 0.1.15 pill: when uncovered, there was no way
+  // to tell whether pausing-and-waiting would make progress (audio already
+  // captured, just queued/processing) or whether they needed to keep
+  // playing (to make YouTube fetch more audio in the first place). The
+  // generic "Analyzing…" collapsed two very different situations — plus a
+  // third, rarer one — into one unhelpful label. Now data-driven:
+  //   - "Protected": coverage extends >=5s past the playhead. Nothing to do.
+  //   - "Analyzing — safe to pause (~Ns)": the playhead's own region IS
+  //     captured (in bufferedRanges) and just hasn't been transcribed yet —
+  //     pausing is fine, it WILL finish; ETA is remaining-uncovered-audio
+  //     near the playhead times the last measured rtf, capped at 30s.
+  //   - "Buffering + analyzing…": NOT captured yet, but capture is actively
+  //     growing (a segment landed in the last ~3s) — still fine to wait,
+  //     YouTube is still fetching.
+  //   - "Press play to load audio": NOT captured, and NO capture growth for
+  //     ~4s — YouTube has stopped fetching (e.g. paused before the buffer
+  //     reached this position). This is the ONE state needing user action.
+  //   - "Off": DRM/unanalyzable (unchanged from before).
+  // This is presentation only — every input (bufferedRanges, coverage,
+  // growth recency, rtf) already exists; see the bookkeeping added above.
   var statusPillEl = null;
+  var STATUS_GROWTH_RECENT_MS = 3000; // capture actively growing if a segment landed within this long
+  var STATUS_GROWTH_STALLED_MS = 4000; // capture has stopped fetching if nothing landed for this long
+
+  function uncoveredDurationWithin(intervals, lo, hi) {
+    var coveredS = 0;
+    for (var i = 0; i < intervals.length; i++) {
+      var start = Math.max(intervals[i].start, lo), end = Math.min(intervals[i].end, hi);
+      if (end > start) coveredS += end - start;
+    }
+    return Math.max(0, hi - lo - coveredS);
+  }
+
   function computeStatusState() {
     if (!session) return null;
-    if (session.unanalyzable) return 'off';
+    if (session.unanalyzable) return { kind: 'off' };
     var video = getVideo();
     if (!video) return null;
     var t = video.currentTime;
-    if (!isCovered(t) || !isCovered(t + 5)) return 'analyzing';
-    return 'protected';
+    if (isCovered(t) && isCovered(t + 5)) return { kind: 'protected' };
+
+    var playheadRange = null;
+    for (var i = 0; i < session.bufferedRanges.length; i++) {
+      var r = session.bufferedRanges[i];
+      if (t >= r.start - 0.5 && t < r.end) {
+        playheadRange = r;
+        break;
+      }
+    }
+
+    if (playheadRange) {
+      // Captured already — just queued/processing. ETA from how much of
+      // THIS range, ahead of the playhead, is still uncovered.
+      var uncoveredAheadS = uncoveredDurationWithin(session.coveredIntervals, t, playheadRange.end);
+      var rtf = session.lastKnownRtf != null ? Math.min(0.85, Math.max(0.1, session.lastKnownRtf)) : 0.3;
+      var etaS = Math.min(30, Math.max(1, Math.ceil(uncoveredAheadS * rtf)));
+      return { kind: 'analyzing-safe', etaS: etaS };
+    }
+
+    var sinceGrowthMs = Date.now() - (session.lastBufferedGrowthWall || 0);
+    if (sinceGrowthMs < STATUS_GROWTH_RECENT_MS) return { kind: 'buffering' };
+    if (sinceGrowthMs >= STATUS_GROWTH_STALLED_MS) return { kind: 'needs-play' };
+    return { kind: 'buffering' }; // brief in-between window (recent < x < stalled) — still assume progress, avoid label flicker
   }
+
   function renderStatusPill() {
     var settings = currentSettings();
     if (!settings.enabled || !statusSettings.showStatus) {
       setStatusPillActive(false);
       return;
     }
-    var state = computeStatusState();
-    if (!state) {
+    var status = computeStatusState();
+    if (!status) {
       setStatusPillActive(false);
       return;
     }
     setStatusPillActive(true);
     if (!statusPillEl) return;
-    var label = state === 'off' ? '🛡 Off' : state === 'analyzing' ? '🛡 Analyzing…' : '🛡 Protected';
+    var label;
+    if (status.kind === 'off') label = '🛡 Off';
+    else if (status.kind === 'protected') label = '🛡 Protected';
+    else if (status.kind === 'analyzing-safe') label = '🛡 Analyzing — safe to pause (~' + status.etaS + 's)';
+    else if (status.kind === 'buffering') label = '🛡 Buffering + analyzing…';
+    else if (status.kind === 'needs-play') label = '🛡 Press play to load audio';
+    else label = '🛡 Analyzing…';
     var count = session ? session.mutedCount || 0 : 0;
     if (count > 0) label += ' · ' + count + ' muted';
     statusPillEl.textContent = label;
@@ -1320,6 +1415,15 @@
       } else {
         session.catchupMeasureStart = null;
       }
+      // Seek preemption (0.1.18): tell offscreen the playhead just jumped —
+      // it bumps this session's generation counter so any window ALREADY
+      // in flight for the old position has its result discarded (can't
+      // abort a running WASM call, but its output is now stale) and its
+      // maybeProcess loop stops picking any FURTHER old-region windows
+      // instead of grinding through a whole queue before reaching the new
+      // playhead (a live log showed an 8s wait behind exactly this).
+      // Coverage/session state is untouched — "seek keeps everything".
+      safePortPost({ type: 'seek', videoId: session.videoId, currentTime: video.currentTime });
       armSchedule();
     },
     true
@@ -1383,7 +1487,7 @@
     port.onMessage.addListener(function (msg) {
       if (!msg || !msg.type) return;
       if (msg.type === 'words') {
-        addWords(msg.videoId, msg.words || [], msg.windowStartS, msg.windowEndS, msg.wallMs, msg.rtf, msg.modelRtf);
+        addWords(msg.videoId, msg.words || [], msg.windowStartS, msg.windowEndS, msg.wallMs, msg.rtf, msg.modelRtf, msg.decodeMs, msg.queueMs, msg.computeMs);
       } else if (msg.type === 'resync-result') {
         handleResync(msg.videoId, msg.words, msg.coveredIntervals);
       } else if (msg.type === 'heartbeat') {
@@ -1428,6 +1532,21 @@
     if (session) safePortPost({ type: 'resync', videoId: session.videoId });
   }
   connectPort();
+  // FIX (0.1.18): stale cross-refresh work. A plain page REFRESH of the
+  // SAME video does not change capture.js's own tracked video id, so its
+  // 'reset' message (sent only on an ACTUAL video-id change) never fired —
+  // meaning the offscreen session for this tabId:videoId key survived the
+  // refresh untouched, in-flight/queued work and all. A live user log
+  // showed the previous page-session's stale, still-running work draining
+  // into the new page load and blocking the transcribe lane for 7+ seconds.
+  // Force a reset unconditionally on THIS file's own startup — i.e. on
+  // every page load, not just a detected video-id change — so offscreen
+  // always starts this tab clean regardless of whether it thinks the video
+  // id moved. Paired with offscreen-src.js's generation-counter fix, which
+  // additionally discards any results from work that was ALREADY in flight
+  // at the moment this reset lands (can't abort a running WASM call, but
+  // its result is now discarded rather than applied).
+  resetSession(currentVideoIdFromLocation());
 
   // ---- receive segments from capture.js (MAIN world) ------------------------
   // Postmessage bridge hardening (0.1.15): the public `window.postMessage`
@@ -1495,6 +1614,13 @@
       if (!session || session.videoId !== data.videoId) {
         session = newSession(data.videoId);
       }
+      // Status-pill inputs (0.1.18): mirror offscreen's own bufferedRanges/
+      // growth-recency tracking here too, purely from data already flowing
+      // through this relay — no new message needed.
+      if (typeof data.growthAbsStart === 'number' && typeof data.growthAbsEnd === 'number' && !Number.isNaN(data.growthAbsStart) && !Number.isNaN(data.growthAbsEnd)) {
+        mergeRangeInto(session.bufferedRanges, data.growthAbsStart, data.growthAbsEnd);
+        session.lastBufferedGrowthWall = Date.now();
+      }
       var bytes = new Uint8Array(data.bytes);
       safePortPost({
         type: 'segment',
@@ -1507,6 +1633,7 @@
         growthAbsStart: data.growthAbsStart,
         growthAbsEnd: data.growthAbsEnd,
         growthIsNewRange: data.growthIsNewRange,
+        wallTime: data.wallTime, // capture.js's own Date.now() at capture — used by [PM-FIRST-COVERAGE]'s relay-latency milestone
         dataB64: uint8ToBase64(bytes)
       });
     }

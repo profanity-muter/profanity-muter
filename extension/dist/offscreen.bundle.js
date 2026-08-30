@@ -13870,11 +13870,26 @@
       whisperWorker.postMessage({ type: "init", wasmPathsBase: chrome.runtime.getURL("dist/") });
       var nextWorkerRequestId = 1;
       var pendingWorkerRequests = /* @__PURE__ */ new Map();
+      var warmInfo = null;
+      function logWarmToSession(s) {
+        if (!warmInfo) return;
+        const sinceReadyS = ((Date.now() - warmInfo.readyAtWall) / 1e3).toFixed(1);
+        notifyTab(
+          s,
+          "[PM-WARM] worker spawn=" + warmInfo.workerSpawnMs + "ms model load=" + warmInfo.modelLoadMs + "ms (ready " + sinceReadyS + "s before this session started)"
+        );
+      }
       whisperWorker.onmessage = (ev) => {
         const msg = ev.data;
         if (!msg) return;
         if (msg.type === "worker-error") {
           broadcastDiag("[whisper-worker] " + msg.text);
+          return;
+        }
+        if (msg.type === "warm-ready") {
+          warmInfo = { workerSpawnMs: msg.workerSpawnMs, modelLoadMs: msg.modelLoadMs, readyAtWall: Date.now() };
+          log("[PM-WARM] worker spawn=" + warmInfo.workerSpawnMs + "ms model load=" + warmInfo.modelLoadMs + "ms");
+          for (const s of sessions.values()) logWarmToSession(s);
           return;
         }
         const pending = pendingWorkerRequests.get(msg.requestId);
@@ -14056,10 +14071,35 @@
             // set true once DRM/undecodable content is detected — maybeProcess stops entirely, content.js releases safe-mode muting for this session
             processing: false,
             pendingRerun: false,
-            modelId: DEFAULT_MODEL
+            modelId: DEFAULT_MODEL,
+            // Generation counter (0.1.18) — bumped on a page-load reset (dropped
+            // entirely, see dropSessionsForTab) or a seek (pm-seek, in place —
+            // coverage/state untouched). maybeProcess's loop and transcribeWindow
+            // both capture their OWN generation at start and compare against the
+            // session's CURRENT value before picking further windows / applying
+            // results — a stale in-flight WASM call (can't be aborted mid-call)
+            // still runs to completion, but its result is discarded rather than
+            // applied once superseded, and no further old-generation windows get
+            // queued behind it. See PIPELINE_NOTES "0.1.18" for the live bug this
+            // fixes (a page refresh's stale session blocking the new one for 7s+).
+            generation: 0,
+            inFlightWindows: /* @__PURE__ */ new Set(),
+            // "start.toFixed(2),end.toFixed(2)" currently dispatched to transcribeWindow — prevents the picker from re-picking a span whose result hasn't landed yet
+            lastKnownRtf: null,
+            // rolling estimate (last computeMs-based rtf) used to size cold-start windows so they finish AHEAD of the playhead — see pickNextWindow
+            // [PM-FIRST-COVERAGE] breakdown milestones (0.1.18) — set once each,
+            // guarded by !firstCoverageLogged; logged as one line the moment the
+            // first window's coverage is applied. See the call sites below.
+            firstSegCapturedAt: null,
+            firstSegRelayedAt: null,
+            firstWindowPickedAt: null,
+            firstWindowDecodedAt: null,
+            firstWindowWordsAt: null,
+            firstCoverageLogged: false
           };
           sessions.set(key, s);
           log("new session", key);
+          logWarmToSession(s);
         }
         return s;
       }
@@ -14067,6 +14107,7 @@
         for (const key of Array.from(sessions.keys())) {
           if (key.startsWith(tabId + ":")) {
             const s = sessions.get(key);
+            s.generation++;
             for (const run of s.runs) closeRun(run);
             sessions.delete(key);
           }
@@ -14163,9 +14204,12 @@
         lastByKey[key] = now;
         notifyTab(s, "[PM-NO-WINDOW] " + reason);
       }
-      var COLD_START_WINDOW_S = 5;
+      var COLD_START_WINDOW_S = 2.5;
       var COLD_START_MIN_NEW_S = 1.5;
       var COLD_START_ADJACENCY_S = 3;
+      var COLD_START_RTF_MARGIN_S = 1;
+      var COLD_START_RTF_CLAMP_MIN = 0.15;
+      var COLD_START_RTF_CLAMP_MAX = 0.7;
       var MIN_TAIL_S = 2;
       var TAIL_STALL_MS = 3e3;
       var WINDOW_LOOP_THRESHOLD = 3;
@@ -14177,6 +14221,15 @@
         notifyTab(s, "[PM-UNANALYZABLE] " + reason + " \u2014 giving up on transcription for this video; releasing safe-mode protection rather than leaving it muted forever with no way to actually analyze it");
         chrome.runtime.sendMessage({ type: "pm-unanalyzable", tabId: s.tabId, videoId: s.videoId }).catch(() => {
         });
+      }
+      function coverageViewForPicking(s) {
+        if (s.inFlightWindows.size === 0) return s.covered;
+        const extra = [];
+        for (const key of s.inFlightWindows) {
+          const idx = key.indexOf(",");
+          extra.push({ start: parseFloat(key.slice(0, idx)), end: parseFloat(key.slice(idx + 1)) });
+        }
+        return s.covered.concat(extra).sort((a, b) => a.start - b.start);
       }
       function pickNextWindow(s) {
         const ct = s.currentTimeS;
@@ -14204,15 +14257,16 @@
           );
           return null;
         }
-        let start = firstUncoveredPoint(s.covered, lowBound, high);
+        const coverageView = coverageViewForPicking(s);
+        let start = firstUncoveredPoint(coverageView, lowBound, high);
         if (start == null) {
           let maxCoveredInRange = targetRange.start;
-          for (const iv of s.covered) {
+          for (const iv of coverageView) {
             if (iv.start < targetRange.end && iv.end > targetRange.start) maxCoveredInRange = Math.max(maxCoveredInRange, iv.end);
           }
           start = Math.max(maxCoveredInRange, lowBound);
           if (start >= high) {
-            logNoWindowReason(s, "fully-covered", "fully covered up to the available buffer in range [" + lowBound.toFixed(2) + "," + high.toFixed(2) + ") \u2014 nothing new to transcribe right now");
+            logNoWindowReason(s, "fully-covered", "fully covered (or in flight) up to the available buffer in range [" + lowBound.toFixed(2) + "," + high.toFixed(2) + ") \u2014 nothing new to transcribe right now");
             return null;
           }
         }
@@ -14230,7 +14284,13 @@
           }
           if (coldFloor > start) start = coldFloor;
         }
-        const targetWindowS = isColdStart ? COLD_START_WINDOW_S : WINDOW_S;
+        let targetWindowS = isColdStart ? COLD_START_WINDOW_S : WINDOW_S;
+        if (isColdStart) {
+          const rtfEstimate = Math.min(COLD_START_RTF_CLAMP_MAX, Math.max(COLD_START_RTF_CLAMP_MIN, s.lastKnownRtf || COLD_START_RTF_CLAMP_MIN));
+          const gap = Math.max(0, ct - start);
+          const neededS = (gap + COLD_START_RTF_MARGIN_S) / (1 - rtfEstimate);
+          if (neededS > targetWindowS) targetWindowS = Math.min(WINDOW_S, neededS);
+        }
         const minNewS = isColdStart ? COLD_START_MIN_NEW_S : MIN_NEW_S;
         const end = Math.min(start + targetWindowS, high);
         const size = end - start;
@@ -14250,6 +14310,7 @@
       }
       async function transcribeWindow(s, run, absStart, absEnd) {
         const t0 = performance.now();
+        const myGeneration = s.generation;
         if (!run.track) {
           if (!run.trackReadyPromise) {
             run.trackReadyPromise = run.input.getPrimaryAudioTrack().then((t) => {
@@ -14316,11 +14377,18 @@
           log("[PM-RESAMPLE-WARN] decoded buffer durations do not sum to their own claimed timestamp span (gap/overlap in decode) \u2014 decodedDurationSum=" + decodedDurationSum.toFixed(3) + " claimedSpan=" + claimedSpan.toFixed(3));
         }
         const float16k = await windowToFloat16k(wrapped, absStart, absEnd, nativeRate);
+        const tDecoded = performance.now();
+        if (!s.firstCoverageLogged && s.firstWindowDecodedAt == null) s.firstWindowDecodedAt = Date.now();
+        if (s.generation !== myGeneration) {
+          log("[PM-STALE] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") abandoned after decode: generation changed (" + myGeneration + " -> " + s.generation + ")");
+          return false;
+        }
         if (!s.loggedModel) {
           s.loggedModel = true;
           const resolvedId = MODEL_IDS[s.modelId] ? s.modelId : DEFAULT_MODEL;
           notifyTab(s, '[PM-MODEL] using model="' + resolvedId + '" (' + MODEL_IDS[resolvedId] + '), default="' + DEFAULT_MODEL + '"' + (resolvedId !== DEFAULT_MODEL ? " [overridden via pm_model]" : ""));
         }
+        const tBeforeQueue = performance.now();
         let tTranscribeStart = 0;
         const workerResult = await runSerialized(() => {
           tTranscribeStart = performance.now();
@@ -14341,8 +14409,20 @@
           });
         });
         const transcribeMs = performance.now() - tTranscribeStart;
+        const decodeMs = tDecoded - t0;
+        const queueMs = tTranscribeStart - tBeforeQueue;
+        const computeMs = transcribeMs;
+        if (s.generation !== myGeneration) {
+          notifyTab(
+            s,
+            "[PM-STALE] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") result discarded: generation changed (" + myGeneration + " -> " + s.generation + ") while transcribing \u2014 decodeMs=" + Math.round(decodeMs) + " queueMs=" + Math.round(queueMs) + " computeMs=" + Math.round(computeMs)
+          );
+          return false;
+        }
+        if (!s.firstCoverageLogged && s.firstWindowWordsAt == null) s.firstWindowWordsAt = Date.now();
         const output = { text: workerResult.text, chunks: workerResult.chunks };
         const audioDurationS = absEnd - absStart;
+        s.lastKnownRtf = computeMs / 1e3 / audioDurationS;
         const modelRtf = transcribeMs / 1e3 / audioDurationS;
         log(
           "transcript [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") video-time (container timestamp, untouched), modelMs=" + Math.round(transcribeMs) + " modelRtf=" + modelRtf.toFixed(3) + ":",
@@ -14439,6 +14519,9 @@
             wallMs,
             rtf,
             modelRtf,
+            decodeMs,
+            queueMs,
+            computeMs,
             lagMs
           });
         } catch (e) {
@@ -14446,6 +14529,26 @@
         }
         for (const wb of wrapped) {
           mergeRangeInto(s.covered, wb.timestamp, wb.timestamp + wb.buffer.duration);
+        }
+        if (!s.firstCoverageLogged) {
+          s.firstCoverageLogged = true;
+          const m = {
+            captured: s.firstSegCapturedAt,
+            relayed: s.firstSegRelayedAt,
+            picked: s.firstWindowPickedAt,
+            decoded: s.firstWindowDecodedAt,
+            words: s.firstWindowWordsAt,
+            covered: Date.now()
+          };
+          const stageOrder = ["captured", "relayed", "picked", "decoded", "words", "covered"];
+          const parts = [];
+          for (let i = 1; i < stageOrder.length; i++) {
+            const prevKey = stageOrder[i - 1], curKey = stageOrder[i];
+            const delta = m[curKey] != null && m[prevKey] != null ? m[curKey] - m[prevKey] : null;
+            parts.push(prevKey + "->" + curKey + "=" + (delta != null ? Math.round(delta) : "NA") + "ms");
+          }
+          const totalMs = m.captured != null ? m.covered - m.captured : null;
+          notifyTab(s, "[PM-FIRST-COVERAGE] " + parts.join(" ") + " total=" + (totalMs != null ? Math.round(totalMs) : "NA") + "ms");
         }
         const key = absStart.toFixed(2) + "," + absEnd.toFixed(2);
         if (firstUncoveredPoint(s.covered, absStart, absEnd) !== null) {
@@ -14477,9 +14580,14 @@
         s.processing = true;
         sendHeartbeat(s);
         const heartbeatTimer = setInterval(() => sendHeartbeat(s), HEARTBEAT_MS);
+        const loopGeneration = s.generation;
         try {
           for (; ; ) {
             if (s.disabled || s.unanalyzable) break;
+            if (s.generation !== loopGeneration) {
+              log("[PM-STALE] maybeProcess loop stopping: generation changed (" + loopGeneration + " -> " + s.generation + ")");
+              break;
+            }
             const run = s.currentRun;
             if (!run) {
               logNoWindowReason(s, "no-run", "no active byte run yet for this session (no init segment captured) \u2014 nothing to transcribe until one arrives");
@@ -14487,7 +14595,15 @@
             }
             const target = pickNextWindow(s);
             if (!target) break;
-            const ok = await transcribeWindow(s, run, target.start, target.end);
+            if (!s.firstCoverageLogged && s.firstWindowPickedAt == null) s.firstWindowPickedAt = Date.now();
+            const inFlightKey = target.start.toFixed(2) + "," + target.end.toFixed(2);
+            s.inFlightWindows.add(inFlightKey);
+            let ok;
+            try {
+              ok = await transcribeWindow(s, run, target.start, target.end);
+            } finally {
+              s.inFlightWindows.delete(inFlightKey);
+            }
             if (!ok) break;
             s.hadFirstWindow = true;
           }
@@ -14506,6 +14622,16 @@
         if (!msg || !msg.type) return;
         if (msg.type === "pm-reset") {
           dropSessionsForTab(msg.tabId);
+          return;
+        }
+        if (msg.type === "pm-seek") {
+          const key = sessionKey(msg.tabId, msg.videoId);
+          const s = sessions.get(key);
+          if (s) {
+            s.generation++;
+            if (typeof msg.currentTime === "number" && !Number.isNaN(msg.currentTime)) s.currentTimeS = msg.currentTime;
+            maybeProcess(s);
+          }
           return;
         }
         if (msg.type === "pm-tab-closed") {
@@ -14560,6 +14686,10 @@
         }
         if (msg.type === "pm-segment") {
           const s = getOrCreateSession(msg.tabId, msg.videoId);
+          if (s.firstSegCapturedAt == null) {
+            s.firstSegCapturedAt = typeof msg.wallTime === "number" ? msg.wallTime : Date.now();
+            s.firstSegRelayedAt = Date.now();
+          }
           const bytes = base64ToUint8(msg.dataB64);
           if (msg.isInit) {
             const run = newRun();

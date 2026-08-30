@@ -100,11 +100,40 @@ const whisperWorker = new Worker(chrome.runtime.getURL('dist/whisper.worker.js')
 whisperWorker.postMessage({ type: 'init', wasmPathsBase: chrome.runtime.getURL('dist/') });
 let nextWorkerRequestId = 1;
 const pendingWorkerRequests = new Map(); // requestId -> {resolve, reject}
+
+// Eager warm-up visibility (0.1.18): the worker/model load already starts
+// as early as technically possible (this whole file's top-level code runs
+// the instant the offscreen document is created, which background.js does
+// unconditionally at SW boot/onStartup/onInstalled — NOT gated on any tab
+// opening a video). But that warmth was previously invisible: it happened
+// before any session/tab existed to notifyTab() through, so a Copy Logs
+// paste could never actually confirm it happened, let alone how long it
+// took. `warmInfo` buffers the timing until the FIRST session of this
+// offscreen document's lifetime is created, at which point it's surfaced
+// into THAT tab's ring buffer — see logWarmToSession() and its call site
+// in getOrCreateSession().
+let warmInfo = null; // {workerSpawnMs, modelLoadMs, readyAtWall} once known
+function logWarmToSession(s) {
+  if (!warmInfo) return;
+  const sinceReadyS = ((Date.now() - warmInfo.readyAtWall) / 1000).toFixed(1);
+  notifyTab(
+    s,
+    '[PM-WARM] worker spawn=' + warmInfo.workerSpawnMs + 'ms model load=' + warmInfo.modelLoadMs +
+      'ms (ready ' + sinceReadyS + 's before this session started)'
+  );
+}
+
 whisperWorker.onmessage = (ev) => {
   const msg = ev.data;
   if (!msg) return;
   if (msg.type === 'worker-error') {
     broadcastDiag('[whisper-worker] ' + msg.text);
+    return;
+  }
+  if (msg.type === 'warm-ready') {
+    warmInfo = { workerSpawnMs: msg.workerSpawnMs, modelLoadMs: msg.modelLoadMs, readyAtWall: Date.now() };
+    log('[PM-WARM] worker spawn=' + warmInfo.workerSpawnMs + 'ms model load=' + warmInfo.modelLoadMs + 'ms');
+    for (const s of sessions.values()) logWarmToSession(s);
     return;
   }
   const pending = pendingWorkerRequests.get(msg.requestId);
@@ -354,10 +383,33 @@ function getOrCreateSession(tabId, videoId) {
       unanalyzable: false, // set true once DRM/undecodable content is detected — maybeProcess stops entirely, content.js releases safe-mode muting for this session
       processing: false,
       pendingRerun: false,
-      modelId: DEFAULT_MODEL
+      modelId: DEFAULT_MODEL,
+      // Generation counter (0.1.18) — bumped on a page-load reset (dropped
+      // entirely, see dropSessionsForTab) or a seek (pm-seek, in place —
+      // coverage/state untouched). maybeProcess's loop and transcribeWindow
+      // both capture their OWN generation at start and compare against the
+      // session's CURRENT value before picking further windows / applying
+      // results — a stale in-flight WASM call (can't be aborted mid-call)
+      // still runs to completion, but its result is discarded rather than
+      // applied once superseded, and no further old-generation windows get
+      // queued behind it. See PIPELINE_NOTES "0.1.18" for the live bug this
+      // fixes (a page refresh's stale session blocking the new one for 7s+).
+      generation: 0,
+      inFlightWindows: new Set(), // "start.toFixed(2),end.toFixed(2)" currently dispatched to transcribeWindow — prevents the picker from re-picking a span whose result hasn't landed yet
+      lastKnownRtf: null, // rolling estimate (last computeMs-based rtf) used to size cold-start windows so they finish AHEAD of the playhead — see pickNextWindow
+      // [PM-FIRST-COVERAGE] breakdown milestones (0.1.18) — set once each,
+      // guarded by !firstCoverageLogged; logged as one line the moment the
+      // first window's coverage is applied. See the call sites below.
+      firstSegCapturedAt: null,
+      firstSegRelayedAt: null,
+      firstWindowPickedAt: null,
+      firstWindowDecodedAt: null,
+      firstWindowWordsAt: null,
+      firstCoverageLogged: false
     };
     sessions.set(key, s);
     log('new session', key);
+    logWarmToSession(s); // no-op if the worker/model isn't warm yet — see whisperWorker.onmessage's 'warm-ready' handler
   }
   return s;
 }
@@ -366,6 +418,7 @@ function dropSessionsForTab(tabId) {
   for (const key of Array.from(sessions.keys())) {
     if (key.startsWith(tabId + ':')) {
       const s = sessions.get(key);
+      s.generation++; // bump BEFORE deleting (0.1.18) — any in-flight closure still holding a reference to this exact object (a running maybeProcess loop or transcribeWindow call from before the reset) sees this and discards its own work instead of applying it to a session that's supposed to be gone
       for (const run of s.runs) closeRun(run); // close every run's demux state, not just prune — the whole session is going away
       sessions.delete(key);
     }
@@ -509,9 +562,28 @@ function logNoWindowReason(s, key, reason) {
 // first window of a session, OR any window whose start isn't immediately
 // adjacent to existing coverage (i.e. it's opening a new, disjoint region —
 // exactly what a seek/resume produces), counts as cold.
-const COLD_START_WINDOW_S = 5;
+// MICRO FIRST WINDOW (0.1.18): cut from 5s to 2.5s of audio — with a warm
+// model (~0.2 rtf steady-state), that's first coverage in ~0.5s of compute
+// once the model is actually warm (see the eager-preload fix). Growable
+// per COLD_START_RTF_MARGIN_S below when the measured rtf says 2.5s alone
+// wouldn't finish ahead of the playhead.
+const COLD_START_WINDOW_S = 2.5;
 const COLD_START_MIN_NEW_S = 1.5;
 const COLD_START_ADJACENCY_S = 3;
+// AIM AHEAD, NOT BEHIND (0.1.18): a live log showed a cold window picked
+// correctly at the playhead (t=3334) but the playhead had moved to 3341 by
+// the time it finished — a window is only useful if its OWN END is still
+// ahead of the playhead once compute finishes. Grow the cold window (up to
+// full WINDOW_S) using the session's last measured compute-only rtf so
+// `window_duration * (1 - rtf) >= gap + margin` holds — i.e. the window
+// outruns the playhead by at least COLD_START_RTF_MARGIN_S once transcribed.
+// rtf is clamped well below 1 (COLD_START_RTF_CLAMP_MAX) so a slow/cold
+// measurement can't produce a negative or absurd required size — in that
+// case just fall back to a generously large (but still capped) window
+// rather than doing fragile math with a >=1 rtf.
+const COLD_START_RTF_MARGIN_S = 1;
+const COLD_START_RTF_CLAMP_MIN = 0.15;
+const COLD_START_RTF_CLAMP_MAX = 0.7;
 // Tiny-tail-window deferral (0.1.13): a live log showed a 0.05s window
 // attempted at rtf=68 — fixed per-call overhead (model warmup already paid,
 // but demux/resample/generate call overhead) completely dominates a sliver
@@ -551,6 +623,25 @@ function markUnanalyzable(s, reason) {
 // currentTime, or — if the playhead has jumped somewhere not buffered yet —
 // the NEAREST range ahead of it. Never a linear frontier that can only ever
 // grow from where it last was.
+// In-flight-aware coverage view (0.1.18): a live log showed the EXACT same
+// span [2520.17,2525.17) picked and transcribed twice back-to-back (its own
+// [PM-TIMELINE-ALARM] fired on the resulting near-duplicate text) — the
+// picker had no way to know a span was already dispatched and not yet
+// applied to s.covered. Folding `s.inFlightWindows` into the coverage view
+// used for picking (never into `s.covered` itself, which must stay the
+// TRUE, transcription-confirmed coverage) makes the picker skip past
+// anything already in flight, the same way it already skips past
+// genuinely-covered spans.
+function coverageViewForPicking(s) {
+  if (s.inFlightWindows.size === 0) return s.covered;
+  const extra = [];
+  for (const key of s.inFlightWindows) {
+    const idx = key.indexOf(',');
+    extra.push({ start: parseFloat(key.slice(0, idx)), end: parseFloat(key.slice(idx + 1)) });
+  }
+  return s.covered.concat(extra).sort((a, b) => a.start - b.start);
+}
+
 function pickNextWindow(s) {
   const ct = s.currentTimeS;
   let containing = null;
@@ -579,18 +670,20 @@ function pickNextWindow(s) {
     return null;
   }
 
-  let start = firstUncoveredPoint(s.covered, lowBound, high);
+  const coverageView = coverageViewForPicking(s);
+  let start = firstUncoveredPoint(coverageView, lowBound, high);
   if (start == null) {
-    // Fully covered so far within this range — extend forward WITHIN THE
-    // SAME RANGE only (never jump to some other, unrelated buffered region
-    // just because it happens to be later in s.covered's ordering).
+    // Fully covered (or in-flight) so far within this range — extend
+    // forward WITHIN THE SAME RANGE only (never jump to some other,
+    // unrelated buffered region just because it happens to be later in the
+    // list's ordering).
     let maxCoveredInRange = targetRange.start;
-    for (const iv of s.covered) {
+    for (const iv of coverageView) {
       if (iv.start < targetRange.end && iv.end > targetRange.start) maxCoveredInRange = Math.max(maxCoveredInRange, iv.end);
     }
     start = Math.max(maxCoveredInRange, lowBound);
     if (start >= high) {
-      logNoWindowReason(s, 'fully-covered', 'fully covered up to the available buffer in range [' + lowBound.toFixed(2) + ',' + high.toFixed(2) + ') — nothing new to transcribe right now');
+      logNoWindowReason(s, 'fully-covered', 'fully covered (or in flight) up to the available buffer in range [' + lowBound.toFixed(2) + ',' + high.toFixed(2) + ') — nothing new to transcribe right now');
       return null;
     }
   }
@@ -627,7 +720,18 @@ function pickNextWindow(s) {
     if (coldFloor > start) start = coldFloor;
   }
 
-  const targetWindowS = isColdStart ? COLD_START_WINDOW_S : WINDOW_S;
+  let targetWindowS = isColdStart ? COLD_START_WINDOW_S : WINDOW_S;
+  if (isColdStart) {
+    // AIM AHEAD, NOT BEHIND (0.1.18): grow the baseline micro window if the
+    // measured rtf says it wouldn't finish ahead of the playhead. Solving
+    // `windowDuration * (1 - rtf) >= gap + margin` for windowDuration, where
+    // `gap` is how far `start` already sits behind `ct` (small given the
+    // coldFloor fix above, but not always exactly 0).
+    const rtfEstimate = Math.min(COLD_START_RTF_CLAMP_MAX, Math.max(COLD_START_RTF_CLAMP_MIN, s.lastKnownRtf || COLD_START_RTF_CLAMP_MIN));
+    const gap = Math.max(0, ct - start);
+    const neededS = (gap + COLD_START_RTF_MARGIN_S) / (1 - rtfEstimate);
+    if (neededS > targetWindowS) targetWindowS = Math.min(WINDOW_S, neededS);
+  }
   const minNewS = isColdStart ? COLD_START_MIN_NEW_S : MIN_NEW_S;
 
   const end = Math.min(start + targetWindowS, high);
@@ -649,6 +753,12 @@ function pickNextWindow(s) {
 
 async function transcribeWindow(s, run, absStart, absEnd) {
   const t0 = performance.now();
+  // Generation guard (0.1.18) — captured at entry; checked again right
+  // before applying any result. A stale in-flight call from a prior
+  // generation (a page-refresh reset, or a seek) can't be aborted mid-call,
+  // but its result is discarded rather than applied once superseded — see
+  // dropSessionsForTab()/the pm-seek handler for where generation bumps.
+  const myGeneration = s.generation;
 
   // Track/sink are resolved ONCE per run and cached — re-fetching the
   // primary audio track is cheap once resolved, but constructing a fresh
@@ -759,6 +869,17 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   }
 
   const float16k = await windowToFloat16k(wrapped, absStart, absEnd, nativeRate);
+  const tDecoded = performance.now();
+  // [PM-FIRST-COVERAGE] milestone (0.1.18): "decoded" — see the full
+  // breakdown log at the end of this function.
+  if (!s.firstCoverageLogged && s.firstWindowDecodedAt == null) s.firstWindowDecodedAt = Date.now();
+
+  if (s.generation !== myGeneration) {
+    // Superseded (page reset or seek) while demuxing — don't even bother
+    // queuing the expensive worker call for a window nobody wants anymore.
+    log('[PM-STALE] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') abandoned after decode: generation changed (' + myGeneration + ' -> ' + s.generation + ')');
+    return false;
+  }
 
   // Model-in-use is tab-visible exactly once per session (0.1.13) — per the
   // standing "nothing that affects behavior stays invisible" rule, and
@@ -778,6 +899,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // anyway). The wall-clock timer starts only once this call actually
   // BEGINS executing (not when it's enqueued behind another tab's window),
   // so modelRtf keeps measuring real transcribe time, not queue-wait.
+  const tBeforeQueue = performance.now(); // wallMs SPLIT (0.1.18) — see queueMs/computeMs below
   let tTranscribeStart = 0;
   const workerResult = await runSerialized(() => {
     tTranscribeStart = performance.now();
@@ -798,12 +920,45 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     });
   });
   const transcribeMs = performance.now() - tTranscribeStart;
+  // wallMs SPLIT (0.1.18): a live paste showed wallMs-derived rtf of 3-8
+  // right next to modelRtf of 0.2-0.5 — almost all of it was QUEUE wait (a
+  // stale/superseded session's own backlog competing for the same shared
+  // worker), not compute, but wallMs alone couldn't show that. decodeMs
+  // covers demux+resample (t0 to just after windowToFloat16k); queueMs is
+  // strictly the wait for the worker mutex to free up; computeMs is the
+  // worker's own round trip (== transcribeMs).
+  const decodeMs = tDecoded - t0;
+  const queueMs = tTranscribeStart - tBeforeQueue;
+  const computeMs = transcribeMs;
+
+  if (s.generation !== myGeneration) {
+    // Superseded while the (unabortable) worker call was in flight — the
+    // result is real, but for a playhead nobody's at anymore. Discard
+    // rather than apply/log it as a real window (this is exactly the
+    // near-duplicate-window symptom a live [PM-TIMELINE-ALARM] caught).
+    notifyTab(
+      s,
+      '[PM-STALE] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') result discarded: generation changed (' +
+        myGeneration + ' -> ' + s.generation + ') while transcribing — decodeMs=' + Math.round(decodeMs) +
+        ' queueMs=' + Math.round(queueMs) + ' computeMs=' + Math.round(computeMs)
+    );
+    return false;
+  }
+
+  // [PM-FIRST-COVERAGE] milestone (0.1.18): "words returned".
+  if (!s.firstCoverageLogged && s.firstWindowWordsAt == null) s.firstWindowWordsAt = Date.now();
+
   // float16k's buffer was TRANSFERRED into the worker above — it must never
   // be read again on this side (it's detached/zero-length now). `output`
   // below carries everything needed, including per-chunk `rms` (computed
   // inside the worker, where the PCM actually still is).
   const output = { text: workerResult.text, chunks: workerResult.chunks };
   const audioDurationS = absEnd - absStart;
+  // rtf-aware cold-window sizing (0.1.18) feeds off this — track a rolling
+  // "last known" compute-only rtf so the NEXT cold window (a future seek)
+  // can size itself to actually outrun the playhead. Simple last-value,
+  // not an average — the aim-ahead math already clamps it to a sane range.
+  s.lastKnownRtf = computeMs / 1000 / audioDurationS;
   // Accounting fix (0.1.11): `rtf` used to be transcribeMs-only (the model
   // call's own throughput) while the `wallMs` logged right alongside it in
   // [PM-WINDOW] is the FULL time since transcribeWindow started, including
@@ -962,6 +1117,9 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       wallMs,
       rtf,
       modelRtf,
+      decodeMs,
+      queueMs,
+      computeMs,
       lagMs
     });
   } catch (e) {
@@ -976,6 +1134,37 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // being silently treated as covered.
   for (const wb of wrapped) {
     mergeRangeInto(s.covered, wb.timestamp, wb.timestamp + wb.buffer.duration);
+  }
+
+  // [PM-FIRST-COVERAGE] (0.1.18): one-line, per-stage breakdown of the cold
+  // path — captured -> relayed -> picked -> decoded -> words -> covered —
+  // logged ONCE, the first time a session's coverage is actually applied,
+  // so any future paste shows exactly where startup time goes instead of
+  // requiring guesswork across capture.js/content.js/background.js/this
+  // file. Milestones are best-effort Date.now() wall-clock stamps set at
+  // each stage's own call site (see getOrCreateSession's pm-segment
+  // handler for captured/relayed, pickNextWindow's caller in maybeProcess
+  // for picked, and this function for decoded/words) — all within the same
+  // browser process, so directly comparable despite crossing JS contexts.
+  if (!s.firstCoverageLogged) {
+    s.firstCoverageLogged = true;
+    const m = {
+      captured: s.firstSegCapturedAt,
+      relayed: s.firstSegRelayedAt,
+      picked: s.firstWindowPickedAt,
+      decoded: s.firstWindowDecodedAt,
+      words: s.firstWindowWordsAt,
+      covered: Date.now()
+    };
+    const stageOrder = ['captured', 'relayed', 'picked', 'decoded', 'words', 'covered'];
+    const parts = [];
+    for (let i = 1; i < stageOrder.length; i++) {
+      const prevKey = stageOrder[i - 1], curKey = stageOrder[i];
+      const delta = m[curKey] != null && m[prevKey] != null ? m[curKey] - m[prevKey] : null;
+      parts.push(prevKey + '->' + curKey + '=' + (delta != null ? Math.round(delta) : 'NA') + 'ms');
+    }
+    const totalMs = m.captured != null ? m.covered - m.captured : null;
+    notifyTab(s, '[PM-FIRST-COVERAGE] ' + parts.join(' ') + ' total=' + (totalMs != null ? Math.round(totalMs) : 'NA') + 'ms');
   }
 
   // Loop-breaker (0.1.14): a live session attempted the EXACT SAME window
@@ -1032,6 +1221,16 @@ async function maybeProcess(s) {
   // for the first sign of life) plus on a timer for the duration of work.
   sendHeartbeat(s);
   const heartbeatTimer = setInterval(() => sendHeartbeat(s), HEARTBEAT_MS);
+  // Generation guard (0.1.18): captured once per maybeProcess() invocation.
+  // A page-refresh reset or a seek bumps s.generation — this loop stops
+  // picking any FURTHER windows as soon as it notices (checked every
+  // iteration, same reasoning as the disabled/unanalyzable check above),
+  // rather than grinding through a whole backlog of now-irrelevant windows
+  // before the new playhead region ever gets a turn. See dropSessionsForTab
+  // and the pm-seek handler for where generation actually bumps, and
+  // transcribeWindow for the belt-and-suspenders check on the RESULT of an
+  // already-in-flight call that can't be aborted mid-way.
+  const loopGeneration = s.generation;
   try {
     for (;;) {
       // Re-checked every iteration (0.1.15): pm_enabled could flip false
@@ -1040,6 +1239,10 @@ async function maybeProcess(s) {
       // so a session disabled mid-catch-up would keep burning CPU on
       // already-queued windows for the rest of that loop.
       if (s.disabled || s.unanalyzable) break;
+      if (s.generation !== loopGeneration) {
+        log('[PM-STALE] maybeProcess loop stopping: generation changed (' + loopGeneration + ' -> ' + s.generation + ')');
+        break;
+      }
       const run = s.currentRun;
       if (!run) {
         logNoWindowReason(s, 'no-run', 'no active byte run yet for this session (no init segment captured) — nothing to transcribe until one arrives');
@@ -1047,7 +1250,24 @@ async function maybeProcess(s) {
       }
       const target = pickNextWindow(s);
       if (!target) break;
-      const ok = await transcribeWindow(s, run, target.start, target.end);
+      // [PM-FIRST-COVERAGE] milestone (0.1.18): "picked" — the first time
+      // ANY window gets picked for this session. Calls are strictly
+      // sequential within this loop (each fully awaited before the next
+      // pick), so this is unambiguously the window whose own
+      // decoded/words/covered milestones get set inside transcribeWindow.
+      if (!s.firstCoverageLogged && s.firstWindowPickedAt == null) s.firstWindowPickedAt = Date.now();
+      // In-flight marking (0.1.18): see coverageViewForPicking() — this is
+      // what lets the picker skip past a span already dispatched instead of
+      // re-picking the exact same one before its result has landed (a live
+      // [PM-TIMELINE-ALARM] caught this happening to [2520.17,2525.17)).
+      const inFlightKey = target.start.toFixed(2) + ',' + target.end.toFixed(2);
+      s.inFlightWindows.add(inFlightKey);
+      let ok;
+      try {
+        ok = await transcribeWindow(s, run, target.start, target.end);
+      } finally {
+        s.inFlightWindows.delete(inFlightKey);
+      }
       if (!ok) break;
       s.hadFirstWindow = true; // cold-start window sizing only applies until the first one actually lands
     }
@@ -1068,6 +1288,22 @@ chrome.runtime.onMessage.addListener((msg) => {
 
   if (msg.type === 'pm-reset') {
     dropSessionsForTab(msg.tabId);
+    return;
+  }
+
+  if (msg.type === 'pm-seek') {
+    // Seek preemption (0.1.18) — see content.js's 'seeking' handler and
+    // this session's `generation` field for the full mechanism. Coverage/
+    // run state is untouched; this only invalidates in-flight/queued work
+    // and immediately re-kicks maybeProcess so the new playhead region
+    // gets picked right away instead of waiting behind it.
+    const key = sessionKey(msg.tabId, msg.videoId);
+    const s = sessions.get(key);
+    if (s) {
+      s.generation++;
+      if (typeof msg.currentTime === 'number' && !Number.isNaN(msg.currentTime)) s.currentTimeS = msg.currentTime;
+      maybeProcess(s);
+    }
     return;
   }
 
@@ -1161,6 +1397,15 @@ chrome.runtime.onMessage.addListener((msg) => {
 
   if (msg.type === 'pm-segment') {
     const s = getOrCreateSession(msg.tabId, msg.videoId);
+    // [PM-FIRST-COVERAGE] milestone 1/2 (0.1.18): the FIRST segment this
+    // session ever sees. msg.wallTime is capture.js's own Date.now() at the
+    // moment of capture (MAIN world); this handler's Date.now() is when it
+    // actually landed here after the base64 relay through content.js and
+    // background.js — the gap between the two is the actual relay latency.
+    if (s.firstSegCapturedAt == null) {
+      s.firstSegCapturedAt = typeof msg.wallTime === 'number' ? msg.wallTime : Date.now();
+      s.firstSegRelayedAt = Date.now();
+    }
     const bytes = base64ToUint8(msg.dataB64);
 
     if (msg.isInit) {

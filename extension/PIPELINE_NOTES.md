@@ -1901,6 +1901,161 @@ there's only one Chrome instance and something else is wrong), then repeat
 the reload + live seek-heavy + popup-paint + two-tab + caption-correlation
 pass in that session.
 
+## 0.1.18: eager warm-up, generation-based seek preemption, aim-ahead sizing, actionable status pill
+
+User's 0.1.17 cold-start paste measured `[PM-CATCHUP-TIME]` at 13.30s and
+15.93s — the preload+aim fixes from 0.1.17 alone were insufficient. Root
+cause analysis of that paste found THREE compounding causes on top of the
+already-fixed items; all fixed here, plus a UX request to make the status
+pill actionable.
+
+### 1. Stale cross-refresh work (the biggest single contributor)
+
+A first window completed with `wallMs=131129` (131 SECONDS) aimed at
+`[3363,3379)` — the PREVIOUS page-session's playhead region. Root cause: a
+plain page REFRESH of the SAME video does not change capture.js's own
+tracked video id, so its `'reset'` message (sent only on an ACTUAL
+video-id change) never fires — the offscreen session for that
+tabId:videoId key survived the refresh, in-flight/queued work and all,
+and drained into the new page load, blocking the transcribe lane for 7+
+seconds just from ONE stale window (let alone the full backlog).
+
+Fixed: `content.js` now sends a `reset` unconditionally at its OWN
+startup (`resetSession(currentVideoIdFromLocation())`, called right after
+`connectPort()`) — i.e. on every page load, not just a detected video-id
+change, so offscreen always starts a tab clean regardless of whether
+capture.js thinks the video id moved. Paired with a new per-session
+**generation counter** (`s.generation`) in `offscreen-src.js`:
+`dropSessionsForTab` bumps it on the (about-to-be-deleted) session object
+before deleting it from the map, so an already-in-flight closure (a
+running `maybeProcess` loop or `transcribeWindow` call from before the
+reset — can't be aborted mid-WASM-call) sees the bump and discards its own
+work (`[PM-STALE]`) instead of applying a stale result to what's supposed
+to be a fresh session.
+
+### 2. No seek preemption + a duplicate pick
+
+A second seek waited ~8s for an old-region window (`[3497,3509]`,
+`wallMs=43000` including queue) to finish before the new playhead region
+got picked at all. Fixed with the SAME generation mechanism: `content.js`'s
+`'seeking'` handler now sends a `{type:'seek'}` port message; offscreen's
+`pm-seek` handler bumps `s.generation` (coverage/session state untouched —
+"seek keeps everything" is unaffected) and immediately re-kicks
+`maybeProcess(s)`. `maybeProcess`'s loop captures its OWN `loopGeneration`
+and stops picking any FURTHER windows the moment it notices a bump — the
+one already-dispatched window still has to finish (unabortable), but the
+loop no longer keeps grinding through a whole backlog of now-irrelevant
+old-region windows first, bounding the worst-case wait to roughly one
+window's own compute time.
+
+Separately, the SAME paste showed `[2520.17,2525.17)` transcribed TWICE
+back-to-back (its own `[PM-TIMELINE-ALARM]` fired on the resulting
+near-duplicate text) — the picker had no way to know a span was already
+dispatched and not yet reflected in `s.covered`. Fixed with
+`s.inFlightWindows` (a `Set` of in-flight `"start,end"` keys, added/removed
+around each `transcribeWindow` call in `maybeProcess`'s loop) folded into a
+new `coverageViewForPicking(s)` used ONLY for picking decisions (never
+mutating `s.covered` itself, which must stay the true, transcription-
+confirmed coverage) — the picker now skips past an in-flight span exactly
+like it already skips past a genuinely-covered one. Unit-verified in
+isolation: a picker call starting exactly at an in-flight span's boundary
+correctly returns the point just past it, not the span itself.
+
+### 3. Aim ahead, not behind — rtf-aware cold window sizing
+
+A cold window `[3334,3339)` was correctly aimed at the playhead AT PICK
+TIME, but the playhead had moved to 3341 by the time transcription
+finished — the window's own END must be ahead of the playhead-at-
+completion to be useful at all. `pickNextWindow`'s cold-start branch now
+grows the baseline 2.5s micro window (see below) using the session's last
+measured compute-only rtf, solving `windowDuration * (1 - rtf) >= gap +
+margin` for `windowDuration` (clamped rtf range 0.15-0.7 so a slow/cold
+measurement can't produce a negative/absurd required size — falls back to
+a generously large, still WINDOW_S-capped window in that case rather than
+doing fragile math with an rtf near or above 1). Unit-verified: a warm
+model (rtf 0.2) with a small gap keeps the 2.5s baseline; the formula
+scales up correctly as gap/rtf increase, always capped at `WINDOW_S`.
+
+### 4. wallMs split into decodeMs/queueMs/computeMs
+
+`wallMs`-derived `rtf` was showing 3-8 right next to `modelRtf` of 0.2-0.5
+in the SAME paste — almost all of the gap was QUEUE wait (a stale
+session's backlog competing for the shared worker mutex), not compute, but
+`wallMs` alone couldn't show that. `transcribeWindow` now tracks
+`decodeMs` (demux+resample), `queueMs` (wait for the worker mutex to free
+up), and `computeMs` (the worker's own round trip) separately, threaded
+through `pm-words-result` -> `background.js` -> content.js's
+`[PM-WINDOW]` log line alongside the existing `wallMs`/`rtf`/`modelRtf`.
+
+### 5. Eager warm-up + [PM-WARM] visibility
+
+Re-audited the "offscreen doc + worker created on demand" theory:
+`background.js` already calls `ensureOffscreenDocument()` unconditionally
+at top-level script load AND on `onStartup`/`onInstalled` — NOT gated on
+any tab/port event — so the worker (and its boot-time model preload) was
+already starting as early as technically possible. What was genuinely
+missing was VISIBILITY: that warm-up happened before any session/tab
+existed to log through, so a Copy Logs paste could never confirm it
+happened or how long it took. Fixed: the worker now measures
+`workerSpawnMs` (script start to `'init'` received) and `modelLoadMs`
+(init to model ready) and reports them via a new `'warm-ready'` message;
+`offscreen-src.js` buffers this (`warmInfo`) and surfaces it as
+`[PM-WARM]` to the FIRST session created after boot (`logWarmToSession`,
+called from `getOrCreateSession` for a new session, and looped over all
+sessions when `warm-ready` itself arrives) — whichever happens first. This
+is presentation of already-eager behavior, not a new warm-up mechanism;
+the real fixes for "still uncovered too long" are items 1-4 above.
+
+### 6. Micro first window: 2.5s (was 5s)
+
+`COLD_START_WINDOW_S` cut from 5 to 2.5 — with a warm model (~0.2 rtf),
+that's first coverage in ~0.5s of compute. Grows per item 3's rtf-aware
+sizing when needed.
+
+### UX addition: actionable status pill
+
+User feedback: the plain "Analyzing…" state gave no signal on whether
+pausing-and-waiting would help (audio already captured, just queued) or
+whether continued playback was needed (to make YouTube fetch further).
+Replaced with four data-driven states, computed entirely from data
+`content.js` already receives (no new pipeline plumbing — this is
+presentation only, per the explicit framing):
+- **Protected** — unchanged, coverage extends >=5s past the playhead.
+- **"Analyzing — safe to pause (~Ns)"** — the playhead's own region IS in
+  `session.bufferedRanges` (a new content.js-side mirror of the same
+  interval-set concept offscreen tracks, built here purely from
+  `growthAbsStart`/`growthAbsEnd` already flowing through the segment
+  relay — no new message) and just hasn't been transcribed yet. ETA =
+  remaining-uncovered-audio-in-that-range × last measured rtf (from
+  `addWords`' own `computeMs`/`modelRtf`), capped at 30s, recomputed at
+  the pill's existing ~2Hz render cadence.
+- **"Buffering + analyzing…"** — not captured yet, but a segment landed
+  within the last 3s (`session.lastBufferedGrowthWall`, mirrored the same
+  way) — still fine to wait.
+- **"Press play to load audio"** — not captured, and no capture growth for
+  4s+ — YouTube has stopped fetching (e.g. paused before the buffer
+  reached this position); the one state actually needing user action.
+- **Off** — unchanged (DRM/unanalyzable).
+
+**Verification status**: all six backend items are syntax-checked
+(`node --check`) and both bundles build cleanly (`node build.js`). Unit-
+verified in isolation (standalone Node harness): the rtf-aware cold-window
+formula across warm/cold/pathological rtf inputs, the uncovered-duration-
+within-a-range helper (used both by the picker's fully-covered check and
+the new status pill ETA), and the in-flight-aware coverage view correctly
+letting the picker skip past an already-dispatched span. **Live
+verification attempted again this pass and still blocked**: retried the
+`claude-in-chrome` check from the previous round (new background tab,
+`volume=0` immediately, regression video) — same result as before, zero
+`[PM-...]` console output and no status-pill DOM element found after two
+separate attempts across two different page loads. This is the SAME
+unresolved "automation browser doesn't show the extension active"
+condition flagged last round, not a new finding — still not distinguishable
+from here as a wrong-profile/window issue vs. anything else. No live
+verification claim is made for 0.1.18, the actionable status pill's three
+new states, or any of the still-outstanding 0.1.16 items (popup-paint,
+jump-heavy, two-tab, caption-correlation) for the same reason.
+
 ## Known gaps
 
 - **`shared/wordlist.js` `pm_wordlist:undefined`-default bug** (finding #2

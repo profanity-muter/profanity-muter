@@ -33006,6 +33006,7 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
   var require_whisper_worker_src = __commonJS({
     "src/whisper-worker-src.js"() {
       init_transformers_web();
+      var workerScriptStartWall = performance.now();
       function log(...args) {
         console.log("[PM-WHISPER-WORKER]", ...args);
       }
@@ -33070,8 +33071,13 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
           self.postMessage({ type: "error", requestId, error: String(e && e.stack ? e.stack : e) });
         }
       }
-      function preload(modelId) {
-        getTranscriber(modelId).catch((e) => {
+      function preload(modelId, reportWarm) {
+        const t0 = performance.now();
+        getTranscriber(modelId).then(() => {
+          if (reportWarm) {
+            self.postMessage({ type: "warm-ready", workerSpawnMs: reportWarm.workerSpawnMs, modelLoadMs: Math.round(performance.now() - t0) });
+          }
+        }).catch((e) => {
           log("preload(" + modelId + ") failed (will retry on next real request):", String(e));
         });
       }
@@ -33081,8 +33087,9 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
         if (msg.type === "init") {
           wasmPathsBase = msg.wasmPathsBase;
           env2.backends.onnx.wasm.wasmPaths = wasmPathsBase;
-          log("initialized, wasmPathsBase=" + wasmPathsBase);
-          preload(DEFAULT_MODEL);
+          const workerSpawnMs = Math.round(performance.now() - workerScriptStartWall);
+          log("initialized, wasmPathsBase=" + wasmPathsBase + ", workerSpawnMs=" + workerSpawnMs);
+          preload(DEFAULT_MODEL, { workerSpawnMs });
           return;
         }
         if (msg.type === "preload") {
