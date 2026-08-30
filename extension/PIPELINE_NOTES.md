@@ -2056,6 +2056,44 @@ verification claim is made for 0.1.18, the actionable status pill's three
 new states, or any of the still-outstanding 0.1.16 items (popup-paint,
 jump-heavy, two-tab, caption-correlation) for the same reason.
 
+## 0.1.19: status pill judges playhead horizon, not whole backlog
+
+User-diagnosed bug: the pill stuck on "Analyzing — safe to pause (~Ns)"
+during ordinary protected playback. Root cause, confirmed by the user's own
+read of `computeStatusState()`: the "captured, just queued" ETA branch
+computed `uncoveredDurationWithin(session.coveredIntervals, t,
+playheadRange.end)` — `playheadRange.end` is the end of the whole captured
+(buffered) span at the playhead, which normally extends far ahead of the
+playhead by design (buffering intentionally leads transcription, per the
+architecture notes) and is essentially never fully transcribed yet. So the
+ETA (and, on the two-point `isCovered(t) && isCovered(t+5)` "Protected"
+check, potentially the state itself) was judged against that whole backlog
+instead of the ~5s window that actually determines whether it's safe to
+keep watching uninterrupted.
+
+Fixed in `content.js`'s `computeStatusState()`:
+- New `PROTECT_MARGIN` (5s, was an inline literal) names the lookahead
+  window explicitly.
+- **"Protected"** is now `uncoveredDurationWithin(coveredIntervals, t, t +
+  PROTECT_MARGIN) <= COVERAGE_EPS` — a real "is this whole window covered"
+  check (via the existing `uncoveredDurationWithin` helper) rather than two
+  independent point checks (`isCovered(t)` and `isCovered(t+5)`), which
+  could not detect a gap in between the two endpoints.
+- **"Analyzing — safe to pause (~Ns)"**'s ETA now sums uncovered duration
+  only within `[t, min(t + PROTECT_MARGIN, playheadRange.end)]` — bounded
+  by the protection horizon, never by however far capture has buffered
+  ahead. During normal playback this converges to "Protected" as soon as
+  the horizon itself is transcribed, instead of never converging because
+  the backlog behind it never empties.
+- "Buffering + analyzing…" / "Press play to load audio" are unchanged
+  (already playhead-local via `bufferedRanges`/`lastBufferedGrowthWall`) —
+  only the two branches above were reading the whole backlog.
+
+Not re-verified live (no working `claude-in-chrome` session against this
+regression this pass) — `node --check content.js` passes; the change is
+presentation-only over already-existing data (`coveredIntervals`,
+`bufferedRanges`), same as 0.1.18's original pill design.
+
 ## Known gaps
 
 - **`shared/wordlist.js` `pm_wordlist:undefined`-default bug** (finding #2

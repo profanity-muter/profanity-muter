@@ -903,6 +903,12 @@
   var statusPillEl = null;
   var STATUS_GROWTH_RECENT_MS = 3000; // capture actively growing if a segment landed within this long
   var STATUS_GROWTH_STALLED_MS = 4000; // capture has stopped fetching if nothing landed for this long
+  // 0.1.19: the pill's whole state/ETA judges only the playhead's own
+  // protection horizon, never the full uncovered backlog further ahead —
+  // see the "0.1.19" PIPELINE_NOTES entry for why that distinction matters
+  // (transcription intentionally trails buffering, so "everything ahead of
+  // the playhead" is never fully covered during normal playback).
+  var PROTECT_MARGIN = 5; // seconds of lookahead that must be covered to call it "Protected"
 
   function uncoveredDurationWithin(intervals, lo, hi) {
     var coveredS = 0;
@@ -919,7 +925,13 @@
     var video = getVideo();
     if (!video) return null;
     var t = video.currentTime;
-    if (isCovered(t) && isCovered(t + 5)) return { kind: 'protected' };
+    var horizonEnd = t + PROTECT_MARGIN;
+    // "Protected" means the whole [t, t+margin] window is covered, not just
+    // its two endpoints — a gap in the middle (real, given how transcription
+    // windows land) must not read as protected.
+    if (uncoveredDurationWithin(session.coveredIntervals, t, horizonEnd) <= COVERAGE_EPS) {
+      return { kind: 'protected' };
+    }
 
     var playheadRange = null;
     for (var i = 0; i < session.bufferedRanges.length; i++) {
@@ -932,8 +944,11 @@
 
     if (playheadRange) {
       // Captured already — just queued/processing. ETA from how much of
-      // THIS range, ahead of the playhead, is still uncovered.
-      var uncoveredAheadS = uncoveredDurationWithin(session.coveredIntervals, t, playheadRange.end);
+      // the playhead's own protection HORIZON — not the whole captured
+      // range, which can (and normally does) extend far past the horizon
+      // since buffering intentionally leads transcription — is still
+      // uncovered.
+      var uncoveredAheadS = uncoveredDurationWithin(session.coveredIntervals, t, Math.min(horizonEnd, playheadRange.end));
       var rtf = session.lastKnownRtf != null ? Math.min(0.85, Math.max(0.1, session.lastKnownRtf)) : 0.3;
       var etaS = Math.min(30, Math.max(1, Math.ceil(uncoveredAheadS * rtf)));
       return { kind: 'analyzing-safe', etaS: etaS };
