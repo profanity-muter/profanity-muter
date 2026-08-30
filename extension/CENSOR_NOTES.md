@@ -943,8 +943,8 @@ array form:
 
 ```
 $ node wordlist_integration_test.js
-... (18 lines of PASS) ...
-18 passed, 0 failed
+... (21 lines of PASS) ...
+21 passed, 0 failed
 ```
 
 ### Re-running the tests
@@ -1051,5 +1051,29 @@ live YouTube caption DOM. Steps to smoke-test:
   building and showing/hiding the overlay UI on the YouTube player
   entirely, keyed off this boolean. Kept fresh automatically, same as
   every other field on this object.
+- `PMWordlist.settings.showStatus` — live boolean, `true` by default
+  (the popup's "Show status on player" toggle, new 2026-08-30). This is
+  the ONE setting for whether your on-player status pill should render
+  at all — distinct from `debugOverlay` (opt-in diagnostic, defaults
+  false): `showStatus` is the lightweight, on-by-default status
+  indicator. This file does not render anything itself; you own
+  building/showing/hiding the pill UI, keyed off this boolean. Kept
+  fresh automatically, same as every other field on this object.
+- `pm_stats` (new, 2026-08-30) — **not** part of `PMWordlist.settings`
+  and **not** in `chrome.storage.sync` at all. It lives in
+  `chrome.storage.LOCAL` as `{totalMuted: number, videosProtected: number}`,
+  written entirely by your side (`content.js`) as the pipeline runs;
+  `shared/wordlist.js` never reads or writes it. The popup's STATS
+  section reads it directly via `chrome.storage.local.get(["pm_stats"])`
+  and live-updates via `chrome.storage.onChanged` filtered to
+  `areaName === "local"` — write to it whenever you want the displayed
+  totals to update; no signal/event back to you is needed since the
+  popup does the listening. The popup's "Reset stats" button writes
+  `{totalMuted: 0, videosProtected: 0}` back to the same key — if your
+  pipeline code holds an in-memory running total, it should treat a
+  `chrome.storage.onChanged` reset-to-zero on `pm_stats` (area
+  `"local"`) as authoritative and reset its own counter too, rather
+  than immediately overwriting the reset with a stale in-memory value
+  on its next write.
 - `PMWordlist.settings.enabled` is also available on the same object if
   useful.
