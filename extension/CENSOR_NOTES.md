@@ -226,6 +226,141 @@ fix and still applies verbatim to the radios.
 - Screenshot confirming the custom radio renders and selects correctly:
   session scratchpad, `popup-custom-radio-pause-selected.png`.
 
+## FEATURE (2026-08-30): `pm_strictness` (Standard / Strict / Custom) + `pm_padding`
+
+### `pm_strictness`: "standard" | "strict" | "custom" — default "strict"
+
+Splits `DEFAULT_WORDLIST` into two groups and adds a third,
+independent "use my own list" mode:
+
+- `CORE_WORDLIST` (107 entries) — clear profanity, slurs, and crude
+  terms.
+- `EXTENDED_WORDLIST` (16 entries) — euphemisms, ASR-mishears, and
+  religious exclamations (the entries added in the earlier "ASR-mishear
+  / euphemism additions" pass, e.g. the `"gosh"`/`"heck"`/`"freaking"`
+  family and the `"oh (my) god"`/`"jesus christ"` religious-exclamation
+  set — see `shared/wordlist.js` for the exact list; not repeated here
+  to keep this doc filter-safe).
+- `CORE_WORDLIST.length + EXTENDED_WORDLIST.length === DEFAULT_WORDLIST.length`,
+  no overlap, no leftovers — enforced by a dedicated test (see below).
+
+`pm_strictness` selects which of three sources is ACTIVE:
+
+| value        | active word list                        |
+|--------------|------------------------------------------|
+| `"standard"` | `CORE_WORDLIST` only                      |
+| `"strict"`   | `DEFAULT_WORDLIST` (CORE + EXTENDED — the pre-existing full default) |
+| `"custom"`   | the user's saved `pm_wordlist`, verbatim |
+
+**"Explicit mode beats implicit override," both directions:** in
+`"standard"`/`"strict"`, a saved `pm_wordlist` is completely IGNORED
+for matching purposes — but it is NOT deleted or cleared; it stays
+untouched in storage so switching to `"custom"` later immediately
+recovers it (verified end to end in the integration test: switch
+`"strict"` -> `"custom"` and the previously-ignored custom list's
+entries start matching again, with zero re-saving). In `"custom"`, the
+built-in `CORE`/`DEFAULT` lists are ignored entirely — even `"fuck"` (a
+`CORE_WORDLIST` entry) won't match unless it also happens to be in the
+user's custom list.
+
+**Migration** (mirrors the `pm_catchupMode`/`pm_safeMode` pattern
+exactly): resolved in `resolveSettingsFromStorage`, in this order:
+
+1. A valid, explicitly saved `pm_strictness` always wins outright.
+2. Otherwise, a saved `pm_wordlist` (`Array.isArray` true, even `[]`)
+   migrates to `"custom"` — this is what makes a pre-strictness-feature
+   install's existing custom list keep working exactly as before with
+   zero user action needed.
+3. Otherwise (fresh install, nothing saved at all) defaults to
+   `"strict"` — the pre-strictness-feature default behavior
+   (`DEFAULT_WORDLIST`).
+
+An explicit `"custom"` with NO saved `pm_wordlist` at all (shouldn't
+happen via the popup UI, which always seeds before switching, but the
+pure function is defensive about it) falls back to `DEFAULT_WORDLIST`
+rather than silently matching nothing.
+
+### Popup: Strictness radio group + word-list section rewrite
+
+- A new **"Strictness"** radio group, three stacked options each with
+  a one-line description: **Standard** ("Clear profanity only"),
+  **Strict** ("Also likely-profanity and religious exclamations"),
+  **Custom** ("Your own edited word list"). Custom-drawn radios (same
+  `appearance: none`, no-`transition` technique as the catch-up-mode
+  radios — see the "radio flip lag" BUG FIX above), stacked vertically
+  (`.pm-radio-group--stacked`) rather than the compact inline layout
+  the other radio groups use, to fit the description text.
+- The **Word list** section now shows a small italic note above the
+  hint text — `"Showing: Strict (123 words)"` / `"Showing: Standard
+  (107 words)"` / `"Showing: Custom (N words)"` — reflecting whichever
+  list is currently ACTIVE, kept in sync by `renderMasked()` (which now
+  reads from `activeWordlistForDisplay()` — `CORE_WORDLIST`,
+  `DEFAULT_WORDLIST`, or the parsed textarea, depending on
+  `getStrictness()` — instead of unconditionally reading the textarea).
+  The hint text itself also changes: in "standard"/"strict" it reads
+  "This is a built-in list and can't be edited directly — click 'Show
+  words to edit' to switch to Custom and start from it"; in "custom" it
+  reverts to the original masked-by-default editing hint.
+- **In "standard"/"strict," the masked view is READ-ONLY** and shows
+  the active built-in list; the textarea stays hidden and un-editable
+  through the UI (nothing prevents editing it via devtools, but there's
+  no in-UI path to reveal it without first switching to "custom").
+  Clicking **"Show words to edit"** while in "standard"/"strict" — via
+  `switchToCustomForEditing()` — auto-switches the Strictness radio to
+  "custom" (saved immediately, fire-and-forget, same instant-on-select
+  contract as every other radio in this popup), THEN reveals the now
+  genuinely-editable textarea.
+- **Seeding rule, per explicit product refinement:** switching to
+  "custom" with no `pm_wordlist` ever saved seeds the textarea with the
+  **full strict list (CORE + EXTENDED)** — always, regardless of which
+  built-in mode (`"standard"` or `"strict"`) was active immediately
+  beforehand. This is enforced by `enterCustomMode()`, gated on a
+  module-level `hasSavedCustomWordlist` flag (set from `load()`'s
+  reconciliation and after every successful word-list Save) — NOT on
+  "whichever built-in list happened to be on screen." Verified directly:
+  switching Standard -> "edit" seeds all 123 words (the full strict
+  list), not 107 (Standard's own count).
+- **If a custom list already exists**, switching away to
+  "standard"/"strict" and back to "custom" (via the radio OR the edit
+  button) resumes that EXACT existing list untouched — `load()`'s
+  reconciliation keeps the textarea populated with the real saved
+  `pm_wordlist` even while a built-in mode is what's on screen,
+  specifically so this resume-without-reseeding behavior works
+  correctly. Verified directly (a 3-word legacy list survives a
+  Standard -> Custom round trip byte-for-byte).
+- **Saving edits, or clicking Restore Defaults, while in
+  "standard"/"strict" ALSO auto-switches to "custom"** — `save()` and
+  `restoreDefaults()` both force `getStrictness()` to `"custom"` before
+  proceeding if it isn't already, covering the edge case of a user
+  reaching either action without going through the edit button first.
+- **Selecting a mode is instant** (fire-and-forget `pm_strictness`
+  write via the shared `saveTogglesOnly()`), but — deliberately, and
+  unlike every OTHER toggle/radio in this popup — the Strictness radio
+  gets its OWN change handler (`onStrictnessChange`), not the generic
+  `saveTogglesOnly` directly, because changing strictness changes which
+  word list is ACTIVE and so the masked view legitimately needs to
+  re-render. This is a narrow, deliberate exception to the "toggle/radio
+  saves never touch the masked list" invariant from the earlier lag
+  audit — verified that it stays narrow: a `MutationObserver` on
+  `#pm-masked-list` shows **0 mutations** across mute-audio/catch-up/
+  padding/debug-overlay clicks, but **>0 mutations** on a Strictness
+  click, in the same test run.
+
+### `pm_padding`: "tight" | "normal" | "wide" — default "normal"
+
+Simple, independent three-way setting with no interaction with
+anything else (no migration path — there was no prior padding concept
+to migrate from). Exposed in the popup as a **"Mute padding"** radio
+group (compact inline layout, like the catch-up-mode radios) with a
+combined hint: "How much surrounding audio gets muted around a word.
+Tight may clip word edges; wide mutes a bit of surrounding speech too."
+Wired through `STORAGE_KEYS`, `resolveSettingsFromStorage`,
+`state`/`settings` (the 9th and final key added in this session),
+`refresh()`, and the `onChanged` listener, identically to every other
+setting. This file only stores/validates/exposes the value — the audio
+pipeline's `content.js` (owned by the other agent) consumes it for the
+actual mute-interval math.
+
 ## What's built
 
 ### `shared/wordlist.js`
@@ -368,8 +503,10 @@ Avoiding self-triggered observer loops:
 | `pm_catchupMode`    | `"mute"\|"pause"\|"play"` | `"mute"` — THE ONE setting for what happens in parts of the video not yet analyzed (see below); any other/invalid stored value defaults to `"mute"` |
 | `pm_debugOverlay`   | `boolean`                 | `false` — shows an on-player diagnostic overlay (consumed by the audio pipeline's `content.js`); opt-in, unlike the other booleans which default to `true` |
 | `pm_showStatus`     | `boolean`                 | `true` — shows an on-player status pill (consumed by the audio pipeline's `content.js`). Distinct from `pm_debugOverlay`: this is a lightweight, on-by-default status indicator, not an opt-in diagnostic |
+| `pm_strictness`     | `"standard"\|"strict"\|"custom"` | `"strict"` — selects the ACTIVE word list (`CORE_WORDLIST` / `DEFAULT_WORDLIST` / the user's `pm_wordlist`, respectively); see "FEATURE: pm_strictness" below for the full "explicit mode beats implicit override" + migration rules |
+| `pm_padding`        | `"tight"\|"normal"\|"wide"` | `"normal"` — how much surrounding audio the mute interval pads around a matched word; consumed entirely by the audio pipeline's `content.js` for its interval math |
 | `pm_safeMode`       | `boolean`                 | DEPRECATED, read-only. No longer written by the popup — merged into `pm_catchupMode`. Only consulted, once, to migrate a legacy `false` forward (see "Safe mode + catch-up mode merge" below) |
-| `pm_wordlist`       | `string[]`                | unset -> built-in `DEFAULT_WORDLIST`; once saved, respected exactly as-is (even `[]`) |
+| `pm_wordlist`       | `string[]`                | unset -> built-in `DEFAULT_WORDLIST` (or `CORE_WORDLIST`/nothing, depending on `pm_strictness` — see below); once saved, respected exactly as-is (even `[]`) WHEN `pm_strictness` is `"custom"` (or migrates to it) |
 
 `pm_wordlist` semantics matter: built-in defaults are used **only** when
 the key has never been saved at all (`items.pm_wordlist === undefined`
@@ -462,15 +599,16 @@ the migration check and then to `DEFAULT_CATCHUP_MODE` (`"mute"`).
 ### `PMWordlist.settings`
 
 `PMWordlist.settings` is a dedicated object containing **exactly**
-`{enabled, muteAudio, censorCaptions, safeMode, catchupMode, debugOverlay, showStatus}`
-— no `wordlist`, `stemSet`, `phrases`, or `phraseIndex` leakage (those
-live on the separate internal `_state` object used by `isProfane`/
-`censorText`/`findMatches`). `safeMode` is derived from `catchupMode` as
-described above. It's the same object reference on every
-`refresh()`/`onChanged` cycle, mutated in place — `content.js` (owned by
-the other agent) can read `PMWordlist.settings.muteAudio`,
+`{enabled, muteAudio, censorCaptions, safeMode, catchupMode, debugOverlay, showStatus, strictness, padding}`
+(9 keys) — no `wordlist`, `stemSet`, `phrases`, or `phraseIndex`
+leakage (those live on the separate internal `_state` object used by
+`isProfane`/`censorText`/`findMatches`). `safeMode` is derived from
+`catchupMode` as described above. It's the same object reference on
+every `refresh()`/`onChanged` cycle, mutated in place — `content.js`
+(owned by the other agent) can read `PMWordlist.settings.muteAudio`,
 `PMWordlist.settings.catchupMode`, `PMWordlist.settings.safeMode`,
-`PMWordlist.settings.debugOverlay`, or `PMWordlist.settings.showStatus`
+`PMWordlist.settings.debugOverlay`, `PMWordlist.settings.showStatus`,
+`PMWordlist.settings.strictness`, or `PMWordlist.settings.padding`
 directly and each will reflect the latest saved/derived value without
 needing its own storage listener, and without ever seeing internal
 `Set`/`Map` fields. See "CRITICAL BUG FIX" above for why this was
@@ -592,6 +730,18 @@ needed):
   The three radio inputs are custom-drawn (`appearance: none` + a
   hand-styled ring/dot, no `transition` property) rather than native —
   see the "radio flip lag" BUG FIX near the top of this file for why.
+- **"Mute padding" radio group** (`pm_padding`, new 2026-08-30) —
+  **Tight** / **Normal** / **Wide**, compact inline layout like the
+  catch-up-mode radios, with a combined hint covering all three
+  options. See "FEATURE: pm_padding" above; this file only stores the
+  value, the audio pipeline does the actual interval math.
+- **"Strictness" radio group** (`pm_strictness`, new 2026-08-30) —
+  **Standard** / **Strict** / **Custom**, stacked layout with a
+  one-line description under each option. This is the big one — full
+  behavior (read-only built-in lists, auto-switch-to-custom on edit,
+  the "seed with the full strict list" rule, ignore-both-directions
+  semantics, migration) is documented in its own "FEATURE:
+  pm_strictness" section near the top of this file, not repeated here.
 - **Word list is masked by default.** On open, a read-only
   `<div id="pm-masked-list">` lists every current entry with its letters
   replaced by asterisks (spaces preserved, so a phrase still reads as
@@ -799,7 +949,7 @@ audit tool (not part of the regular pass/fail suite) that scans
 results to `collision_scan_results.txt` — both in the session
 scratchpad.
 
-Run with `node wordlist_test.js`. Result: **187/187 passed**, covering:
+Run with `node wordlist_test.js`. Result: **234/234 passed**, covering:
 
 - Base word match, suffix stemming (`s`/`ed`/`ing`/`er`/`y`),
   case-insensitivity + punctuation stripping, non-matches.
@@ -882,14 +1032,37 @@ Run with `node wordlist_test.js`. Result: **187/187 passed**, covering:
   as `true` (not `=== false`), consistent with the other true-default
   booleans; full resolved shape checked with `pm_showStatus: false` and
   everything else default; `STORAGE_KEYS` includes `pm_showStatus`.
+- **`pm_strictness` grouping + mode selection + migration** (see
+  "FEATURE: pm_strictness" above for the full narrative):
+  `STRICTNESS_MODES` is exactly `["standard", "strict", "custom"]`,
+  `DEFAULT_STRICTNESS` is `"strict"`; `CORE_WORDLIST.length +
+  EXTENDED_WORDLIST.length === DEFAULT_WORDLIST.length` with no overlap
+  and no leftovers (checked via a dedup'd-union size check too); spot
+  checks that specific entries land in the expected group; explicit
+  `"standard"`/`"strict"`/`"custom"` each select the correct word list;
+  **both directions of "explicit mode beats implicit override"**
+  verified (`"standard"`/`"strict"` ignore a saved custom list;
+  `"custom"` ignores the built-ins); a saved empty custom list stays
+  honored as empty; an explicit `"custom"` with no saved list at all
+  falls back to `DEFAULT_WORDLIST`; invalid/corrupted `pm_strictness`
+  values fall through to the migration rule rather than crashing or
+  defaulting incorrectly; migration cases (no saved list -> `"strict"`,
+  a saved list (even empty) with no `pm_strictness` -> `"custom"`, an
+  explicit `pm_strictness` overriding the migration rule permanently).
+- **`pm_padding` defaulting**: `PADDING_MODES` is exactly `["tight",
+  "normal", "wide"]`, `DEFAULT_PADDING` is `"normal"`; explicit
+  `"tight"`/`"normal"`/`"wide"` are all respected; invalid/`null` values
+  fall back to `"normal"`; full resolved shape checked with
+  `pm_padding: "wide"`; `STORAGE_KEYS` includes `pm_strictness` and
+  `pm_padding`.
 
 ```
 $ node wordlist_test.js
-... (195 lines of PASS) ...
-195 passed, 0 failed
+... (234 lines of PASS) ...
+234 passed, 0 failed
 ```
 
-Run with `node wordlist_integration_test.js`. Result: **21/21 passed**,
+Run with `node wordlist_integration_test.js`. Result: **33/33 passed**,
 covering, against the real `refresh()`/`PMWordlist.*` code path (not
 just the extracted pure function), via a fake `chrome.storage.sync`
 whose `get()` *throws* if ever called with anything other than the
@@ -901,12 +1074,17 @@ array form:
   becomes `true`, while `"fuck"` (a `DEFAULT_WORDLIST`-only entry) is
   no longer flagged, confirming the custom list fully replaced the
   defaults rather than being silently ignored.
-- `PMWordlist.settings` has exactly the 7 keys the pipeline consumes
+- `PMWordlist.settings` has exactly the 9 keys the pipeline consumes
   (`Object.keys(...).sort()` === `["catchupMode", "censorCaptions",
-  "debugOverlay", "enabled", "muteAudio", "safeMode", "showStatus"]`)
-  with correct default values for the keys left unsaved in the fake
-  store (`muteAudio`/`censorCaptions` -> `true`, `catchupMode` ->
-  `"mute"`, `debugOverlay` -> `false`, `showStatus` -> `true`).
+  "debugOverlay", "enabled", "muteAudio", "padding", "safeMode",
+  "showStatus", "strictness"]`) with correct default values for the
+  keys left unsaved in the fake store (`muteAudio`/`censorCaptions` ->
+  `true`, `catchupMode` -> `"mute"`, `debugOverlay` -> `false`,
+  `showStatus` -> `true`, `padding` -> `"normal"`) — `strictness`
+  resolves to `"custom"` here specifically because the fake store's
+  initial `pm_wordlist` (the pre-existing `["college","connected","dots"]`
+  fixture) has no `pm_strictness` saved alongside it, triggering the
+  migration rule.
 - A second `refresh()` after the fake store is updated (empty wordlist
   saved, `pm_muteAudio` flipped to `false`, `pm_catchupMode` set to
   `"pause"`) correctly reflects all three changes: the empty list is
@@ -916,7 +1094,7 @@ array form:
 - Two further `refresh()` cycles toggle `pm_debugOverlay` to `true` then
   back to `false` in the fake store, confirming
   `PMWordlist.settings.debugOverlay` tracks it live both directions,
-  and that `PMWordlist.settings` still has exactly its 7 keys after
+  and that `PMWordlist.settings` still has exactly its 9 keys after
   repeated refreshes (no accidental key drift).
 - A third `refresh()` with a corrupted `pm_catchupMode` (`"paws"`, a
   typo) confirms `PMWordlist.settings.catchupMode` falls back to
@@ -938,13 +1116,31 @@ array form:
 - **`pm_showStatus`, end to end**: after saving `pm_showStatus: false`
   in the fake store, `refresh()` reflects it in
   `PMWordlist.settings.showStatus`, and `PMWordlist.settings` still has
-  exactly its 7 keys (no drift); saving `true` again and refreshing
+  exactly its 9 keys (no drift); saving `true` again and refreshing
   once more confirms it tracks back up too.
+- **`pm_padding`, end to end**: `refresh()` cycles through `"wide"` ->
+  `"tight"` -> an invalid `"bogus"` value (falls back to `"normal"`),
+  each reflected live in `PMWordlist.settings.padding`.
+- **`pm_strictness`, end to end** (the most involved scenario in this
+  suite): starting from the prior step's state (`pm_wordlist: []`, no
+  `pm_strictness` saved -> migrated to `"custom"`), explicitly saving
+  `pm_strictness: "standard"` alongside a NEW custom list
+  (`["totally", "custom", "words"]`) confirms `_state.wordlist` becomes
+  exactly `CORE_WORDLIST` and that list's entries do NOT match — the
+  saved custom list is completely ignored while `"standard"`. Switching
+  to `"strict"` (list still untouched in storage) confirms
+  `_state.wordlist` becomes the full `DEFAULT_WORDLIST`, still ignoring
+  it. Switching to `"custom"` (again, no new write to `pm_wordlist` —
+  it was sitting there, ignored, the whole time) confirms
+  `_state.wordlist` immediately becomes exactly that custom list again
+  and its entries DO match — proving the "preserved but ignored, then
+  instantly recovered" contract end to end, not just in the pure
+  function.
 
 ```
 $ node wordlist_integration_test.js
-... (21 lines of PASS) ...
-21 passed, 0 failed
+... (33 lines of PASS) ...
+33 passed, 0 failed
 ```
 
 ### Re-running the tests
@@ -1019,7 +1215,13 @@ live YouTube caption DOM. Steps to smoke-test:
 - `PMWordlist.findMatches(tokens)` — pass an array of transcribed words
   in order; get back `[{index, length}]` covering both single profane
   words and multi-word phrases (e.g. `"oh my god"`), respecting
-  `pm_enabled`.
+  `pm_enabled`. As of `pm_strictness` (2026-08-30), this is ALREADY
+  strictness-aware transparently — `findMatches`/`isProfane`/
+  `censorText` all match against whichever word list is currently
+  ACTIVE (`CORE_WORDLIST` / `DEFAULT_WORDLIST` / the user's custom
+  list, per `pm_strictness`), rebuilt automatically on every
+  `refresh()`. You don't need to read `pm_strictness` yourself unless
+  you want to display which mode is active somewhere.
 - `PMWordlist.settings.muteAudio` — live boolean, `true` by default,
   reflects the popup's "Mute audio" toggle; kept fresh automatically
   (same object `refresh()`/`onChanged` update, no separate listener
@@ -1075,5 +1277,21 @@ live YouTube caption DOM. Steps to smoke-test:
   `"local"`) as authoritative and reset its own counter too, rather
   than immediately overwriting the reset with a stale in-memory value
   on its next write.
+- `PMWordlist.settings.padding` — live `"tight" | "normal" | "wide"`,
+  `"normal"` by default (the popup's new "Mute padding" radio group,
+  2026-08-30). This is the ONE setting for how much surrounding audio
+  your mute interval should pad around a matched word — this file only
+  stores/validates/exposes it; ALL of the actual interval math
+  (tight/normal/wide -> however many ms/frames of padding) is entirely
+  your side's responsibility. Always exactly one of these three
+  strings — any invalid/corrupted stored value is normalized to
+  `"normal"` before you ever see it.
+- `PMWordlist.settings.strictness` — live `"standard" | "strict" |
+  "custom"`, `"strict"` by default (the popup's new "Strictness" radio
+  group, 2026-08-30). You almost certainly don't need to read this
+  directly — see the `findMatches` note above, the active word list is
+  already applied transparently. It's exposed mainly in case you want
+  to show which mode is active somewhere in your own UI (e.g. an
+  on-player status pill).
 - `PMWordlist.settings.enabled` is also available on the same object if
   useful.

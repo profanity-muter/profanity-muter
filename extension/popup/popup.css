@@ -198,6 +198,40 @@ body {
   outline-offset: 2px;
 }
 
+/* Strictness radios: one per line, each with a title + one-line
+   description, instead of the compact inline layout the other radio
+   groups (catch-up mode, padding) use. */
+.pm-radio-group--stacked {
+  flex-direction: column;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.pm-radio-label--stacked {
+  align-items: flex-start;
+}
+
+.pm-radio-label--stacked input {
+  margin-top: 2px;
+}
+
+.pm-radio-title {
+  display: block;
+  font-weight: 500;
+  color: var(--pm-fg);
+}
+
+.pm-radio-desc {
+  display: block;
+  color: var(--pm-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.pm-wordlist-mode-note {
+  font-style: italic;
+}
+
 .pm-row--radio .pm-hint {
   margin: 0;
 }

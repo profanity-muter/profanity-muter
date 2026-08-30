@@ -1,8 +1,29 @@
 // popup/popup.js
 // Popup UI logic. Reads/writes chrome.storage.sync directly (pm_enabled,
 // pm_muteAudio, pm_censorCaptions, pm_catchupMode, pm_debugOverlay,
-// pm_showStatus, pm_wordlist) per the shared schema used by
-// shared/wordlist.js and captions.js.
+// pm_showStatus, pm_strictness, pm_padding, pm_wordlist) per the shared
+// schema used by shared/wordlist.js and captions.js.
+//
+// pm_strictness ("standard" | "strict" | "custom", default "strict")
+// selects which word list is ACTIVE, and interacts with pm_wordlist
+// under an "explicit mode beats implicit override" rule — full details
+// in shared/wordlist.js's resolveSettingsFromStorage, mirrored here for
+// the popup's own display/editing logic:
+//   - "standard" -> shows/uses PMWordlist._core.CORE_WORDLIST (built-in,
+//     read-only in this popup)
+//   - "strict"   -> shows/uses the full DEFAULT_WORDLIST (built-in,
+//     read-only in this popup)
+//   - "custom"   -> shows/uses the editable textarea's content
+//     (pm_wordlist), same masked/unmasked editing flow as before
+// In "standard"/"strict", pm_wordlist is never read for display and
+// Save doesn't touch it either (see save()) — but the moment the user
+// starts editing (unmask) or explicitly saves word-list changes, the
+// popup auto-switches pm_strictness to "custom" first, per explicit
+// product direction ("explicit mode beats implicit override" cuts both
+// ways: editing IS the user explicitly choosing custom). Switching to
+// "custom" with no pm_wordlist ever saved seeds the textarea with the
+// FULL STRICT list (CORE + EXTENDED) as a pruning starting point,
+// regardless of which built-in mode was active beforehand.
 //
 // Separately, the STATS section reads/writes chrome.storage.LOCAL (not
 // sync) key pm_stats ({totalMuted, videosProtected}), written by the
@@ -68,7 +89,11 @@
   var catchupModeEls = document.getElementsByName("pm-catchup-mode");
   var debugOverlayEl = document.getElementById("pm-debug-overlay");
   var showStatusEl = document.getElementById("pm-show-status");
+  var paddingEls = document.getElementsByName("pm-padding");
+  var strictnessEls = document.getElementsByName("pm-strictness");
   var wordlistEl = document.getElementById("pm-wordlist");
+  var wordlistModeNoteEl = document.getElementById("pm-wordlist-mode-note");
+  var wordlistHintEl = document.getElementById("pm-wordlist-hint");
   var maskedListEl = document.getElementById("pm-masked-list");
   var toggleMaskEl = document.getElementById("pm-toggle-mask");
   var restoreEl = document.getElementById("pm-restore");
@@ -139,6 +164,124 @@
     return defaultCatchupMode();
   }
 
+  function coreWordlist() {
+    if (
+      typeof window !== "undefined" &&
+      window.PMWordlist &&
+      window.PMWordlist._core &&
+      Array.isArray(window.PMWordlist._core.CORE_WORDLIST)
+    ) {
+      return window.PMWordlist._core.CORE_WORDLIST;
+    }
+    return [];
+  }
+
+  function paddingModes() {
+    if (
+      typeof window !== "undefined" &&
+      window.PMWordlist &&
+      window.PMWordlist._core &&
+      Array.isArray(window.PMWordlist._core.PADDING_MODES)
+    ) {
+      return window.PMWordlist._core.PADDING_MODES;
+    }
+    return ["tight", "normal", "wide"];
+  }
+
+  function defaultPadding() {
+    if (
+      typeof window !== "undefined" &&
+      window.PMWordlist &&
+      window.PMWordlist._core &&
+      window.PMWordlist._core.DEFAULT_PADDING
+    ) {
+      return window.PMWordlist._core.DEFAULT_PADDING;
+    }
+    return "normal";
+  }
+
+  function setPadding(value) {
+    var mode = paddingModes().indexOf(value) !== -1 ? value : defaultPadding();
+    for (var i = 0; i < paddingEls.length; i++) {
+      paddingEls[i].checked = paddingEls[i].value === mode;
+    }
+  }
+
+  function getPadding() {
+    for (var i = 0; i < paddingEls.length; i++) {
+      if (paddingEls[i].checked) return paddingEls[i].value;
+    }
+    return defaultPadding();
+  }
+
+  function strictnessModes() {
+    if (
+      typeof window !== "undefined" &&
+      window.PMWordlist &&
+      window.PMWordlist._core &&
+      Array.isArray(window.PMWordlist._core.STRICTNESS_MODES)
+    ) {
+      return window.PMWordlist._core.STRICTNESS_MODES;
+    }
+    return ["standard", "strict", "custom"];
+  }
+
+  function defaultStrictness() {
+    if (
+      typeof window !== "undefined" &&
+      window.PMWordlist &&
+      window.PMWordlist._core &&
+      window.PMWordlist._core.DEFAULT_STRICTNESS
+    ) {
+      return window.PMWordlist._core.DEFAULT_STRICTNESS;
+    }
+    return "strict";
+  }
+
+  function setStrictness(value) {
+    var mode = strictnessModes().indexOf(value) !== -1 ? value : defaultStrictness();
+    for (var i = 0; i < strictnessEls.length; i++) {
+      strictnessEls[i].checked = strictnessEls[i].value === mode;
+    }
+  }
+
+  function getStrictness() {
+    for (var i = 0; i < strictnessEls.length; i++) {
+      if (strictnessEls[i].checked) return strictnessEls[i].value;
+    }
+    return defaultStrictness();
+  }
+
+  // Tracks whether pm_wordlist has ever actually been saved (an array,
+  // even an empty one) — set from load()'s reconciliation and after a
+  // successful word-list Save. Drives the "seed with the full strict
+  // list only if nothing is saved yet" rule when entering custom mode.
+  var hasSavedCustomWordlist = false;
+
+  // The word list currently ACTIVE for display/matching purposes,
+  // depending on strictness — NOT necessarily the textarea's raw
+  // content (the textarea is only the source of truth while in
+  // "custom"; in "standard"/"strict" it just holds whatever draft the
+  // user last had in "custom", untouched and unused for display).
+  function activeWordlistForDisplay() {
+    var mode = getStrictness();
+    if (mode === "standard") return coreWordlist();
+    if (mode === "strict") return defaultWordlist();
+    return parseWordlist(wordlistEl.value);
+  }
+
+  // Enter "custom" mode's editing state: seed the textarea with the
+  // full strict list (CORE + EXTENDED) ONLY if no custom list has ever
+  // been saved — otherwise leave the textarea alone (it already holds
+  // the real saved custom list, kept in sync by load()'s reconciliation
+  // even while a built-in mode is on-screen, precisely so this seeding
+  // decision can be made correctly here).
+  function enterCustomMode() {
+    if (!hasSavedCustomWordlist) {
+      wordlistEl.value = defaultWordlist().join("\n");
+    }
+  }
+
   function setStatus(text) {
     statusEl.textContent = text;
     if (text) {
@@ -163,8 +306,27 @@
     return entry.replace(/\S/g, "*");
   }
 
+  var STRICTNESS_LABELS = { standard: "Standard", strict: "Strict", custom: "Custom" };
+
+  function updateWordlistModeNote(words) {
+    var label = STRICTNESS_LABELS[getStrictness()] || "Strict";
+    wordlistModeNoteEl.textContent = "Showing: " + label + " (" + words.length + " words)";
+  }
+
+  function updateWordlistHint() {
+    if (getStrictness() === "custom") {
+      wordlistHintEl.textContent =
+        'Words are masked by default. Click "Show words to edit" to reveal and edit the real list (one word or phrase per line).';
+    } else {
+      wordlistHintEl.textContent =
+        'This is a built-in list and can\'t be edited directly — click "Show words to edit" to switch to Custom and start from it.';
+    }
+  }
+
   function renderMasked() {
-    var words = parseWordlist(wordlistEl.value);
+    var words = activeWordlistForDisplay();
+    updateWordlistModeNote(words);
+    updateWordlistHint();
     maskedListEl.innerHTML = "";
     if (!words.length) {
       var empty = document.createElement("div");
@@ -202,12 +364,51 @@
     wordlistEl.focus();
   }
 
+  // Clicking "Show words to edit" in "standard"/"strict" doesn't just
+  // unmask — there's nothing editable to unmask to yet, since the
+  // textarea isn't the active source in those modes. It first switches
+  // strictness to "custom" (seeding the textarea per enterCustomMode's
+  // rule), saves that mode switch immediately (same instant-on-select
+  // contract as picking the radio directly), and only then reveals the
+  // now-genuinely-editable textarea.
+  function switchToCustomForEditing() {
+    enterCustomMode();
+    setStrictness("custom");
+    saveTogglesOnly();
+    // The mode note/hint (e.g. "Showing: Standard (107 words)") are
+    // always-visible elements, not hidden along with the masked list —
+    // refresh them here even though we're about to unmask (renderMasked()
+    // rebuilding the now-irrelevant masked DOM underneath is harmless
+    // and cheap; keeping ONE place that updates the note/hint avoids
+    // them going stale on any mode-changing path).
+    renderMasked();
+    showUnmasked();
+  }
+
   function toggleMask() {
     if (masked) {
-      showUnmasked();
+      if (getStrictness() === "custom") {
+        showUnmasked();
+      } else {
+        switchToCustomForEditing();
+      }
     } else {
       showMasked();
     }
+  }
+
+  // Fires on every direct Strictness radio click. Entering "custom"
+  // this way seeds the textarea exactly like the edit-button path
+  // (enterCustomMode's "only if nothing saved yet" rule). Any direct
+  // mode switch returns to a safe masked view showing the newly-active
+  // list — the user can click "Show words to edit" afterward if they
+  // want to edit (only meaningful once already in "custom").
+  function onStrictnessChange() {
+    if (getStrictness() === "custom") {
+      enterCustomMode();
+    }
+    showMasked();
+    saveTogglesOnly();
   }
 
   // Synchronous, correct-by-default render — runs immediately, before
@@ -215,12 +416,14 @@
   // visually correct (real default word list shown, defaults selected)
   // the instant it paints, independent of storage latency or errors.
   // The static HTML already ships `checked` on the default-true
-  // toggles and the default "mute" radio, so this only needs to handle
-  // what plain HTML can't: populating the word list and rendering the
-  // masked view.
+  // toggles and the default "mute"/"normal"/"strict" radios, so this
+  // only needs to handle what plain HTML can't: populating the word
+  // list textarea and rendering the masked view.
   function renderDefaultsSynchronously() {
     wordlistEl.value = defaultWordlist().join("\n");
     setCatchupMode(defaultCatchupMode());
+    setPadding(defaultPadding());
+    setStrictness(defaultStrictness());
     showMasked();
   }
 
@@ -246,6 +449,8 @@
         "pm_catchupMode",
         "pm_debugOverlay",
         "pm_showStatus",
+        "pm_strictness",
+        "pm_padding",
         "pm_safeMode", // read-only, for the legacy-migration display below
         "pm_wordlist"
       ],
@@ -286,15 +491,42 @@
               : defaultCatchupMode();
         setCatchupMode(displayedCatchupMode);
 
-        // pm_wordlist has never been saved -> keep showing the full,
-        // real, editable default list already rendered above (not a
-        // placeholder). Once saved, show exactly what was saved, even
-        // if that's an empty list.
-        var words = Array.isArray(items.pm_wordlist)
-          ? items.pm_wordlist
-          : defaultWordlist();
-        wordlistEl.value = words.join("\n");
-        if (masked) renderMasked();
+        var displayedPadding =
+          paddingModes().indexOf(items.pm_padding) !== -1
+            ? items.pm_padding
+            : defaultPadding();
+        setPadding(displayedPadding);
+
+        // Same "explicit value wins, else migrate off a legacy signal,
+        // else default" pattern as pm_catchupMode above, mirroring
+        // resolveSettingsFromStorage in shared/wordlist.js: a saved
+        // pm_wordlist with no saved pm_strictness migrates the DISPLAY
+        // to "custom" (preserving what the user already had before
+        // strictness existed); no saved list at all defaults to
+        // "strict".
+        hasSavedCustomWordlist = Array.isArray(items.pm_wordlist);
+        var displayedStrictness =
+          strictnessModes().indexOf(items.pm_strictness) !== -1
+            ? items.pm_strictness
+            : hasSavedCustomWordlist
+              ? "custom"
+              : defaultStrictness();
+        setStrictness(displayedStrictness);
+
+        // Keep the textarea in sync with the REAL saved custom list
+        // whenever one exists, even while a built-in mode
+        // ("standard"/"strict") is what's actually on screen — this is
+        // what lets switchToCustomForEditing()/enterCustomMode() later
+        // correctly resume the user's existing custom list instead of
+        // re-seeding over it. When there's no saved custom list, leave
+        // the textarea holding the full strict list already set by
+        // renderDefaultsSynchronously() above (a reasonable seed).
+        if (hasSavedCustomWordlist) {
+          wordlistEl.value = items.pm_wordlist.join("\n");
+        }
+        // Always refresh (not just `if (masked)`) — the mode note/hint
+        // are visible regardless of masked/unmasked state.
+        renderMasked();
       }
     );
   }
@@ -303,6 +535,15 @@
     if (!hasStorage) {
       setStatus("Storage unavailable");
       return;
+    }
+    // Saving word-list edits always means the user is explicitly
+    // choosing "custom" — per spec, this holds even for the edge case
+    // of clicking Save while still displaying "standard"/"strict"
+    // without ever unmasking first. Do this BEFORE reading the
+    // textarea so activeWordlistForDisplay()/getStrictness() below
+    // reflect "custom" too.
+    if (getStrictness() !== "custom") {
+      setStrictness("custom");
     }
     var words = parseWordlist(wordlistEl.value);
     chrome.storage.sync.set(
@@ -313,6 +554,8 @@
         pm_catchupMode: getCatchupMode(),
         pm_debugOverlay: !!debugOverlayEl.checked,
         pm_showStatus: !!showStatusEl.checked,
+        pm_strictness: getStrictness(),
+        pm_padding: getPadding(),
         // pm_safeMode is intentionally NOT written here — it's been
         // merged into pm_catchupMode. Leaving pm_safeMode untouched in
         // storage is fine: once pm_catchupMode is explicitly saved
@@ -326,7 +569,12 @@
           setStatus("Save failed");
           return;
         }
-        if (masked) renderMasked();
+        hasSavedCustomWordlist = true;
+        // Always refresh (not just `if (masked)`) — the mode note
+        // (e.g. word count) is visible regardless of masked/unmasked
+        // state, and Save may have just switched strictness to
+        // "custom" (see the top of this function).
+        renderMasked();
         setStatus("Saved");
       }
     );
@@ -353,8 +601,14 @@
         pm_censorCaptions: !!censorCaptionsEl.checked,
         pm_catchupMode: getCatchupMode(),
         pm_debugOverlay: !!debugOverlayEl.checked,
-        pm_showStatus: !!showStatusEl.checked
+        pm_showStatus: !!showStatusEl.checked,
+        pm_strictness: getStrictness(),
+        pm_padding: getPadding()
         // pm_safeMode intentionally not written — see save() comment.
+        // pm_wordlist is intentionally NOT written here either — this
+        // is the fire-and-forget settings-only save path shared by
+        // every toggle/radio EXCEPT the free-form word-list textarea,
+        // which only saves via the explicit Save button (save() above).
       },
       function () {
         if (chrome.runtime && chrome.runtime.lastError) {
@@ -368,9 +622,16 @@
 
   function restoreDefaults() {
     wordlistEl.value = defaultWordlist().join("\n");
-    if (masked) {
-      renderMasked();
+    // Restoring the word list is itself an edit — same auto-switch
+    // rule as unmasking/saving. Persist the mode switch immediately
+    // (instant-on-select contract), independent of the word-list
+    // content itself, which still needs the explicit Save button.
+    if (getStrictness() !== "custom") {
+      setStrictness("custom");
+      saveTogglesOnly();
     }
+    // Always refresh (not just `if (masked)`) — see save()'s comment.
+    renderMasked();
     setStatus("Defaults loaded — click Save to keep");
   }
 
@@ -447,6 +708,19 @@
   showStatusEl.addEventListener("change", saveTogglesOnly);
   for (var ci = 0; ci < catchupModeEls.length; ci++) {
     catchupModeEls[ci].addEventListener("change", saveTogglesOnly);
+  }
+  for (var pi = 0; pi < paddingEls.length; pi++) {
+    paddingEls[pi].addEventListener("change", saveTogglesOnly);
+  }
+  // Strictness radios get their OWN handler, not the generic
+  // saveTogglesOnly — changing strictness changes which word list is
+  // ACTIVE, so (unlike every other toggle/radio) it must also
+  // re-render the masked word-list view. This is a deliberate,
+  // narrowly-scoped exception to the "toggle/radio saves never touch
+  // the masked list" rule from the earlier lag audit: it's the word
+  // list itself changing, not an unrelated setting.
+  for (var si = 0; si < strictnessEls.length; si++) {
+    strictnessEls[si].addEventListener("change", onStrictnessChange);
   }
   toggleMaskEl.addEventListener("click", toggleMask);
   restoreEl.addEventListener("click", restoreDefaults);

@@ -41,6 +41,32 @@
 //                                this is a lightweight always-on-by-
 //                                default status indicator, not the
 //                                opt-in diagnostic overlay.
+//   pm_strictness     "standard" | "strict" | "custom"  default "strict".
+//                                Selects which word list is used WHEN
+//                                pm_wordlist is not the active source:
+//                                  "standard" -> CORE_WORDLIST only
+//                                  "strict"   -> DEFAULT_WORDLIST (CORE
+//                                                + EXTENDED euphemisms/
+//                                                mishears/religious
+//                                                exclamations)
+//                                  "custom"   -> pm_wordlist verbatim
+//                                "Explicit mode beats implicit
+//                                override": in "standard"/"strict",
+//                                pm_wordlist is ignored (but left alone
+//                                in storage); in "custom", the built-in
+//                                lists are ignored. Migration: a saved
+//                                pm_wordlist with no saved pm_strictness
+//                                resolves to "custom" (preserves
+//                                pre-strictness-feature behavior); no
+//                                saved list at all resolves to "strict".
+//                                See resolveSettingsFromStorage.
+//   pm_padding        "tight" | "normal" | "wide"  default "normal" —
+//                                how much surrounding audio the mute
+//                                interval pads around a matched word.
+//                                Consumed entirely by the audio
+//                                pipeline's content.js for its interval
+//                                math; this file only stores/validates/
+//                                exposes the setting.
 //
 // chrome.storage.LOCAL (separate area, not synced — see popup/popup.js):
 //   pm_stats   {totalMuted: number, videosProtected: number}  written by
@@ -87,6 +113,39 @@
     "twatwaffle", "vibrator", "wank", "wanker", "wetback", "what the fuck",
     "whore"
   ];
+
+  // EXTENDED_WORDLIST is the subset of DEFAULT_WORDLIST that's
+  // euphemisms/ASR-mishears/religious exclamations rather than clear
+  // profanity/slurs/crude terms — the two groups pm_strictness ("standard"
+  // vs "strict") switches between. CORE_WORDLIST is everything else,
+  // computed below by filtering EXTENDED_WORDLIST out of DEFAULT_WORDLIST
+  // (so there's one source of truth for the full list's contents; this
+  // array only decides which of those entries count as "extended").
+  var EXTENDED_WORDLIST = [
+    "dang", "effing", "freaking", "frickin", "fricking", "friggin",
+    "god damn", "goddam", "goddamn", "goddamnit", "gosh", "heck",
+    "jesus christ", "oh god", "oh my god", "oh my gosh"
+  ];
+  var EXTENDED_SET = new Set(EXTENDED_WORDLIST);
+  var CORE_WORDLIST = DEFAULT_WORDLIST.filter(function (w) {
+    return !EXTENDED_SET.has(w);
+  });
+
+  // pm_strictness: "standard" | "strict" | "custom", default "strict".
+  //   "standard" -> CORE_WORDLIST only (clear profanity/slurs/crude terms)
+  //   "strict"   -> DEFAULT_WORDLIST (CORE + EXTENDED, current full defaults)
+  //   "custom"   -> the user's saved pm_wordlist, ignoring the built-ins
+  //                 entirely (explicit mode beats implicit override: in
+  //                 "standard"/"strict", pm_wordlist is ignored too, but
+  //                 preserved in storage for switching back)
+  // See resolveSettingsFromStorage for the full defaulting + migration
+  // rules (a legacy saved pm_wordlist with no pm_strictness migrates to
+  // "custom", preserving pre-strictness-feature behavior).
+  var STRICTNESS_MODES = ["standard", "strict", "custom"];
+  var DEFAULT_STRICTNESS = "strict"; // preserves pre-existing behavior
+
+  var PADDING_MODES = ["tight", "normal", "wide"];
+  var DEFAULT_PADDING = "normal";
 
   var CAPTION_PLACEHOLDER = "[ __ ]";
 
@@ -433,7 +492,9 @@
     "pm_censorCaptions",
     "pm_catchupMode",
     "pm_debugOverlay",
-    "pm_showStatus"
+    "pm_showStatus",
+    "pm_strictness",
+    "pm_padding"
   ];
 
   var CATCHUP_MODES = ["mute", "pause", "play"];
@@ -489,6 +550,40 @@
   // pm_showStatus defaults to true (like most other booleans, unlike
   // pm_debugOverlay) — it's a lightweight on-player status pill shown
   // by default, not an opt-in diagnostic.
+  //
+  // pm_strictness + pm_wordlist interaction ("explicit mode beats
+  // implicit override"):
+  //   1. A valid, explicitly saved pm_strictness ("standard"/"strict"/
+  //      "custom") always wins outright, and fully determines which
+  //      word list is used:
+  //        "standard" -> CORE_WORDLIST, pm_wordlist IGNORED (but left
+  //                      untouched in storage, so switching back to
+  //                      "custom" later recovers it)
+  //        "strict"   -> DEFAULT_WORDLIST (CORE + EXTENDED), pm_wordlist
+  //                      IGNORED the same way
+  //        "custom"   -> pm_wordlist verbatim (even an empty array —
+  //                      same "respected as-is once saved" rule as
+  //                      before), built-ins IGNORED. If pm_wordlist
+  //                      isn't actually a saved array in this edge case
+  //                      (custom explicitly selected but nothing saved
+  //                      yet), fall back to DEFAULT_WORDLIST as a safety
+  //                      net rather than an empty list.
+  //   2. Otherwise (pm_strictness has never been saved, or is
+  //      corrupted/mistyped/wrong-type), migrate based on pm_wordlist:
+  //      a saved pm_wordlist (Array.isArray true, even []) means the
+  //      user already had a custom list under the pre-strictness-
+  //      feature schema — migrate to "custom" so their existing list
+  //      keeps being used unchanged. No saved pm_wordlist at all ->
+  //      default to "strict" (matches the pre-strictness-feature
+  //      default of the full DEFAULT_WORDLIST).
+  // This mirrors the same "explicit value wins, else migrate off a
+  // legacy signal, else default" pattern already used for
+  // pm_catchupMode/pm_safeMode above.
+  //
+  // pm_padding is a simple, independent three-way setting with no
+  // interaction with anything else — validated and defaulted exactly
+  // like pm_catchupMode, just with no migration path (there was no
+  // prior padding concept to migrate from).
   function resolveSettingsFromStorage(items) {
     items = items || {};
 
@@ -501,6 +596,31 @@
       catchupMode = DEFAULT_CATCHUP_MODE;
     }
 
+    var hasSavedWordlist = Array.isArray(items.pm_wordlist);
+
+    var strictness;
+    if (STRICTNESS_MODES.indexOf(items.pm_strictness) !== -1) {
+      strictness = items.pm_strictness;
+    } else if (hasSavedWordlist) {
+      strictness = "custom"; // migration: a saved list predates pm_strictness
+    } else {
+      strictness = DEFAULT_STRICTNESS;
+    }
+
+    var wordlist;
+    if (strictness === "standard") {
+      wordlist = CORE_WORDLIST;
+    } else if (strictness === "strict") {
+      wordlist = DEFAULT_WORDLIST;
+    } else {
+      // "custom"
+      wordlist = hasSavedWordlist ? items.pm_wordlist : DEFAULT_WORDLIST;
+    }
+
+    var padding = PADDING_MODES.indexOf(items.pm_padding) !== -1
+      ? items.pm_padding
+      : DEFAULT_PADDING;
+
     return {
       enabled: items.pm_enabled !== false,
       safeMode: catchupMode !== "play",
@@ -509,7 +629,9 @@
       catchupMode: catchupMode,
       debugOverlay: items.pm_debugOverlay === true,
       showStatus: items.pm_showStatus !== false,
-      wordlist: Array.isArray(items.pm_wordlist) ? items.pm_wordlist : DEFAULT_WORDLIST
+      strictness: strictness,
+      padding: padding,
+      wordlist: wordlist
     };
   }
 
@@ -528,7 +650,13 @@
     resolveSettingsFromStorage: resolveSettingsFromStorage,
     STORAGE_KEYS: STORAGE_KEYS,
     CATCHUP_MODES: CATCHUP_MODES,
-    DEFAULT_CATCHUP_MODE: DEFAULT_CATCHUP_MODE
+    DEFAULT_CATCHUP_MODE: DEFAULT_CATCHUP_MODE,
+    CORE_WORDLIST: CORE_WORDLIST,
+    EXTENDED_WORDLIST: EXTENDED_WORDLIST,
+    STRICTNESS_MODES: STRICTNESS_MODES,
+    DEFAULT_STRICTNESS: DEFAULT_STRICTNESS,
+    PADDING_MODES: PADDING_MODES,
+    DEFAULT_PADDING: DEFAULT_PADDING
   };
 
   // ---- Stateful wrapper wired to chrome.storage.sync ----
@@ -540,6 +668,8 @@
     catchupMode: DEFAULT_CATCHUP_MODE,
     debugOverlay: false,
     showStatus: true,
+    strictness: DEFAULT_STRICTNESS,
+    padding: DEFAULT_PADDING,
     wordlist: DEFAULT_WORDLIST.slice(),
     stemSet: buildStemSet(DEFAULT_WORDLIST),
     phrases: buildPhraseList(DEFAULT_WORDLIST),
@@ -548,7 +678,7 @@
 
   // Minimal, stable-shape settings object handed to other content
   // scripts (the audio pipeline's content.js reads PMWordlist.settings
-  // directly). Deliberately exactly these seven keys — no internal
+  // directly). Deliberately exactly these nine keys — no internal
   // Set/Map/array fields — so consumers can safely read or even
   // serialize it without pulling in wordlist/stemSet/phrase internals.
   // The SAME object reference is mutated in place on every refresh()
@@ -560,7 +690,9 @@
     safeMode: true,
     catchupMode: DEFAULT_CATCHUP_MODE,
     debugOverlay: false,
-    showStatus: true
+    showStatus: true,
+    strictness: DEFAULT_STRICTNESS,
+    padding: DEFAULT_PADDING
   };
 
   function hasChromeStorage() {
@@ -608,6 +740,8 @@
           state.catchupMode = resolved.catchupMode;
           state.debugOverlay = resolved.debugOverlay;
           state.showStatus = resolved.showStatus;
+          state.strictness = resolved.strictness;
+          state.padding = resolved.padding;
           rebuildFrom(resolved.wordlist);
 
           settings.enabled = resolved.enabled;
@@ -617,6 +751,8 @@
           settings.catchupMode = resolved.catchupMode;
           settings.debugOverlay = resolved.debugOverlay;
           settings.showStatus = resolved.showStatus;
+          settings.strictness = resolved.strictness;
+          settings.padding = resolved.padding;
 
           resolve(state);
         });
@@ -660,7 +796,9 @@
           changes.pm_censorCaptions ||
           changes.pm_catchupMode ||
           changes.pm_debugOverlay ||
-          changes.pm_showStatus
+          changes.pm_showStatus ||
+          changes.pm_strictness ||
+          changes.pm_padding
         ) {
           refresh();
         }
@@ -681,8 +819,8 @@
     // Live settings snapshot for other content scripts (e.g. content.js
     // reading pm_muteAudio) — always in sync with the last refresh().
     // Exactly {enabled, muteAudio, censorCaptions, safeMode,
-    // catchupMode, debugOverlay, showStatus}, no internal Set/Map/array
-    // fields.
+    // catchupMode, debugOverlay, showStatus, strictness, padding}, no
+    // internal Set/Map/array fields.
     settings: settings,
     // exposed for the popup and for tests; not part of the "required" contract
     _state: state,

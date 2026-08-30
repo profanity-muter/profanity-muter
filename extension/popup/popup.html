@@ -81,12 +81,64 @@
     <p class="pm-hint">What happens in parts of the video not yet analyzed.</p>
   </section>
 
+  <section class="pm-row pm-row--radio">
+    <span class="pm-label">Mute padding</span>
+    <div class="pm-radio-group" role="radiogroup" aria-label="Mute padding">
+      <label class="pm-radio-label">
+        <input type="radio" name="pm-padding" id="pm-padding-tight" value="tight" />
+        <span>Tight</span>
+      </label>
+      <label class="pm-radio-label">
+        <input type="radio" name="pm-padding" id="pm-padding-normal" value="normal" checked />
+        <span>Normal</span>
+      </label>
+      <label class="pm-radio-label">
+        <input type="radio" name="pm-padding" id="pm-padding-wide" value="wide" />
+        <span>Wide</span>
+      </label>
+    </div>
+    <p class="pm-hint">
+      How much surrounding audio gets muted around a word. Tight may clip
+      word edges; wide mutes a bit of surrounding speech too.
+    </p>
+  </section>
+
+  <section class="pm-row pm-row--radio">
+    <span class="pm-label">Strictness</span>
+    <div class="pm-radio-group pm-radio-group--stacked" role="radiogroup" aria-label="Strictness">
+      <label class="pm-radio-label pm-radio-label--stacked">
+        <input type="radio" name="pm-strictness" id="pm-strictness-standard" value="standard" />
+        <span>
+          <span class="pm-radio-title">Standard</span>
+          <span class="pm-radio-desc">Clear profanity only</span>
+        </span>
+      </label>
+      <label class="pm-radio-label pm-radio-label--stacked">
+        <input type="radio" name="pm-strictness" id="pm-strictness-strict" value="strict" checked />
+        <span>
+          <span class="pm-radio-title">Strict</span>
+          <span class="pm-radio-desc">Also likely-profanity and religious exclamations</span>
+        </span>
+      </label>
+      <label class="pm-radio-label pm-radio-label--stacked">
+        <input type="radio" name="pm-strictness" id="pm-strictness-custom" value="custom" />
+        <span>
+          <span class="pm-radio-title">Custom</span>
+          <span class="pm-radio-desc">Your own edited word list</span>
+        </span>
+      </label>
+    </div>
+  </section>
+
   <section class="pm-row pm-row--list">
     <div class="pm-list-heading">
       <label class="pm-label" for="pm-wordlist">Word list</label>
       <button id="pm-toggle-mask" class="pm-link-button" type="button">Show words to edit</button>
     </div>
-    <p class="pm-hint">
+    <p id="pm-wordlist-mode-note" class="pm-hint pm-wordlist-mode-note">
+      Showing: Strict (123 words)
+    </p>
+    <p id="pm-wordlist-hint" class="pm-hint">
       Words are masked by default. Click "Show words to edit" to reveal and
       edit the real list (one word or phrase per line).
     </p>
