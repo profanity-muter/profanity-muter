@@ -378,7 +378,7 @@ function getOrCreateSession(tabId, videoId) {
       hadFirstWindow: false, // cold-start detection in pickNextWindow — cleared per session, not per run (a seek into a new run is still "cold" relative to session-level coverage)
       disabled: false, // pm_enabled=false (0.1.13) — see pm-disable/pm-enable handlers
       bufferedRanges: [], // merged [{start,end}] in ABSOLUTE video time — real interval set of what our hook has actually captured (see pickNextWindow); 0.1.15 deleted the old single-scalar bufferedEndS entirely
-      windowAttempts: new Map(), // "start.toFixed(2),end.toFixed(2)" -> attempt count, for the same-span loop-breaker (0.1.14)
+      windowAttempts: new Map(), // rounded-start-location key -> attempt count, for the stuck-location loop-breaker (0.1.14, made location-based in 0.1.20 — see transcribeWindow's loop-breaker section for why exact-span keying stopped catching this)
       sinkErrorAttempts: new Map(), // "start.toFixed(2),end.toFixed(2)" -> consecutive sink.buffers() error count, for DRM/undecodable detection (0.1.15)
       unanalyzable: false, // set true once DRM/undecodable content is detected — maybeProcess stops entirely, content.js releases safe-mode muting for this session
       processing: false,
@@ -1167,36 +1167,54 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     notifyTab(s, '[PM-FIRST-COVERAGE] ' + parts.join(' ') + ' total=' + (totalMs != null ? Math.round(totalMs) : 'NA') + 'ms');
   }
 
-  // Loop-breaker (0.1.14): a live session attempted the EXACT SAME window
-  // ([2640.00,2645.00), words=0) every ~3s for 18 minutes (~350 attempts) —
-  // the per-buffer coverage merge above already runs unconditionally
-  // regardless of word count (silence IS coverage), so this wasn't a
-  // "word count gated the merge" bug; something about the decoded buffers'
-  // OWN reported timestamps at that specific position apparently never
-  // actually landed inside [absStart,absEnd) closely enough to satisfy
-  // firstUncoveredPoint for THIS exact span, so pickNextWindow kept
-  // re-selecting it identically forever. Rather than chase that specific
-  // discrepancy blind, add a bounded, self-logging escape hatch: track
-  // attempts per exact (absStart,absEnd) pair, and after
-  // WINDOW_LOOP_THRESHOLD attempts that still leave this exact span
-  // registering as uncovered, force-mark it covered outright and alarm
-  // loudly — a few wasted seconds beats an 18-minute silent CPU-burning
-  // loop.
-  const key = absStart.toFixed(2) + ',' + absEnd.toFixed(2);
-  if (firstUncoveredPoint(s.covered, absStart, absEnd) !== null) {
-    const attempts = (s.windowAttempts.get(key) || 0) + 1;
-    s.windowAttempts.set(key, attempts);
+  // Loop-breaker (0.1.14, made LOCATION-BASED in 0.1.20): a live session
+  // attempted the EXACT SAME window ([2640.00,2645.00), words=0) every ~3s
+  // for 18 minutes (~350 attempts) — the per-buffer coverage merge above
+  // already runs unconditionally regardless of word count (silence IS
+  // coverage), so this wasn't a "word count gated the merge" bug; something
+  // about the decoded buffers' OWN reported timestamps at that specific
+  // position apparently never actually landed inside [absStart,absEnd)
+  // closely enough to satisfy firstUncoveredPoint for THIS exact span, so
+  // pickNextWindow kept re-selecting it identically forever.
+  //
+  // 0.1.20 REGRESSION FOUND (bug #1): a live paste showed [2587.02,2593.69)
+  // and [2587.02,~2590.9) each re-transcribed ~5x alternately over 40s —
+  // same STUCK LOCATION as the original 0.1.14 bug, but the exact-span key
+  // above never accumulated attempts because the exact END kept changing
+  // between attempts. Root cause: 0.1.18's rtf-aware cold-window growth
+  // (pickNextWindow's `neededS` math) sizes a cold window off `s.lastKnownRtf`,
+  // which is updated after EVERY attempt (including a 0-word one that still
+  // decoded "successfully") — so each retry at the same stuck START got a
+  // slightly different rtf estimate and therefore a different exact END,
+  // defeating the exact-(absStart,absEnd) key even though it was genuinely
+  // the same stuck spot every time (itself usually caused by a decode
+  // producing buffers whose own timestamps don't actually land where
+  // requested — see bug #2's run-boundary fix, which addresses the most
+  // common real cause of that mismatch: feeding a timeline-discontinuous
+  // append into a run whose sequential demuxer had already moved past it).
+  // Fix: key the breaker on a rounded START LOCATION instead of the exact
+  // span, and only check whether a small anchor window right at that start
+  // is still uncovered — this is robust to the end drifting attempt to
+  // attempt for the same stuck location, while still leaving genuinely
+  // different (forward-progressing) window starts as separate counters.
+  const LOOP_START_BUCKET_S = 1;
+  const locKey = (Math.round(absStart / LOOP_START_BUCKET_S) * LOOP_START_BUCKET_S).toFixed(1);
+  const anchorEnd = Math.min(absEnd, absStart + LOOP_START_BUCKET_S);
+  if (firstUncoveredPoint(s.covered, absStart, anchorEnd) !== null) {
+    const attempts = (s.windowAttempts.get(locKey) || 0) + 1;
+    s.windowAttempts.set(locKey, attempts);
     if (attempts >= WINDOW_LOOP_THRESHOLD) {
       notifyTab(
         s,
-        '[PM-WINDOW-LOOP] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') attempted ' + attempts +
-          'x without ever registering as covered (likely a decoded-timestamp mismatch at this exact position) — force-marking covered to break the loop'
+        '[PM-WINDOW-LOOP] location near ' + absStart.toFixed(2) + ' attempted ' + attempts +
+          'x (latest span [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ')) without ever registering as covered ' +
+          '(likely a decoded-timestamp mismatch at this exact position) — force-marking covered to break the loop'
       );
-      mergeRangeInto(s.covered, absStart, absEnd);
-      s.windowAttempts.delete(key);
+      mergeRangeInto(s.covered, absStart, anchorEnd);
+      s.windowAttempts.delete(locKey);
     }
   } else {
-    s.windowAttempts.delete(key); // resolved normally — don't let the map grow unbounded over a long session
+    s.windowAttempts.delete(locKey); // resolved normally — don't let the map grow unbounded over a long session
   }
 
   return true;

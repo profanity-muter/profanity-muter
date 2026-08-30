@@ -595,6 +595,13 @@
     var origChangeType = sb.changeType;
     var segmentCount = 0;
     var videoIdAtInit = currentVideoId();
+    // Cached init-segment bytes (0.1.20 bug #2) — the actual first append
+    // for this SourceBuffer's current lifetime, kept so a later timeline
+    // DISCONTINUITY (a NEW-RANGE growth with no fresh init segment of its
+    // own — a big forward or backward seek within the SAME SourceBuffer)
+    // can be turned into a synthetic isInit segment reusing this exact
+    // codec/track header. See finishAppendProcessing below.
+    var cachedInitBytes = null;
     var timecodeScale = { value: 1000000 }; // Matroska default: 1e6 ns/tick = 1ms/tick; updated if Info>TimecodeScale is found
     var chainSegsSinceLog = 0; // [PM-CHAIN] log-collapse state (0.1.15) — see the logging site below
     var lastChainLogWall = Date.now();
@@ -671,6 +678,61 @@
       // buffered span as "captured" so the eviction check above never
       // mistakes normal, currently-in-flight audio for a capture miss.
       if (growth) mergeRangeIntoList(evictionState.captured, growth.absStart, growth.absEnd);
+
+      // RUN-BOUNDARY ON DISCONTINUITY (0.1.20 bug #2): a real, user-diagnosed
+      // bug — a backward seek (2588 -> 2464.94) captured segments fine
+      // (findGrowth correctly reported a brand-new, disjoint NEW-RANGE), but
+      // offscreen logged "[PM-SKIP] no decodable audio in this run at that
+      // time yet" dozens of times: the new bytes were appended to the SAME
+      // SourceBuffer, so segmentCount never resets and isInit stays false —
+      // nothing ever told offscreen a NEW demux run was needed — but they
+      // landed on offscreen's ONE PERSISTENT mediabunny Input for that run
+      // (see offscreen-src.js's "0.1.6" streaming-Input design), which is a
+      // SEQUENTIAL decoder: once it has consumed cluster timestamps for
+      // 2580-2670, it cannot rewind to serve 2460-2510 from the SAME stream.
+      // A big FORWARD jump within one SourceBuffer has the same "no fresh
+      // init segment" shape (see 0.1.14's original "jump forward = uncovered
+      // forever" bug) and gets the identical fix here, even though a forward
+      // jump's own bytes are less likely to break the sequential decoder —
+      // safer to always open a fresh run on ANY disjoint NEW-RANGE than to
+      // rely on direction.
+      // Fix: offscreen already treats `isInit:true` as "open a fresh run"
+      // (see its pm-segment handler) — reuse that exact mechanism instead of
+      // adding a new wire message: whenever growth reports a NEW-RANGE that
+      // ISN'T itself already a real init segment, resend the cached real
+      // init segment's bytes as a synthetic isInit segment immediately
+      // before this one. Offscreen demuxes the discontinuous bytes in their
+      // own fresh run (same codec/track header, since it's the SAME cached
+      // init bytes), while the old run(s) are left for the existing 0.1.15
+      // pruning (KEEP_RUNS=2) to reclaim — nothing here touches session-level
+      // coverage/word-dedupe, which already spans run boundaries by design.
+      var isDiscontinuity = !!(growth && growth.isNewRange) && !item.isInit;
+      if (isDiscontinuity && cachedInitBytes) {
+        logLine(
+          '[PM-RUN-BOUNDARY] NEW-RANGE growth=[' + growth.absStart.toFixed(2) + ',' + growth.absEnd.toFixed(2) +
+            ') with no fresh init segment of its own -- opening a new demux run (resending cached init bytes)'
+        );
+        post({
+          type: 'segment',
+          videoId: item.vid,
+          mime: item.mime,
+          isInit: true,
+          segIndex: item.segmentCount,
+          bytes: cachedInitBytes,
+          currentTime: item.currentTime,
+          localTimeSec: null,
+          growthAbsStart: null,
+          growthAbsEnd: null,
+          growthIsNewRange: null,
+          wallTime: Date.now(),
+          isSyntheticRunBoundary: true
+        });
+      } else if (isDiscontinuity) {
+        // Should not happen once the first real init segment has landed —
+        // surfaced loudly rather than silently falling back to feeding the
+        // discontinuous bytes into the existing (sequentially-stuck) run.
+        logLine('[PM-RUN-BOUNDARY] NEW-RANGE growth detected but no cached init segment bytes available yet -- cannot open a clean new run');
+      }
 
       // Log collapse (0.1.15): an unconditional per-segment [PM-CHAIN] line
       // was pure noise at normal append rates. Only log on an actual STATE
@@ -751,6 +813,11 @@
         segmentCount++;
         var isInit = segmentCount === 1;
         var vid = currentVideoId();
+        // Cache the real init segment's bytes (0.1.20 bug #2) so a later
+        // timeline discontinuity (NEW-RANGE growth with no init segment of
+        // its own) can be turned into a synthetic run-boundary reusing this
+        // exact codec/track header — see finishAppendProcessing above.
+        if (isInit) cachedInitBytes = ab;
 
         pendingAppends.push({
           rangesBefore: rangesBefore,

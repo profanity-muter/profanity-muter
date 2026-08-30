@@ -14064,7 +14064,7 @@
             bufferedRanges: [],
             // merged [{start,end}] in ABSOLUTE video time — real interval set of what our hook has actually captured (see pickNextWindow); 0.1.15 deleted the old single-scalar bufferedEndS entirely
             windowAttempts: /* @__PURE__ */ new Map(),
-            // "start.toFixed(2),end.toFixed(2)" -> attempt count, for the same-span loop-breaker (0.1.14)
+            // rounded-start-location key -> attempt count, for the stuck-location loop-breaker (0.1.14, made location-based in 0.1.20 — see transcribeWindow's loop-breaker section for why exact-span keying stopped catching this)
             sinkErrorAttempts: /* @__PURE__ */ new Map(),
             // "start.toFixed(2),end.toFixed(2)" -> consecutive sink.buffers() error count, for DRM/undecodable detection (0.1.15)
             unanalyzable: false,
@@ -14550,20 +14550,22 @@
           const totalMs = m.captured != null ? m.covered - m.captured : null;
           notifyTab(s, "[PM-FIRST-COVERAGE] " + parts.join(" ") + " total=" + (totalMs != null ? Math.round(totalMs) : "NA") + "ms");
         }
-        const key = absStart.toFixed(2) + "," + absEnd.toFixed(2);
-        if (firstUncoveredPoint(s.covered, absStart, absEnd) !== null) {
-          const attempts = (s.windowAttempts.get(key) || 0) + 1;
-          s.windowAttempts.set(key, attempts);
+        const LOOP_START_BUCKET_S = 1;
+        const locKey = (Math.round(absStart / LOOP_START_BUCKET_S) * LOOP_START_BUCKET_S).toFixed(1);
+        const anchorEnd = Math.min(absEnd, absStart + LOOP_START_BUCKET_S);
+        if (firstUncoveredPoint(s.covered, absStart, anchorEnd) !== null) {
+          const attempts = (s.windowAttempts.get(locKey) || 0) + 1;
+          s.windowAttempts.set(locKey, attempts);
           if (attempts >= WINDOW_LOOP_THRESHOLD) {
             notifyTab(
               s,
-              "[PM-WINDOW-LOOP] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") attempted " + attempts + "x without ever registering as covered (likely a decoded-timestamp mismatch at this exact position) \u2014 force-marking covered to break the loop"
+              "[PM-WINDOW-LOOP] location near " + absStart.toFixed(2) + " attempted " + attempts + "x (latest span [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ")) without ever registering as covered (likely a decoded-timestamp mismatch at this exact position) \u2014 force-marking covered to break the loop"
             );
-            mergeRangeInto(s.covered, absStart, absEnd);
-            s.windowAttempts.delete(key);
+            mergeRangeInto(s.covered, absStart, anchorEnd);
+            s.windowAttempts.delete(locKey);
           }
         } else {
-          s.windowAttempts.delete(key);
+          s.windowAttempts.delete(locKey);
         }
         return true;
       }

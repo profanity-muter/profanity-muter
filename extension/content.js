@@ -1354,7 +1354,32 @@
         session.activeMuteCountKey = null;
       }
 
-      var stalling = uncovered && (
+      // Mode-independent stall input (0.1.20 bug #3): `uncovered` above folds
+      // in `settings.safeMode`, which is derived as `catchupMode !== 'play'`
+      // — so in "play" mode `uncovered` is ALWAYS false and `stalling` below
+      // could never fire, no matter how long the pipeline had genuinely
+      // died. A live user session confirmed this: after a decode-confusion
+      // skip storm (see bug #2), zero transcription windows for 3+ minutes
+      // in "play" mode with no recovery attempt ever made — safeMode gates
+      // whether WE mute/pause for an uncovered region (a presentation
+      // decision), but the underlying pipeline can stall regardless of that
+      // setting, and "play" mode had no path to notice at all. Judged
+      // independently of safeMode/catchupMode here; additionally requires
+      // that audio is actually CAPTURED at the playhead already (via the
+      // same session.bufferedRanges the status pill uses) — otherwise this
+      // would fire constantly whenever the playhead is simply ahead of
+      // capture itself (normal, not a pipeline stall) rather than only when
+      // audio exists and transcription genuinely isn't happening.
+      var playheadUncovered = !isCovered(t) && !session.unanalyzable;
+      var playheadHasCapturedAudio = false;
+      for (var pbi = 0; pbi < session.bufferedRanges.length; pbi++) {
+        var pbr = session.bufferedRanges[pbi];
+        if (t >= pbr.start - 0.5 && t < pbr.end) {
+          playheadHasCapturedAudio = true;
+          break;
+        }
+      }
+      var stalling = playheadUncovered && playheadHasCapturedAudio && (
         settings.catchupMode === 'pause'
           ? (session.catchupFallbackActive ? !video.paused : catchupPausedByUs)
           : !video.paused

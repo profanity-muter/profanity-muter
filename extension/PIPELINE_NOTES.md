@@ -2094,6 +2094,144 @@ regression this pass) — `node --check content.js` passes; the change is
 presentation-only over already-existing data (`coveredIntervals`,
 `bufferedRanges`), same as 0.1.18's original pill design.
 
+## 0.1.20: sequential-decoder run boundary on backward seek, location-based loop breaker, mode-independent stall watchdog
+
+A 0.1.18 Copy Logs paste (backward scrub on `o-7Fvkq-Nug`, `catchupMode="play"`)
+surfaced three real bugs, all fixed here. Positive signal preserved from
+that same paste: `[PM-CATCHUP-TIME]` down to 7.76s cold (was 13-16s in
+0.1.17), `[PM-WARM]` confirms the model is ready before any session starts,
+`[PM-STALE]` generation-discard is working, and `[PM-FIRST-COVERAGE]`'s
+breakdown correctly shows compute (4.4s of 4.5s) — not queueing or demux —
+dominating first coverage; a one-off tiny warmup inference at preload time
+(burning in the WASM kernels before the first real window ever needs one)
+is a cheap candidate win for later, not done this pass.
+
+### 1. Covered-span re-transcription loop (regression from 0.1.18)
+
+Spans `[2587.02,2593.69)` and `[2587.02,~2590.9)` were each re-transcribed
+~5x, alternating, over 40s — mostly 0-word results — despite content.js
+already showing coverage `[2587.0-2593.7]`. Traced to the SAME stuck
+location as the original 0.1.14 "18-minute loop" bug, but the 0.1.14
+loop-breaker (`s.windowAttempts`, keyed on the EXACT `(absStart,absEnd)`
+pair) never caught it this time: 0.1.18's rtf-aware cold-window growth
+(`pickNextWindow`'s `neededS` math) sizes a cold window off
+`s.lastKnownRtf`, which updates after every attempt — including a 0-word
+one that still "successfully" decoded — so each retry at the same stuck
+START got a slightly different rtf estimate and therefore a different exact
+END, defeating the exact-span key even though it was genuinely the same
+stuck spot every time. (`coverageViewForPicking`'s in-flight bookkeeping
+itself was audited and is correct — in-flight keys are added/removed
+symmetrically around `transcribeWindow`, and the loop-breaker checks real
+`s.covered`, not the in-flight view — so that was not an independent
+contributor here.)
+
+**Fix (`offscreen-src.js`, `transcribeWindow`)**: the loop-breaker now keys
+on a rounded START LOCATION (`Math.round(absStart / LOOP_START_BUCKET_S) *
+LOOP_START_BUCKET_S`, 1s buckets) and checks only a small anchor window
+right at that start, instead of the exact `(absStart,absEnd)` pair — robust
+to the end drifting attempt to attempt for the same stuck location, while
+different (forward-progressing) starts still get separate counters. Same
+`WINDOW_LOOP_THRESHOLD` (3) and force-cover-and-alarm behavior as before.
+Unit-verified in isolation: a simulated stuck start with three different
+exact end values (matching the live paste's shape) force-covers on the 3rd
+attempt; a normally-resolving window and a forward-progressing next window
+both leave no stale counters and never trip the breaker.
+
+The most common REAL cause of a decode landing away from its requested
+span in the first place is fixed separately below (item 2) — this
+loop-breaker fix is defense-in-depth so the same regression class can't
+recur silently even if some other cause produces the same symptom later.
+
+### 2. Backward seek → undecodable forever (sequential-decoder mismatch)
+
+Seeking 2588 → 2464.94 captured segments fine (`seg=44 NEW-RANGE
+[2460,2466.7)`, ranges grew to `[2460-2510]`), but produced dozens of
+`[PM-SKIP] no decodable audio in this run at that time yet`. Root cause:
+the backward-seek bytes landed on the SAME SourceBuffer as the forward
+playback that preceded it, so `segmentCount` never reset and `isInit`
+stayed `false` — nothing told offscreen a new demux run was needed — but
+offscreen's mediabunny `Input` for that run is a persistent, SEQUENTIAL
+streaming decoder (see "0.1.6": `ReadableStreamSource` feeding one `Input`
+across the run's whole lifetime). Once it had consumed cluster timestamps
+for 2580-2670, it structurally could not rewind to serve 2460-2510 from
+the SAME stream.
+
+**Fix**: a timeline DISCONTINUITY now opens a new run exactly like a real
+init segment does, reusing capture.js's own already-computed NEW-RANGE
+growth detection (`findGrowth`'s `isNewRange`) rather than adding any new
+wire message. `capture.js` now caches the real init segment's bytes per
+SourceBuffer lifetime (`cachedInitBytes`, set whenever `segmentCount===1`).
+In `finishAppendProcessing`, whenever growth reports a NEW-RANGE that isn't
+itself already a real init segment (`!item.isInit`), it resends the cached
+init bytes as a synthetic `isInit:true` segment (`isSyntheticRunBoundary:
+true`) immediately before the real one — offscreen's existing `pm-segment`
+handler already treats `isInit:true` as "open a fresh run"
+(`newRun()`/`s.currentRun`), so no changes were needed on that side at all.
+The old run is left for the existing 0.1.15 pruning (`KEEP_RUNS=2`) to
+reclaim; session-level coverage/word-dedupe (`s.covered`, `s.allWords`)
+already span run boundaries by design and are untouched. Applied uniformly
+to ANY disjoint NEW-RANGE (forward or backward), not just backward — a
+forward jump within one SourceBuffer has the same "no fresh init segment"
+shape (the original 0.1.14 "jump forward = uncovered forever" bug), and
+even though a forward jump's bytes are less likely to break the sequential
+decoder in practice, opening a fresh run for it too is strictly safer than
+relying on direction, at the cost of one extra pruned-eventually run.
+Unit-verified in isolation: `findGrowth` on the reported before/after
+buffered-range snapshots correctly reports the backward jump as a
+NEW-RANGE (and ordinary in-place growth as NOT one); the discontinuity gate
+correctly fires only on NEW-RANGE-without-its-own-init and never
+double-fires on a genuine init segment.
+
+### 3. Pipeline death with no revival in "play" mode
+
+After the skip storm, zero further transcription windows for 3+ minutes —
+nothing but SW-idle port reconnects. Confirmed `maybeProcess(s)` in
+`offscreen-src.js` is already called unconditionally at the end of every
+`pm-segment` message regardless of catch-up mode (offscreen has no concept
+of `catchupMode` at all) — that path was not broken. The real gap was in
+`content.js`'s stall watchdog: `stalling` was gated on `uncovered`, and
+`uncovered = settings.safeMode && !isCovered(t) && !session.unanalyzable` —
+`safeMode` is derived as `catchupMode !== 'play'` (see 0.1.18's
+`pm_catchupMode` note), so in `catchupMode: "play"` mode `uncovered` (and
+therefore `stalling`) could NEVER be true, no matter how long the pipeline
+had genuinely died. "play" mode had no recovery path at all.
+
+**Fix (`content.js`, `runTickLogic`)**: the watchdog's own `stalling` input
+is now computed independently of `safeMode`/`catchupMode` —
+`playheadUncovered = !isCovered(t) && !session.unanalyzable` — AND requires
+that audio is actually CAPTURED at the playhead already, via the same
+`session.bufferedRanges` interval set the 0.1.18/0.1.19 status pill already
+mirrors from `growthAbsStart`/`growthAbsEnd`. The captured-audio condition
+matters: without it this would fire constantly whenever the playhead is
+simply ahead of capture itself (normal — nothing to restart yet), not only
+when audio genuinely exists and transcription isn't happening. The
+mode-specific "is a restart-worthy state even possible right now"
+sub-condition (`!video.paused` for play/mute, `catchupPausedByUs`/
+`!video.paused` for pause mode) is unchanged. `requestStallRecovery()`
+itself only sends `{type:'restart'}` and an eviction-check ping — it never
+engages mute — so "play" mode now gets pipeline recovery without ever being
+muted by this path, per the explicit requirement. `settings.safeMode`
+itself, and every muting/pausing decision elsewhere in `runTickLogic`, are
+completely unchanged — this only widens what can trigger a `restart`
+request.
+
+**Verification status**: all three fixes are syntax-checked (`node
+--check` on the plain-JS files; an ES-module check on `offscreen-src.js`)
+and `node build.js` bundles clean. Unit-verified in isolation (standalone
+Node harness, no live bytes): `findGrowth`'s NEW-RANGE detection on the
+exact reported before/after ranges, the discontinuity gate's on/off cases,
+and the location-bucketed loop breaker's stuck-vs-resolved-vs-forward-
+progressing cases — all pass. **Not yet run live** — no working
+`claude-in-chrome` session against this regression this pass (noted
+honestly, not glossed over); the next verification step is a real backward
+scrub on `o-7Fvkq-Nug` in `catchupMode: "play"`, confirming (1) no
+`[PM-SKIP] no decodable audio` storm after a backward seek (should now
+show a `[PM-RUN-BOUNDARY]` line instead), (2) no repeated re-transcription
+of the same location (should show at most a couple of attempts before
+either resolving normally or a single `[PM-WINDOW-LOOP]` alarm), and (3) a
+forced stall (e.g. throttle the tab) in "play" mode actually produces a
+`[PM-STALL]`/restart within ~15s instead of silence.
+
 ## Known gaps
 
 - **`shared/wordlist.js` `pm_wordlist:undefined`-default bug** (finding #2
