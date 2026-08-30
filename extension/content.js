@@ -14,8 +14,24 @@
 (function () {
   'use strict';
   var TAG = '[PM]';
-  var PAD_LEAD = 0.35; // seconds before a matched word/phrase
-  var PAD_TRAIL = 0.25; // seconds after
+  // Padding presets (0.1.17) — PMWordlist.settings.padding ("tight"|"normal"|
+  // "wide", default "normal", 8th settings key added by the wordlist agent's
+  // UI). "normal" keeps the original 0.35/0.25 values (leading pad already
+  // increased from a symmetric 0.25/0.25 after an early report of hearing
+  // the first half of a word). Read fresh in applyWordsToIntervals (called
+  // per-window) — no onChanged wiring needed: existing armed intervals keep
+  // whatever padding they were built with, new windows just pick up
+  // whatever's current the next time that function runs.
+  var PADDING_PRESETS = {
+    tight: { lead: 0.15, trail: 0.10 },
+    normal: { lead: 0.35, trail: 0.25 },
+    wide: { lead: 0.60, trail: 0.45 }
+  };
+  function currentPadding() {
+    var pm = globalThis.PMWordlist;
+    var key = (pm && pm.settings && pm.settings.padding) || 'normal';
+    return PADDING_PRESETS[key] || PADDING_PRESETS.normal;
+  }
   var MAX_WORD_DUR = 1.0; // clamp a single transcribed word's duration (Whisper timestamp smear mitigation)
   var STALL_MS = 15000; // no coverage growth while playing an uncovered region -> watchdog fires
   var FALLBACK_STALL_MS = 8000; // pause-catchup with zero coverage progress this long -> downgrade to muted playback (see tick())
@@ -191,7 +207,11 @@
       // inside one interval across several ticks doesn't double-count it.
       mutedCount: 0,
       activeMuteCountKey: null,
-      lifetimeVideoCounted: false // videosProtected (chrome.storage.local pm_stats) increments once per video, on its first counted mute
+      lifetimeVideoCounted: false, // videosProtected (chrome.storage.local pm_stats) increments once per video, on its first counted mute
+      // [PM-CATCHUP-TIME] measurement (0.1.17) — set on a seek landing
+      // uncovered, cleared (and logged) once coverage reaches the playhead.
+      catchupMeasureStart: null,
+      catchupMeasureTargetT: null
     };
   }
 
@@ -222,7 +242,8 @@
       '[PM-SESSION] videoId=' + videoId +
         ' duration=' + (video && !isNaN(video.duration) ? video.duration.toFixed(2) : 'unknown') +
         ' videoElement=' + (video ? video.className || '(no class)' : 'not found') +
-        ' settings=' + JSON.stringify(currentSettings())
+        ' settings=' + JSON.stringify(currentSettings()) +
+        ' padding=' + JSON.stringify(currentPadding())
     );
   }
 
@@ -270,14 +291,15 @@
     var wordStrings = [];
     for (i = 0; i < tokens.length; i++) wordStrings.push(tokens[i].word);
     var matches = findMatches(wordStrings);
+    var pad = currentPadding();
 
     var newIntervals = [];
     for (i = 0; i < matches.length; i++) {
       var m = matches[i];
       var i0 = m.index, i1 = m.index + (m.length || 1) - 1;
       if (i0 < 0 || i1 >= tokens.length || i1 < i0) continue;
-      var ivStart = Math.max(0, tokens[i0].start - PAD_LEAD);
-      var ivEnd = tokens[i1].end + PAD_TRAIL;
+      var ivStart = Math.max(0, tokens[i0].start - pad.lead);
+      var ivEnd = tokens[i1].end + pad.trail;
       var label = wordStrings.slice(i0, i1 + 1).join(' ');
       newIntervals.push({ start: ivStart, end: ivEnd, word: label });
       for (var k = i0; k <= i1; k++) tokens[k].matched = true;
@@ -1083,6 +1105,22 @@
       // has already given up on (see the 'unanalyzable' handler above).
       var uncovered = settings.safeMode && !isCovered(t) && !session.unanalyzable;
 
+      // [PM-CATCHUP-TIME] (0.1.17): visible in every Copy Logs paste so the
+      // "uncovered -> covered" latency after a seek is a measured fact, not
+      // an impression. Resolves on plain isCovered(t) (not the `uncovered`
+      // var above, which also folds in unrelated settings/unanalyzable
+      // state) — coverage reaching the playhead is the actual thing being
+      // timed, regardless of catch-up mode configuration.
+      if (session.catchupMeasureStart != null && isCovered(t)) {
+        var catchupMs = Date.now() - session.catchupMeasureStart;
+        TLOG(
+          TAG,
+          '[PM-CATCHUP-TIME] seek to t=' + session.catchupMeasureTargetT.toFixed(2) +
+            ' -> covered at t=' + t.toFixed(2) + ' in ' + (catchupMs / 1000).toFixed(2) + 's'
+        );
+        session.catchupMeasureStart = null;
+      }
+
       // Release decisions are based on the CURRENT hit/uncovered state, never
       // on the stored muteReason string. A previous version gated release on
       // "muteReason === 'safe-mode-uncovered'" / "starts with 'word:'" — a
@@ -1266,9 +1304,21 @@
       // tick or an armed timer) so there is no gap between "seek lands" and
       // "safe mode notices the new position is uncovered".
       var settings = currentSettings();
-      if (settings.enabled && settings.safeMode && !isCovered(video.currentTime) && !(session && session.unanalyzable)) {
+      var seekUncovered = !isCovered(video.currentTime) && !(session && session.unanalyzable);
+      if (settings.enabled && settings.safeMode && seekUncovered) {
         if (settings.catchupMode === 'pause') pauseForCatchup();
         else if (settings.muteAudio) engageMute('safe-mode-uncovered');
+      }
+      // [PM-CATCHUP-TIME] measurement (0.1.17): only meaningful to measure
+      // when the seek actually landed somewhere uncovered — an already-
+      // covered seek has a trivial/zero catch-up time not worth logging.
+      // Overwritten by a later seek before this one resolves (rare, but
+      // simplest correct behavior — no stale/misattributed measurement).
+      if (seekUncovered) {
+        session.catchupMeasureStart = Date.now();
+        session.catchupMeasureTargetT = video.currentTime;
+      } else {
+        session.catchupMeasureStart = null;
       }
       armSchedule();
     },

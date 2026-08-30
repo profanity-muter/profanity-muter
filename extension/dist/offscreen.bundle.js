@@ -14218,6 +14218,18 @@
         }
         const nearExistingCoverage = s.covered.some((iv) => Math.abs(iv.end - start) < COLD_START_ADJACENCY_S);
         const isColdStart = !s.hadFirstWindow || !nearExistingCoverage;
+        if (isColdStart) {
+          const coldFloor = Math.max(targetRange.start, ct - 1);
+          if (coldFloor >= high) {
+            logNoWindowReason(
+              s,
+              "cold-behind-playhead",
+              "captured range [" + targetRange.start.toFixed(2) + "," + targetRange.end.toFixed(2) + ") is entirely behind the playhead (currentTimeS=" + ct.toFixed(2) + ") \u2014 deferring rather than wasting a cold window on already-passed audio"
+            );
+            return null;
+          }
+          if (coldFloor > start) start = coldFloor;
+        }
         const targetWindowS = isColdStart ? COLD_START_WINDOW_S : WINDOW_S;
         const minNewS = isColdStart ? COLD_START_MIN_NEW_S : MIN_NEW_S;
         const end = Math.min(start + targetWindowS, high);
@@ -14502,7 +14514,11 @@
         }
         if (msg.type === "pm-config") {
           const s = getOrCreateSession(msg.tabId, msg.videoId);
-          if (msg.model) s.modelId = msg.model;
+          if (msg.model) {
+            const changed = s.modelId !== msg.model;
+            s.modelId = msg.model;
+            if (changed) whisperWorker.postMessage({ type: "preload", modelId: msg.model });
+          }
           return;
         }
         if (msg.type === "pm-disable") {

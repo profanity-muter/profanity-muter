@@ -33070,6 +33070,11 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
           self.postMessage({ type: "error", requestId, error: String(e && e.stack ? e.stack : e) });
         }
       }
+      function preload(modelId) {
+        getTranscriber(modelId).catch((e) => {
+          log("preload(" + modelId + ") failed (will retry on next real request):", String(e));
+        });
+      }
       self.addEventListener("message", (ev) => {
         const msg = ev.data;
         if (!msg || !msg.type) return;
@@ -33077,6 +33082,11 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
           wasmPathsBase = msg.wasmPathsBase;
           env2.backends.onnx.wasm.wasmPaths = wasmPathsBase;
           log("initialized, wasmPathsBase=" + wasmPathsBase);
+          preload(DEFAULT_MODEL);
+          return;
+        }
+        if (msg.type === "preload") {
+          preload(msg.modelId);
           return;
         }
         if (msg.type === "transcribe") {

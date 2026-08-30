@@ -597,6 +597,36 @@ function pickNextWindow(s) {
 
   const nearExistingCoverage = s.covered.some((iv) => Math.abs(iv.end - start) < COLD_START_ADJACENCY_S);
   const isColdStart = !s.hadFirstWindow || !nearExistingCoverage;
+
+  if (isColdStart) {
+    // FIX (0.1.17): a live seek (to t=3289) showed the FIRST window aimed at
+    // [3280.00,3285.00) — the very START of the freshly-captured range,
+    // entirely BEHIND the playhead by the time transcription finished
+    // (playhead had reached ~3294 by then) — wasting the coldest, slowest
+    // window (paid model-load cost, see item 2) on audio the user had
+    // already passed and would never hear (mute) or need (it's gone).
+    // Audio behind the playhead is lowest priority — useful only for
+    // rewind protection, which can wait until ahead-coverage is
+    // comfortable. Force the cold window to start at most 1s behind
+    // currentTime, never at the captured range's own start.
+    const coldFloor = Math.max(targetRange.start, ct - 1);
+    if (coldFloor >= high) {
+      // The entire currently-captured range is behind the playhead — there
+      // is NOTHING to usefully transcribe near/ahead of it yet. Defer
+      // rather than burn a slow cold window on stale audio; safe mode's
+      // muting already protects the user while waiting for capture to
+      // reach the playhead (normally just the next segment or two).
+      logNoWindowReason(
+        s,
+        'cold-behind-playhead',
+        'captured range [' + targetRange.start.toFixed(2) + ',' + targetRange.end.toFixed(2) +
+          ') is entirely behind the playhead (currentTimeS=' + ct.toFixed(2) + ') — deferring rather than wasting a cold window on already-passed audio'
+      );
+      return null;
+    }
+    if (coldFloor > start) start = coldFloor;
+  }
+
   const targetWindowS = isColdStart ? COLD_START_WINDOW_S : WINDOW_S;
   const minNewS = isColdStart ? COLD_START_MIN_NEW_S : MIN_NEW_S;
 
@@ -1052,7 +1082,16 @@ chrome.runtime.onMessage.addListener((msg) => {
 
   if (msg.type === 'pm-config') {
     const s = getOrCreateSession(msg.tabId, msg.videoId);
-    if (msg.model) s.modelId = msg.model;
+    if (msg.model) {
+      const changed = s.modelId !== msg.model;
+      s.modelId = msg.model;
+      // Preload fix (0.1.17): warm the newly-selected model proactively on
+      // a pm_model change, same as the boot-time preload — don't wait for
+      // the next window to pay that cost inline. Cheap to fire even when
+      // unchanged (getTranscriber's own cache makes a repeat call a no-op),
+      // but only bother when it actually changed.
+      if (changed) whisperWorker.postMessage({ type: 'preload', modelId: msg.model });
+    }
     return;
   }
 

@@ -1785,6 +1785,122 @@ action after this reload is confirmed must be watching a real session's
 log for actual `[PM-WINDOW]` lines (not just `[PM-NO-WINDOW]`) appearing
 after a big forward seek, before reporting this fix as verified.
 
+## 0.1.17: cold-window aim fix, model preload, [PM-CATCHUP-TIME] metric, padding presets
+
+0.1.16 confirmed working live by the user (mutes firing correctly, counter
+working, growth fix good). Remaining complaint: ~20s uncovered->covered
+after seeks. Their log decomposed it into two compounding causes, both
+fixed here.
+
+### 1. First window aimed at the wrong end of the captured range
+
+A seek to t=3289 produced a first window of `[3280.00,3285.00)` — the
+START of the freshly-captured range, entirely BEHIND the actual playhead
+by the time transcription finished (playhead had reached ~3294 by then).
+This wasted the single coldest, slowest window (see item 2 — model load
+was ALSO being paid inline on this exact window) on audio already passed,
+which the user would never hear protection for and gains nothing from
+having transcribed promptly.
+
+Fixed in `pickNextWindow` (`offscreen-src.js`): on any cold-start window
+(first window of a session, or one opening a new disjoint region), the
+picked `start` is now floored at `max(targetRange.start, currentTime - 1)`
+— never at the captured range's own start when that's far behind the
+playhead. If the ENTIRE currently-captured range is behind the playhead
+(nothing usable near/ahead of it yet), the window is deferred outright
+(`[PM-NO-WINDOW] cold-behind-playhead`) rather than wasting a slow cold
+window on stale audio — safe mode's muting already protects the user while
+waiting, and the next segment or two normally closes this gap within a
+second or so. Audio behind the playhead is lowest priority by design now:
+useful only for rewind protection, which can wait until ahead-coverage is
+comfortable.
+
+### 2. Model load cost paid inline on the first real window
+
+`[PM-MODEL]` logged at the first window; that window's `wallMs=7634` for
+5s of audio (rtf 1.53) vs. a steady-state ~0.2 rtf once warm — the
+Whisper model's own load time was being paid INSIDE the first window's
+timing, compounding item 1's problem (the slowest possible window landed
+on the least useful audio).
+
+Fixed in `whisper-worker-src.js`: `getTranscriber(DEFAULT_MODEL)` now
+fires immediately (fire-and-forget) as soon as the worker receives its
+`'init'` message at boot — the model is warm before any video/window ever
+needs it, well before a user even navigates to a page. Re-fired via a new
+`'preload'` worker message whenever `pm_model` actually changes
+(`offscreen-src.js`'s `pm-config` handler), so switching models in the
+popup warms the NEW one proactively too instead of paying that cost
+inline on the next window after the switch.
+
+### 3. `[PM-CATCHUP-TIME]` — the metric is now directly visible
+
+Added to `content.js`: the `'seeking'` handler records
+`session.catchupMeasureStart`/`catchupMeasureTargetT` whenever a seek lands
+somewhere uncovered (a trivial/already-covered seek isn't measured — the
+catch-up time is meaningless there). `runTickLogic()` checks
+`isCovered(t)` every frame and, on the first frame it goes true, logs
+`[PM-CATCHUP-TIME] seek to t=X.XX -> covered at t=Y.YY in Z.ZZs` and clears
+the pending measurement — deliberately checked against plain `isCovered(t)`
+rather than the `uncovered` variable (which also folds in `safeMode`/
+`unanalyzable` state unrelated to the actual thing being timed). This is
+now a `TLOG` line, so it shows up in every Copy Logs paste automatically —
+target per the coordinator: ≤5s with a warm model (segments arrive ~1s
+apart, a 5s cold window at ~0.2 rtf takes ~1-1.5s).
+
+### Small addition: padding presets (`PMWordlist.settings.padding`)
+
+The wordlist agent added an 8th settings key, `padding` ("tight"/"normal"/
+"wide", default "normal"), consumed in `content.js`'s
+`applyWordsToIntervals` via a new `currentPadding()` helper mapping to
+lead/trail seconds: tight=0.15/0.10, normal=0.35/0.25 (unchanged from
+before), wide=0.60/0.45. Read fresh per call (that function already runs
+once per incoming window) — no `onChanged` wiring needed: existing armed
+intervals keep whatever padding they were built with, new windows just
+pick up whatever's current the next time matches are built. The
+`strictness` settings key (consumed entirely inside `PMWordlist` matching)
+needed no pipeline change — this file already reads individual named
+settings keys rather than validating the object's shape/key count, so
+extra keys are inherently non-breaking. Active padding now logged in
+`[PM-SESSION]`.
+
+### Verification status — live attempt blocked, documented honestly
+
+Attempted the requested live verification (seek several times in a real
+tab, read `[PM-CATCHUP-TIME]`; the still-owed 0.1.16 popup-paint-under-load
+check; the standing jump-heavy/two-tab/caption-correlation checks) via
+`claude-in-chrome` against the one connected browser
+(`list_connected_browsers` showed exactly one, `isLocal: true`). Navigated
+to the regression video (`o-7Fvkq-Nug`) in a new background tab, set
+`volume=0` immediately per the standing protocol. Found: **no
+`[PM-...]`-tagged console output at all** across two full page loads (only
+a single unrelated YouTube-internal log line ever appeared), and **no
+status-pill DOM element** (`🛡`-containing text, which the 0.1.15 status
+pill renders on any video page whenever `pm_enabled`+`pm_showStatus`,
+independent of transcription state) anywhere in the page — i.e. the
+extension's content script does not appear to be active on this tab in
+this connected browser at all, separate from anything this patch changed.
+The player itself also appeared stuck at a fixed timestamp (50:00) across
+two ~8s waits with no advancement, though that may be an unrelated
+loading/throttling issue for this specific tab. Given no PM signal
+whatsoever (not even pre-0.1.17 baseline behavior), this reads as "wrong
+browser/profile connected" or "extension not loaded on this tab" rather
+than a code regression — but this could NOT be distinguished with
+confidence from here, so **no live verification claim is being made for
+0.1.17 or for the still-owed 0.1.16 items**. Flagging explicitly rather
+than silently skipping, per the standing "no unverified success claims"
+rule. All code is syntax-checked and both bundles build cleanly
+(`node build.js`); the cold-start-floor logic follows directly from the
+already-unit-verified `pickNextWindow` range-selection logic (0.1.14) with
+one additional floor/defer branch, not independently re-verified in
+isolation this pass.
+
+**Needed before any of this can be marked verified**: confirm which
+Chrome window/profile actually has the unpacked extension loaded (the user
+may need to point `claude-in-chrome` at that specific window, or confirm
+there's only one Chrome instance and something else is wrong), then repeat
+the reload + live seek-heavy + popup-paint + two-tab + caption-correlation
+pass in that session.
+
 ## Known gaps
 
 - **`shared/wordlist.js` `pm_wordlist:undefined`-default bug** (finding #2
