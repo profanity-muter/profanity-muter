@@ -1,0 +1,339 @@
+:root {
+  color-scheme: light dark;
+  --pm-bg: #ffffff;
+  --pm-fg: #1a1a1a;
+  --pm-muted: #6b6b6b;
+  --pm-border: #e2e2e2;
+  --pm-accent: #4f7cff;
+  --pm-track-off: #cfcfcf;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pm-bg: #1e1f22;
+    --pm-fg: #f2f2f2;
+    --pm-muted: #a3a3a3;
+    --pm-border: #35363a;
+    --pm-accent: #6d93ff;
+    --pm-track-off: #4a4b4f;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  width: 320px;
+  background: var(--pm-bg);
+  color: var(--pm-fg);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+}
+
+.pm-header {
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--pm-border);
+}
+
+.pm-title {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.pm-row {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--pm-border);
+}
+
+.pm-row--actions {
+  border-bottom: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.pm-switch-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+
+.pm-switch-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.pm-switch-title {
+  font-weight: 500;
+}
+
+.pm-switch-sub {
+  color: var(--pm-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.pm-switch {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.pm-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.pm-switch-track {
+  /* flex + align-items:center vertically centers the thumb using real
+     layout math ((trackH - thumbH) / 2), immune to the margin-collapse
+     trap a block-level thumb with only `margin` would fall into (a
+     block child's top margin can collapse through a border/padding-less
+     parent, which is what previously nudged the knob a couple of
+     pixels toward the top of the track instead of centering it). */
+  display: flex;
+  align-items: center;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--pm-track-off);
+  transition: background 0.14s ease;
+}
+
+.pm-switch-thumb {
+  /* margin-left only (no margin-top/bottom): flex centers vertically,
+     so there's nothing left to collapse. Horizontal resting position
+     is 2px from the left edge; the checked state below translates it
+     the remaining distance to sit 2px from the right edge. */
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.14s ease;
+}
+
+.pm-switch input:checked + .pm-switch-track {
+  background: var(--pm-accent);
+}
+
+.pm-switch input:checked + .pm-switch-track .pm-switch-thumb {
+  transform: translateX(16px);
+}
+
+.pm-switch input:focus-visible + .pm-switch-track {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: 2px;
+}
+
+.pm-row--radio .pm-label {
+  margin-bottom: 8px;
+}
+
+.pm-radio-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+  margin-bottom: 6px;
+}
+
+.pm-radio-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+/* Custom-drawn radio dot, same principle as the toggle switch: native
+   input[type=radio] widgets (especially with accent-color, on macOS
+   Chrome's "Chrome Refresh" form controls) carry their own built-in
+   fill animation that CSS transitions can't fully suppress or tune —
+   that hidden native animation is what made the "While catching up"
+   radio feel laggy even though the underlying DOM `checked` state
+   flips in under 1ms. Using `appearance: none` and drawing the dot
+   ourselves, purely from the `:checked` pseudo-class with NO
+   `transition` property anywhere, guarantees the paint is exactly as
+   instant as the logical state change — there's nothing left to
+   animate, native or otherwise. */
+.pm-radio-label input {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1.5px solid var(--pm-border);
+  border-radius: 50%;
+  background: var(--pm-bg);
+  cursor: pointer;
+  position: relative;
+}
+
+.pm-radio-label input:checked {
+  border-color: var(--pm-accent);
+}
+
+.pm-radio-label input:checked::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--pm-accent);
+}
+
+.pm-radio-label input:focus-visible {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: 2px;
+}
+
+.pm-row--radio .pm-hint {
+  margin: 0;
+}
+
+.pm-list-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pm-label {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+
+.pm-label--muted {
+  color: var(--pm-muted);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.pm-row--debug .pm-switch-label {
+  margin-top: 8px;
+}
+
+.pm-row--stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+}
+
+.pm-row--stats .pm-label--muted {
+  flex: 0 0 100%;
+  margin-bottom: 2px;
+}
+
+.pm-stats-line {
+  margin: 0;
+  font-size: 12px;
+  color: var(--pm-fg);
+}
+
+.pm-link-button {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--pm-accent);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: underline;
+  white-space: nowrap;
+}
+
+.pm-link-button:hover {
+  opacity: 0.85;
+}
+
+.pm-masked-list {
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--pm-border);
+  border-radius: 6px;
+  padding: 8px;
+  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  letter-spacing: 1px;
+  color: var(--pm-muted);
+}
+
+.pm-masked-list .pm-masked-empty {
+  color: var(--pm-muted);
+  letter-spacing: normal;
+  font-style: italic;
+}
+
+.pm-hidden {
+  display: none !important;
+}
+
+.pm-hint {
+  margin: 0 0 8px;
+  color: var(--pm-muted);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.pm-textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--pm-bg);
+  color: var(--pm-fg);
+  border: 1px solid var(--pm-border);
+  border-radius: 6px;
+  padding: 8px;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.pm-textarea:focus {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: -1px;
+}
+
+.pm-button {
+  appearance: none;
+  border: none;
+  border-radius: 6px;
+  background: var(--pm-accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 7px 14px;
+  cursor: pointer;
+}
+
+.pm-button:hover {
+  filter: brightness(1.05);
+}
+
+.pm-button:active {
+  filter: brightness(0.95);
+}
+
+.pm-button--secondary {
+  background: transparent;
+  color: var(--pm-fg);
+  border: 1px solid var(--pm-border);
+}
+
+.pm-status {
+  color: var(--pm-muted);
+  font-size: 11px;
+}

@@ -1,0 +1,4 @@
+node_modules/
+.DS_Store
+verify/last_run.log
+*.log

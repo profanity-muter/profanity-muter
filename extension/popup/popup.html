@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Profanity Muter</title>
+<link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="pm-header">
+    <span class="pm-title">Profanity Muter</span>
+  </header>
+
+  <section class="pm-row pm-row--toggle">
+    <label class="pm-switch-label">
+      <span class="pm-switch-text">
+        <span class="pm-switch-title">Enabled</span>
+        <span class="pm-switch-sub">Master switch for muting and censoring on YouTube</span>
+      </span>
+      <span class="pm-switch">
+        <input type="checkbox" id="pm-enabled" checked />
+        <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
+      </span>
+    </label>
+  </section>
+
+  <section class="pm-row pm-row--toggle">
+    <label class="pm-switch-label">
+      <span class="pm-switch-text">
+        <span class="pm-switch-title">Mute audio</span>
+        <span class="pm-switch-sub">Silence the audio when profanity is spoken</span>
+      </span>
+      <span class="pm-switch">
+        <input type="checkbox" id="pm-mute-audio" checked />
+        <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
+      </span>
+    </label>
+  </section>
+
+  <section class="pm-row pm-row--toggle">
+    <label class="pm-switch-label">
+      <span class="pm-switch-text">
+        <span class="pm-switch-title">Censor captions</span>
+        <span class="pm-switch-sub">Turn off to verify audio muting against what's actually said</span>
+      </span>
+      <span class="pm-switch">
+        <input type="checkbox" id="pm-censor-captions" checked />
+        <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
+      </span>
+    </label>
+  </section>
+
+  <section class="pm-row pm-row--toggle">
+    <label class="pm-switch-label">
+      <span class="pm-switch-text">
+        <span class="pm-switch-title">Show status on player</span>
+        <span class="pm-switch-sub">Show a small status pill on top of the YouTube player</span>
+      </span>
+      <span class="pm-switch">
+        <input type="checkbox" id="pm-show-status" checked />
+        <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
+      </span>
+    </label>
+  </section>
+
+  <section class="pm-row pm-row--radio">
+    <span class="pm-label">While catching up</span>
+    <div class="pm-radio-group" role="radiogroup" aria-label="While catching up">
+      <label class="pm-radio-label">
+        <input type="radio" name="pm-catchup-mode" id="pm-catchup-mute" value="mute" checked />
+        <span>Mute audio</span>
+      </label>
+      <label class="pm-radio-label">
+        <input type="radio" name="pm-catchup-mode" id="pm-catchup-pause" value="pause" />
+        <span>Pause video</span>
+      </label>
+      <label class="pm-radio-label">
+        <input type="radio" name="pm-catchup-mode" id="pm-catchup-play" value="play" />
+        <span>Let it play</span>
+      </label>
+    </div>
+    <p class="pm-hint">What happens in parts of the video not yet analyzed.</p>
+  </section>
+
+  <section class="pm-row pm-row--list">
+    <div class="pm-list-heading">
+      <label class="pm-label" for="pm-wordlist">Word list</label>
+      <button id="pm-toggle-mask" class="pm-link-button" type="button">Show words to edit</button>
+    </div>
+    <p class="pm-hint">
+      Words are masked by default. Click "Show words to edit" to reveal and
+      edit the real list (one word or phrase per line).
+    </p>
+
+    <div id="pm-masked-list" class="pm-masked-list" aria-hidden="false"></div>
+
+    <textarea
+      id="pm-wordlist"
+      class="pm-textarea pm-hidden"
+      rows="10"
+      spellcheck="false"
+      aria-hidden="true"
+    ></textarea>
+  </section>
+
+  <section class="pm-row pm-row--debug">
+    <span class="pm-label pm-label--muted">Debugging</span>
+    <label class="pm-switch-label">
+      <span class="pm-switch-text">
+        <span class="pm-switch-title">Show debug overlay</span>
+        <span class="pm-switch-sub">Show analysis status on top of the YouTube player</span>
+      </span>
+      <span class="pm-switch">
+        <input type="checkbox" id="pm-debug-overlay" />
+        <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
+      </span>
+    </label>
+  </section>
+
+  <section class="pm-row pm-row--stats">
+    <span class="pm-label pm-label--muted">Stats</span>
+    <p id="pm-stats-line" class="pm-stats-line">
+      words muted all-time: 0 &middot; videos protected: 0
+    </p>
+    <button id="pm-reset-stats" class="pm-link-button" type="button">Reset stats</button>
+  </section>
+
+  <section class="pm-row pm-row--actions">
+    <button id="pm-restore" class="pm-button pm-button--secondary" type="button">Restore defaults</button>
+    <button id="pm-save" class="pm-button" type="button">Save</button>
+    <span id="pm-status" class="pm-status" role="status" aria-live="polite"></span>
+  </section>
+
+  <script src="../shared/wordlist.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

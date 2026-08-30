@@ -1,0 +1,16 @@
+{
+  "name": "profanity-muter-extension",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "build": "node build.js",
+    "verify": "node verify/run_playwright.mjs"
+  },
+  "dependencies": {
+    "@huggingface/transformers": "^4.2.0",
+    "mediabunny": "^1.55.3",
+    "esbuild": "^0.28.2",
+    "playwright": "^1.62.1"
+  }
+}

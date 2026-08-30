@@ -1,0 +1,15 @@
+{
+  "manifest_version": 3,
+  "name": "Profanity Muter Spike - Capture",
+  "version": "0.0.1",
+  "description": "Spike: intercept YouTube MSE audio SourceBuffer appends in MAIN world for pre-buffered ASR.",
+  "content_scripts": [
+    {
+      "matches": ["https://www.youtube.com/*"],
+      "js": ["capture.js"],
+      "world": "MAIN",
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ]
+}

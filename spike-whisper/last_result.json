@@ -1,0 +1,783 @@
+{
+  "audioDurationS": 33.2765625,
+  "chunks": [
+    {
+      "text": " Well,",
+      "timestamp": [
+        0.4,
+        0.68
+      ]
+    },
+    {
+      "text": " darn",
+      "timestamp": [
+        0.9,
+        1.14
+      ]
+    },
+    {
+      "text": " it,",
+      "timestamp": [
+        1.14,
+        1.24
+      ]
+    },
+    {
+      "text": " I",
+      "timestamp": [
+        1.48,
+        1.76
+      ]
+    },
+    {
+      "text": " dropped",
+      "timestamp": [
+        1.76,
+        2.06
+      ]
+    },
+    {
+      "text": " my",
+      "timestamp": [
+        2.06,
+        2.32
+      ]
+    },
+    {
+      "text": " coffee",
+      "timestamp": [
+        2.32,
+        2.64
+      ]
+    },
+    {
+      "text": " again",
+      "timestamp": [
+        2.64,
+        2.88
+      ]
+    },
+    {
+      "text": " this",
+      "timestamp": [
+        2.88,
+        3.22
+      ]
+    },
+    {
+      "text": " morning.",
+      "timestamp": [
+        3.22,
+        3.42
+      ]
+    },
+    {
+      "text": " Oh,",
+      "timestamp": [
+        3.78,
+        3.86
+      ]
+    },
+    {
+      "text": " shoot.",
+      "timestamp": [
+        4.12,
+        4.32
+      ]
+    },
+    {
+      "text": " That",
+      "timestamp": [
+        4.58,
+        4.84
+      ]
+    },
+    {
+      "text": " printer",
+      "timestamp": [
+        4.84,
+        5.14
+      ]
+    },
+    {
+      "text": " is",
+      "timestamp": [
+        5.14,
+        5.38
+      ]
+    },
+    {
+      "text": " jammed",
+      "timestamp": [
+        5.38,
+        5.54
+      ]
+    },
+    {
+      "text": " for",
+      "timestamp": [
+        5.54,
+        5.7
+      ]
+    },
+    {
+      "text": " the",
+      "timestamp": [
+        5.7,
+        5.94
+      ]
+    },
+    {
+      "text": " third",
+      "timestamp": [
+        5.94,
+        6.18
+      ]
+    },
+    {
+      "text": " time",
+      "timestamp": [
+        6.18,
+        6.66
+      ]
+    },
+    {
+      "text": " today.",
+      "timestamp": [
+        6.66,
+        6.9
+      ]
+    },
+    {
+      "text": " Krikey,",
+      "timestamp": [
+        7.18,
+        7.7
+      ]
+    },
+    {
+      "text": " look",
+      "timestamp": [
+        7.86,
+        8.06
+      ]
+    },
+    {
+      "text": " at",
+      "timestamp": [
+        8.06,
+        8.22
+      ]
+    },
+    {
+      "text": " the",
+      "timestamp": [
+        8.22,
+        8.4
+      ]
+    },
+    {
+      "text": " size",
+      "timestamp": [
+        8.4,
+        8.56
+      ]
+    },
+    {
+      "text": " of",
+      "timestamp": [
+        8.56,
+        8.86
+      ]
+    },
+    {
+      "text": " that",
+      "timestamp": [
+        8.86,
+        8.98
+      ]
+    },
+    {
+      "text": " thunderstorm",
+      "timestamp": [
+        8.98,
+        9.68
+      ]
+    },
+    {
+      "text": " rolling",
+      "timestamp": [
+        9.68,
+        10.06
+      ]
+    },
+    {
+      "text": " in.",
+      "timestamp": [
+        10.06,
+        10.14
+      ]
+    },
+    {
+      "text": " I",
+      "timestamp": [
+        10.38,
+        10.68
+      ]
+    },
+    {
+      "text": " told",
+      "timestamp": [
+        10.68,
+        10.92
+      ]
+    },
+    {
+      "text": " my",
+      "timestamp": [
+        10.92,
+        11.16
+      ]
+    },
+    {
+      "text": " brother",
+      "timestamp": [
+        11.16,
+        11.46
+      ]
+    },
+    {
+      "text": " to",
+      "timestamp": [
+        11.46,
+        11.72
+      ]
+    },
+    {
+      "text": " please",
+      "timestamp": [
+        11.72,
+        11.96
+      ]
+    },
+    {
+      "text": " clean",
+      "timestamp": [
+        11.96,
+        12.18
+      ]
+    },
+    {
+      "text": " his",
+      "timestamp": [
+        12.18,
+        12.42
+      ]
+    },
+    {
+      "text": " room",
+      "timestamp": [
+        12.42,
+        12.8
+      ]
+    },
+    {
+      "text": " before",
+      "timestamp": [
+        12.8,
+        13.14
+      ]
+    },
+    {
+      "text": " dinner.",
+      "timestamp": [
+        13.14,
+        13.24
+      ]
+    },
+    {
+      "text": " The",
+      "timestamp": [
+        13.58,
+        13.98
+      ]
+    },
+    {
+      "text": " quarterly",
+      "timestamp": [
+        13.98,
+        14.38
+      ]
+    },
+    {
+      "text": " report",
+      "timestamp": [
+        14.38,
+        14.58
+      ]
+    },
+    {
+      "text": " is",
+      "timestamp": [
+        14.58,
+        14.78
+      ]
+    },
+    {
+      "text": " due",
+      "timestamp": [
+        14.78,
+        15
+      ]
+    },
+    {
+      "text": " on",
+      "timestamp": [
+        15,
+        15.42
+      ]
+    },
+    {
+      "text": " Friday,",
+      "timestamp": [
+        15.42,
+        15.7
+      ]
+    },
+    {
+      "text": " and",
+      "timestamp": [
+        15.92,
+        16.24
+      ]
+    },
+    {
+      "text": " honestly",
+      "timestamp": [
+        16.24,
+        16.52
+      ]
+    },
+    {
+      "text": " I",
+      "timestamp": [
+        16.52,
+        16.62
+      ]
+    },
+    {
+      "text": " am",
+      "timestamp": [
+        16.62,
+        16.88
+      ]
+    },
+    {
+      "text": " not",
+      "timestamp": [
+        16.88,
+        17.18
+      ]
+    },
+    {
+      "text": " ready.",
+      "timestamp": [
+        17.18,
+        17.4
+      ]
+    },
+    {
+      "text": " Darn,",
+      "timestamp": [
+        17.68,
+        18.12
+      ]
+    },
+    {
+      "text": " I",
+      "timestamp": [
+        18.26,
+        18.46
+      ]
+    },
+    {
+      "text": " forgot",
+      "timestamp": [
+        18.46,
+        18.82
+      ]
+    },
+    {
+      "text": " my",
+      "timestamp": [
+        18.82,
+        19.24
+      ]
+    },
+    {
+      "text": " umbrella",
+      "timestamp": [
+        19.24,
+        19.48
+      ]
+    },
+    {
+      "text": " at",
+      "timestamp": [
+        19.48,
+        19.7
+      ]
+    },
+    {
+      "text": " the",
+      "timestamp": [
+        19.7,
+        20.08
+      ]
+    },
+    {
+      "text": " office.",
+      "timestamp": [
+        20.08,
+        20.22
+      ]
+    },
+    {
+      "text": " She",
+      "timestamp": [
+        20.56,
+        20.88
+      ]
+    },
+    {
+      "text": " said,",
+      "timestamp": [
+        20.88,
+        21.2
+      ]
+    },
+    {
+      "text": " shoot,",
+      "timestamp": [
+        21.22,
+        21.36
+      ]
+    },
+    {
+      "text": " we",
+      "timestamp": [
+        21.6,
+        21.82
+      ]
+    },
+    {
+      "text": " are",
+      "timestamp": [
+        21.82,
+        22.1
+      ]
+    },
+    {
+      "text": " going",
+      "timestamp": [
+        22.1,
+        22.26
+      ]
+    },
+    {
+      "text": " to",
+      "timestamp": [
+        22.26,
+        22.42
+      ]
+    },
+    {
+      "text": " miss",
+      "timestamp": [
+        22.42,
+        22.68
+      ]
+    },
+    {
+      "text": " the",
+      "timestamp": [
+        22.68,
+        22.86
+      ]
+    },
+    {
+      "text": " train",
+      "timestamp": [
+        22.86,
+        23.02
+      ]
+    },
+    {
+      "text": " if",
+      "timestamp": [
+        23.02,
+        23.2
+      ]
+    },
+    {
+      "text": " we",
+      "timestamp": [
+        23.2,
+        23.4
+      ]
+    },
+    {
+      "text": " do",
+      "timestamp": [
+        23.4,
+        23.64
+      ]
+    },
+    {
+      "text": " not",
+      "timestamp": [
+        23.64,
+        23.94
+      ]
+    },
+    {
+      "text": " hurry.",
+      "timestamp": [
+        23.94,
+        24.16
+      ]
+    },
+    {
+      "text": " Krikey,",
+      "timestamp": [
+        24.46,
+        24.96
+      ]
+    },
+    {
+      "text": " that",
+      "timestamp": [
+        25.14,
+        25.36
+      ]
+    },
+    {
+      "text": " was",
+      "timestamp": [
+        25.36,
+        25.52
+      ]
+    },
+    {
+      "text": " a",
+      "timestamp": [
+        25.52,
+        25.8
+      ]
+    },
+    {
+      "text": " close",
+      "timestamp": [
+        25.8,
+        26.06
+      ]
+    },
+    {
+      "text": " call",
+      "timestamp": [
+        26.06,
+        26.24
+      ]
+    },
+    {
+      "text": " on",
+      "timestamp": [
+        26.24,
+        26.44
+      ]
+    },
+    {
+      "text": " the",
+      "timestamp": [
+        26.44,
+        26.82
+      ]
+    },
+    {
+      "text": " highway.",
+      "timestamp": [
+        26.82,
+        27
+      ]
+    },
+    {
+      "text": " Let",
+      "timestamp": [
+        27.28,
+        27.48
+      ]
+    },
+    {
+      "text": " us",
+      "timestamp": [
+        27.48,
+        27.78
+      ]
+    },
+    {
+      "text": " grab",
+      "timestamp": [
+        27.78,
+        28.02
+      ]
+    },
+    {
+      "text": " lunch",
+      "timestamp": [
+        28.02,
+        28.2
+      ]
+    },
+    {
+      "text": " at",
+      "timestamp": [
+        28.2,
+        28.36
+      ]
+    },
+    {
+      "text": " the",
+      "timestamp": [
+        28.36,
+        28.58
+      ]
+    },
+    {
+      "text": " new",
+      "timestamp": [
+        28.58,
+        28.94
+      ]
+    },
+    {
+      "text": " sandwich",
+      "timestamp": [
+        28.94,
+        29.32
+      ]
+    },
+    {
+      "text": " shop",
+      "timestamp": [
+        29.32,
+        29.92
+      ]
+    },
+    {
+      "text": " downtown.",
+      "timestamp": [
+        29.92,
+        30
+      ]
+    },
+    {
+      "text": " My",
+      "timestamp": [
+        30.46,
+        30.86
+      ]
+    },
+    {
+      "text": " favorite",
+      "timestamp": [
+        30.86,
+        31.12
+      ]
+    },
+    {
+      "text": " hobby",
+      "timestamp": [
+        31.12,
+        31.38
+      ]
+    },
+    {
+      "text": " is",
+      "timestamp": [
+        31.38,
+        31.7
+      ]
+    },
+    {
+      "text": " hiking",
+      "timestamp": [
+        31.7,
+        31.92
+      ]
+    },
+    {
+      "text": " in",
+      "timestamp": [
+        31.92,
+        32.08
+      ]
+    },
+    {
+      "text": " the",
+      "timestamp": [
+        32.08,
+        32.32
+      ]
+    },
+    {
+      "text": " mountains",
+      "timestamp": [
+        32.32,
+        32.76
+      ]
+    },
+    {
+      "text": " every",
+      "timestamp": [
+        32.76,
+        33
+      ]
+    },
+    {
+      "text": " weekend.",
+      "timestamp": [
+        33.24,
+        33.86
+      ]
+    }
+  ],
+  "device": "wasm",
+  "error": null,
+  "hits": [
+    {
+      "end": 1.14,
+      "start": 0.9,
+      "word": "darn"
+    },
+    {
+      "end": 4.32,
+      "start": 4.12,
+      "word": "shoot"
+    },
+    {
+      "end": 18.12,
+      "start": 17.68,
+      "word": "darn"
+    },
+    {
+      "end": 21.36,
+      "start": 21.22,
+      "word": "shoot"
+    }
+  ],
+  "modelLoadMs": 1729,
+  "ok": true,
+  "rtf": 0.2600569094224296,
+  "text": " Well, darn it, I dropped my coffee again this morning. Oh, shoot. That printer is jammed for the third time today. Krikey, look at the size of that thunderstorm rolling in. I told my brother to please clean his room before dinner. The quarterly report is due on Friday, and honestly I am not ready. Darn, I forgot my umbrella at the office. She said, shoot, we are going to miss the train if we do not hurry. Krikey, that was a close call on the highway. Let us grab lunch at the new sandwich shop downtown. My favorite hobby is hiking in the mountains every weekend.",
+  "transcribeMs": 8653.799999952316
+}
