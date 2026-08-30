@@ -33016,7 +33016,13 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
       self.addEventListener("unhandledrejection", (ev) => {
         self.postMessage({ type: "worker-error", text: "unhandled rejection: " + String(ev.reason) });
       });
-      var MODEL_IDS = { tiny: "Xenova/whisper-tiny.en", base: "Xenova/whisper-base.en", small: "Xenova/whisper-small.en" };
+      var MODEL_IDS = {
+        tiny: "Xenova/whisper-tiny.en",
+        base: "Xenova/whisper-base.en",
+        small: "Xenova/whisper-small.en",
+        multilingual: "Xenova/whisper-base",
+        "lang-detect": "Xenova/whisper-tiny"
+      };
       var DEFAULT_MODEL = "base";
       env2.backends.onnx.wasm.proxy = false;
       env2.backends.onnx.wasm.numThreads = 1;
@@ -33052,6 +33058,36 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
         let sum = 0;
         for (let i = s; i < e; i++) sum += float16k[i] * float16k[i];
         return Math.sqrt(sum / (e - s));
+      }
+      async function handleDetectLanguage(msg) {
+        const { requestId, float16k } = msg;
+        try {
+          const transcriber = await getTranscriber("lang-detect");
+          const model = transcriber.model;
+          const processor = transcriber.processor;
+          const langToId = model.generation_config && model.generation_config.lang_to_id;
+          if (!langToId || Object.keys(langToId).length === 0) {
+            self.postMessage({ type: "lang-result", requestId, language: null, reason: "lang-detect model has no lang_to_id (not a multilingual checkpoint?)" });
+            return;
+          }
+          const inputs = await processor(float16k);
+          const decoderStartTokenId = model.generation_config.decoder_start_token_id ?? model.config.decoder_start_token_id;
+          const decoderInputIds = new Tensor22("int64", [BigInt(decoderStartTokenId)], [1, 1]);
+          const out = await model({ input_features: inputs.input_features, decoder_input_ids: decoderInputIds });
+          const data = out.logits.data;
+          let bestTok = null, bestScore = -Infinity;
+          for (const [tok, id] of Object.entries(langToId)) {
+            const score = data[Number(id)];
+            if (score > bestScore) {
+              bestScore = score;
+              bestTok = tok;
+            }
+          }
+          const language = bestTok ? bestTok.replace(/[<|>]/g, "") : null;
+          self.postMessage({ type: "lang-result", requestId, language, score: bestScore });
+        } catch (e) {
+          self.postMessage({ type: "lang-error", requestId, error: String(e && e.stack ? e.stack : e) });
+        }
       }
       async function handleTranscribe(msg) {
         const { requestId, modelId, float16k, options } = msg;
@@ -33098,6 +33134,9 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
         }
         if (msg.type === "transcribe") {
           handleTranscribe(msg);
+        }
+        if (msg.type === "detect-language") {
+          handleDetectLanguage(msg);
         }
       });
       log("whisper worker ready");

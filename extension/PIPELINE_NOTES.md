@@ -2669,6 +2669,149 @@ this pass.
 mid-video-idle-loop fix, which is unrelated but also real). They need to
 reload from 0.1.22 straight to 0.1.24 — two versions behind, not one.
 
+## 0.1.25: multilingual support (language detection + model switching)
+
+New feature, agreed design (coordinator/user). Goal: keep the ENGLISH
+default fully unchanged (base.en, eagerly preloaded, zero added cost) while
+adding real support for non-English videos via a second, multilingual
+model and a per-video language-detection pass.
+
+### transformers.js does NOT support language auto-detection — verified, not assumed
+
+The design brief's "cheap approach" (`language: null` to get transformers.js
+to auto-detect) does not work with the installed library. Confirmed by
+reading `node_modules/@huggingface/transformers` (v4.2.0 — the latest
+published version; there is no newer release with this feature) directly:
+`WhisperForConditionalGeneration._retrieve_init_tokens` contains a literal
+`// TODO: Implement language detection` and falls back to forcing English
+whenever `generation_config.language` isn't set; the ASR pipeline wrapper
+does the same (`kwargs.language ?? 'en'`) one layer up. So `language: null`
+silently transcribes as English rather than detecting anything, and there
+is no higher-level "detect API" exposed anywhere in this version either.
+
+**Verified, working alternative** (tested end-to-end in a real, throwaway
+Node script this session — network fetch + `onnxruntime-node` + the actual
+`Xenova/whisper-tiny` model, not simulated): bypass `generate()` entirely
+and call the model directly for ONE decoder step — exactly what Whisper's
+own reference `detect_language()` does. `model({input_features,
+decoder_input_ids: [[decoder_start_token_id]]})` (the raw model instance,
+not `.generate()`) runs the encoder once and the decoder for exactly one
+step with nothing forced, returning logits at that position; restricting
+those logits to the token ids in `model.generation_config.lang_to_id`
+(present and populated — confirmed live) and taking the argmax gives a
+real detected language. Confirmed working: correct tensor shapes
+(`input_features` `[1,80,3000]`, output `logits` `[1,1,51865]`), `lang_to_id`
+populated with 99 real language tokens, and a plausible argmax result on
+synthetic audio. Real-speech detection ACCURACY wasn't independently
+re-verified beyond this (Whisper's language-ID head is a well-established,
+widely-used capability — the mechanism, not the model's own accuracy, was
+the actual unknown here).
+
+### Design: two multilingual models, not one, to protect the English path
+
+1. **`Xenova/whisper-base`** (multilingual sibling of the .en default,
+   confirmed to ship `alignment_heads` — word timestamps ARE supported) —
+   used for actual TRANSCRIPTION once a video is confirmed non-English.
+2. **`Xenova/whisper-tiny`** (also multilingual) — used ONLY for the cheap
+   one-shot detection probe above, never for real transcription (its own
+   `alignment_heads` support was not checked — irrelevant for a single
+   decoder step with no word-timestamp output requested).
+
+Splitting these matters: if detection required loading the FULL
+multilingual model on every session's first window (as a literal reading
+of "run the first window through the multilingual model" would imply),
+EVERY video — including the vast majority that are English — would pay an
+extra model download/warm-up before its first window, directly regressing
+the existing eager-preloaded base.en fast path. Instead: **the first
+window's actual transcription always runs on `s.modelId` (base.en by
+default) exactly as before 0.1.25**, completely unaffected by any of this;
+the small `lang-detect` probe model runs ADDITIONALLY (not instead), fire-
+and-forget, off the SAME window's audio. Only once detection confirms
+non-English does the (lazy) full multilingual model ever get pulled in, for
+window 2 onward. This is a deliberate, documented DEVIATION from the
+literal brief wording (which itself hedged with "probably fine to keep")
+in service of its own explicit "no English regression" requirement.
+
+### Implementation
+
+- **`src/whisper-worker-src.js`**: `MODEL_IDS` gains `multilingual` and
+  `lang-detect`. New `handleDetectLanguage(msg)` implements the manual
+  single-decoder-step probe above, replying `{type:'lang-result', language,
+  score}` or `{type:'lang-error', error}`.
+- **`src/offscreen-src.js`**: new `detectLanguageInWorker(float16k)` bridge
+  (mirrors `transcribeInWorker`, but deliberately does NOT transfer
+  `float16k`'s buffer — the caller still needs it afterward for the
+  window's own real transcribe call; a one-time structured-clone copy, paid
+  once per session). New session fields: `multilingualEnabled` (from
+  `pm_multilingual`, default true), `languageState`
+  (`'pending'|'detecting'|'resolved'`), `detectedLanguage`. In
+  `transcribeWindow`, on a session's first window only (`languageState ===
+  'pending'`, guarded off entirely when `multilingualEnabled` is false OR
+  the user already manually forced `pm_model = 'multilingual'` — nothing to
+  detect toward there), detection is kicked off fire-and-forget (never
+  awaited, never blocks that window's own transcription) through the SAME
+  `runSerialized` worker mutex every transcribe call already uses (it's the
+  same single-threaded worker). Once resolved: English keeps `s.modelId`
+  forever; non-English switches EVERY SUBSEQUENT window's `effectiveModelId`
+  to `'multilingual'` and lazily preloads it. **Pinned per video** — a
+  mid-video language switch is NOT handled (explicit, accepted limitation
+  per the design brief), only a genuine video-id change (a fresh session)
+  re-triggers detection.
+- **Plumbing to content.js**: `pm-words-result` now carries `language`
+  (current `s.detectedLanguage`, null until resolved) and `model`
+  (`effectiveModelId`, for RTF telemetry) on EVERY window, not just the
+  first — this is the authoritative source content.js reads from.
+  `pm-resync-result` carries `language` too (so a port-reconnect resync
+  doesn't lose it). A dedicated one-shot `pm-language`/`'language'` message
+  is ALSO sent the instant detection resolves, purely as a snappier-UI nice-
+  to-have — not relied on alone, since (per 0.1.23's own finding) ordering
+  between two separate `chrome.runtime.sendMessage` calls from offscreen
+  isn't guaranteed.
+- **`content.js`**: new `applyDetectedLanguage(videoId, language)` — sets
+  `session.language`, calls `PMWordlist.setLanguage(lang)` defensively
+  (only if the wordlist agent's method exists — it may not have shipped
+  yet), and ONLY on an actual value change (never redundantly on every
+  window once resolved, and never on a stale/other video's message). Status
+  pill: shows the language once known and non-English, e.g. "🛡 Protected ·
+  es" (omitted for English and for the `Off` state).
+- **`background.js`**: `sendModelConfig` now also reads `pm_multilingual`
+  (default true) alongside `pm_model`, same once-per-video-reset cadence as
+  the existing model setting (a mid-video toggle takes effect on the NEXT
+  video, matching `pm_model`'s existing behavior — not treated as needing
+  faster reactivity). New `pm-language` relay. `[PM] window ...` and
+  `[PM-WINDOW]` log lines both now include `model=` for at-a-glance
+  per-model RTF filtering (item 5's "RTF telemetry per model," implemented
+  as a log-line tag rather than a new per-model data structure — consistent
+  with this codebase's existing "just log it" telemetry convention).
+- **`pm_multilingual` setting itself is NOT implemented here** — it's read
+  (default true) but the popup toggle is explicitly the wordlist agent's to
+  add, per the coordinator's framing ("wordlist agent adds the toggle").
+  Until it exists, the feature is simply always-on with no way to disable
+  from the UI (still fully functional; `chrome.storage.sync.set({pm_multilingual:
+  false})` from the console works today if needed before the toggle ships).
+
+**Verification status**: `node --check`/module-check on all touched files,
+`node build.js` clean (both bundles). The manual language-ID mechanism was
+verified end-to-end for real (network + real model, not simulated) in a
+throwaway Node script this session — see above. The PURE decision logic
+(`effectiveModelId` resolution across every state combination: pending,
+resolved-English, resolved-non-English, `pm_multilingual=false`, user-
+forced `modelId='multilingual'`, detection failure fallback; and
+`applyDetectedLanguage`'s change-only-on-real-change/stale-video-ignored
+idempotency) is unit-verified in a standalone Node harness mirroring the
+real code exactly — all pass. All prior 0.1.20-0.1.24 harnesses re-run
+clean (no regressions). **Not verified live against a real Spanish video**
+— no working browser session this pass to reload the extension into (the
+standing constraint: only the user can trigger a `chrome://extensions`
+reload, and 0.1.25's code isn't visible to the currently-loaded extension
+until that happens) — noted honestly rather than claimed. The next live
+pass should confirm: (1) an English video shows zero latency/behavior
+change from pre-0.1.25 (the core regression-safety claim), (2) a real
+Spanish/non-English video's `[PM-LANG]` line reports a plausible detected
+language and switches window 2+ to the multilingual model, (3) the pill
+shows the language marker, and (4) `PMWordlist.setLanguage` actually gets
+called once the wordlist agent's method exists.
+
 ## Known gaps
 
 - **`shared/wordlist.js` `pm_wordlist:undefined`-default bug** (finding #2

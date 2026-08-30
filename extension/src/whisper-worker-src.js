@@ -32,7 +32,7 @@
 // (its own .buffer), never copied. This worker has NO chrome.* API access
 // (deliberately not needed) — the wasm path base is handed over once in an
 // 'init' message from the main thread, which already has chrome.runtime.
-import { pipeline, env } from '@huggingface/transformers';
+import { pipeline, env, Tensor } from '@huggingface/transformers';
 
 // Eager warm-up timing (0.1.18) — as early in this file's own execution as
 // possible, so `workerSpawnMs` (below) measures genuine worker-script-start-
@@ -53,7 +53,26 @@ self.addEventListener('unhandledrejection', (ev) => {
 // Kept in sync with offscreen-src.js's own copy — small, static lookup
 // tables, not worth a shared-module import for this size. See that file's
 // header for the 'small' model's alignment_heads/RTF notes.
-const MODEL_IDS = { tiny: 'Xenova/whisper-tiny.en', base: 'Xenova/whisper-base.en', small: 'Xenova/whisper-small.en' };
+// MULTILINGUAL SUPPORT (0.1.25): 'multilingual' (Xenova/whisper-base, the
+// multilingual sibling of the .en default — confirmed on the Hub to ship
+// alignment_heads, so word timestamps ARE supported for real transcription)
+// is used for actual transcription once a video is detected as non-English.
+// 'lang-detect' (Xenova/whisper-tiny, ALSO multilingual) is a SEPARATE,
+// smaller model used ONLY for the one-shot language-ID probe below — never
+// for real transcription, so its own alignment_heads support is irrelevant
+// and was not checked. Keeping detection on the smallest model and real
+// non-English transcription on the better 'multilingual' model means the
+// (majority) English case pays zero extra cost: base.en stays the eagerly-
+// preloaded default (see the boot preload below), completely unaffected by
+// any of this — the "no English regression" requirement — and only a
+// video that's actually NOT English ever pulls in the larger model at all.
+const MODEL_IDS = {
+  tiny: 'Xenova/whisper-tiny.en',
+  base: 'Xenova/whisper-base.en',
+  small: 'Xenova/whisper-small.en',
+  multilingual: 'Xenova/whisper-base',
+  'lang-detect': 'Xenova/whisper-tiny'
+};
 const DEFAULT_MODEL = 'base';
 
 env.backends.onnx.wasm.proxy = false; // we ARE the dedicated thread now; onnxruntime-web's own proxy would just add another hop
@@ -106,6 +125,76 @@ function rmsAt(float16k, localStartInWindow, localEndInWindow, sampleRate) {
   let sum = 0;
   for (let i = s; i < e; i++) sum += float16k[i] * float16k[i];
   return Math.sqrt(sum / (e - s));
+}
+
+// LANGUAGE DETECTION (0.1.25) — see PIPELINE_NOTES "0.1.25" for the full
+// investigation. transformers.js 4.2.0 (the latest published version, and
+// the one this extension ships) does NOT implement automatic language
+// detection for Whisper: `WhisperForConditionalGeneration._retrieve_init_tokens`
+// literally contains `// TODO: Implement language detection` and silently
+// defaults to English whenever `language` isn't explicitly passed, both at
+// the raw model level and in the ASR pipeline wrapper (`kwargs.language ??
+// 'en'`) — confirmed by reading the installed package's source directly,
+// not assumed. So `language: null` (the coordinator's suggested "cheap
+// approach") does NOT work with this library version; there is no
+// higher-level "detect API" to call either.
+//
+// Verified, working alternative (tested end-to-end in a standalone Node
+// script against the real Xenova/whisper-tiny model before shipping this):
+// bypass `generate()` (and its forced-English init tokens) entirely and
+// call the model directly for ONE decoder step. This is exactly the
+// mechanism Whisper's own reference `detect_language()` uses — no beam
+// search, no full generation, just:
+//   1. Run the encoder once on the window's audio features.
+//   2. Feed `decoder_input_ids = [[decoder_start_token_id]]` (i.e. just
+//      `<|startoftranscript|>`, nothing forced after it) through the
+//      decoder for a single step.
+//   3. Read the logits at that one position, restricted to the language
+//      token ids in `model.generation_config.lang_to_id` (a real mapping
+//      shipped in every multilingual Whisper checkpoint's own generation
+//      config — confirmed present on Xenova/whisper-tiny), and take the
+//      argmax.
+// `model({input_features, decoder_input_ids})` (calling the pipeline's
+// underlying model instance directly, not `model.generate()`) runs exactly
+// steps 1+2 via transformers.js's own seq2seq_forward and returns logits
+// for step 3 — confirmed by reading modeling_utils.js's seq2seq_forward,
+// which computes encoder_outputs then decodes the given decoder_input_ids
+// with ZERO of generate()'s init-token forcing logic in the way.
+async function handleDetectLanguage(msg) {
+  const { requestId, float16k } = msg;
+  try {
+    const transcriber = await getTranscriber('lang-detect');
+    const model = transcriber.model;
+    const processor = transcriber.processor;
+    const langToId = model.generation_config && model.generation_config.lang_to_id;
+    if (!langToId || Object.keys(langToId).length === 0) {
+      // Should not happen for a real multilingual checkpoint — surfaced
+      // loudly rather than silently defaulting, since a silent default here
+      // would be exactly the "no English regression but also no detection
+      // ever works" failure mode this whole feature is meant to avoid.
+      self.postMessage({ type: 'lang-result', requestId, language: null, reason: 'lang-detect model has no lang_to_id (not a multilingual checkpoint?)' });
+      return;
+    }
+    const inputs = await processor(float16k);
+    const decoderStartTokenId = model.generation_config.decoder_start_token_id ?? model.config.decoder_start_token_id;
+    const decoderInputIds = new Tensor('int64', [BigInt(decoderStartTokenId)], [1, 1]);
+    const out = await model({ input_features: inputs.input_features, decoder_input_ids: decoderInputIds });
+    const data = out.logits.data; // [1,1,vocab], flat — index directly by token id
+    let bestTok = null, bestScore = -Infinity;
+    for (const [tok, id] of Object.entries(langToId)) {
+      const score = data[Number(id)];
+      if (score > bestScore) {
+        bestScore = score;
+        bestTok = tok;
+      }
+    }
+    // Token text is like "<|es|>" — strip the Whisper special-token braces
+    // down to the plain ISO-ish code content.js/PMWordlist expect.
+    const language = bestTok ? bestTok.replace(/[<|>]/g, '') : null;
+    self.postMessage({ type: 'lang-result', requestId, language, score: bestScore });
+  } catch (e) {
+    self.postMessage({ type: 'lang-error', requestId, error: String(e && e.stack ? e.stack : e) });
+  }
 }
 
 async function handleTranscribe(msg) {
@@ -174,6 +263,9 @@ self.addEventListener('message', (ev) => {
   }
   if (msg.type === 'transcribe') {
     handleTranscribe(msg);
+  }
+  if (msg.type === 'detect-language') {
+    handleDetectLanguage(msg);
   }
 });
 

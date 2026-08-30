@@ -85,10 +85,14 @@ chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
 
 function sendModelConfig(tabId, videoId) {
   try {
-    chrome.storage.sync.get({ pm_model: 'base' }, function (items) {
+    // pm_multilingual (0.1.25, default true — the wordlist agent owns the
+    // popup toggle for this) read the same way pm_model already is: once
+    // per video reset, not reactively mid-video (matches pm_model's own
+    // existing behavior — a mid-video toggle takes effect on the NEXT video).
+    chrome.storage.sync.get({ pm_model: 'base', pm_multilingual: true }, function (items) {
       if (chrome.runtime.lastError) return;
       chrome.runtime
-        .sendMessage({ type: 'pm-config', tabId: tabId, videoId: videoId, model: items.pm_model })
+        .sendMessage({ type: 'pm-config', tabId: tabId, videoId: videoId, model: items.pm_model, multilingual: items.pm_multilingual })
         .catch(function () {});
     });
   } catch (e) {}
@@ -208,7 +212,9 @@ chrome.runtime.onMessage.addListener(function (msg) {
           modelRtf: msg.modelRtf,
           decodeMs: msg.decodeMs,
           queueMs: msg.queueMs,
-          computeMs: msg.computeMs
+          computeMs: msg.computeMs,
+          language: msg.language, // 0.1.25
+          model: msg.model
         });
       } catch (e) {
         console.warn('[PM-BG] failed to relay words to content.js (port likely stale):', String(e));
@@ -216,6 +222,7 @@ chrome.runtime.onMessage.addListener(function (msg) {
     }
     console.log(
       '[PM] window start=' + msg.windowStartS.toFixed(2) + ' end=' + msg.windowEndS.toFixed(2) +
+        ' model=' + (msg.model || 'NA') + // 0.1.25 -- RTF telemetry per model: filter this log by `model=` to see per-model rtf/modelRtf
         ' wallMs=' + Math.round(msg.wallMs) + ' words=' + msg.words.length +
         ' decodeMs=' + (msg.decodeMs != null ? Math.round(msg.decodeMs) : 'NA') +
         ' queueMs=' + (msg.queueMs != null ? Math.round(msg.queueMs) : 'NA') +
@@ -263,12 +270,27 @@ chrome.runtime.onMessage.addListener(function (msg) {
     var syncPort = portsByTabId.get(msg.tabId);
     if (syncPort) {
       try {
-        syncPort.postMessage({ type: 'resync-result', videoId: msg.videoId, words: msg.words, coveredIntervals: msg.coveredIntervals });
+        syncPort.postMessage({ type: 'resync-result', videoId: msg.videoId, words: msg.words, coveredIntervals: msg.coveredIntervals, language: msg.language });
       } catch (e) {
         console.warn('[PM-BG] failed to relay resync-result:', String(e));
       }
     }
     console.log('[PM-BG] resync-result relayed:', (msg.words || []).length, 'words,', (msg.coveredIntervals || []).length, 'covered intervals');
+  } else if (msg.type === 'pm-language') {
+    // 0.1.25: sent once, right when detection resolves — a snappier-UI
+    // nice-to-have on top of the language field already carried on every
+    // 'words'/'resync-result' message (that's the authoritative source;
+    // this is not relied upon alone, since ordering between two separate
+    // sendMessage calls isn't guaranteed — see PIPELINE_NOTES "0.1.23"'s
+    // ordering caveat).
+    var langPort = portsByTabId.get(msg.tabId);
+    if (langPort) {
+      try {
+        langPort.postMessage({ type: 'language', videoId: msg.videoId, language: msg.language });
+      } catch (e) {
+        /* not critical -- the next words/resync message carries it too */
+      }
+    }
   } else if (msg.type === 'pm-log') {
     console.log('[PM-OFFSCREEN]', msg.text);
   }

@@ -219,7 +219,8 @@
       // new pipeline plumbing needed, purely local bookkeeping for display.
       bufferedRanges: [], // merged [{start,end}] — same interval-set concept as offscreen's s.bufferedRanges, built the same way from growthAbsStart/growthAbsEnd
       lastBufferedGrowthWall: Date.now(), // last time bufferedRanges actually grew — "is capture still making progress" signal
-      lastKnownRtf: null // last computeMs-based rtf, for a rough ETA estimate
+      lastKnownRtf: null, // last computeMs-based rtf, for a rough ETA estimate
+      language: null // 0.1.25 — detected language ('en', a real code, or null before/without detection); see handleLanguage()/addWords()
     };
   }
 
@@ -347,8 +348,32 @@
     }
   }
 
-  function addWords(videoId, rawWords, windowStartS, windowEndS, wallMs, rtf, modelRtf, decodeMs, queueMs, computeMs) {
+  // Multilingual support (0.1.25) — applies a detected language to the
+  // current session, once, only on an actual CHANGE (offscreen sends the
+  // language on every 'words'/'resync-result' message once resolved, not
+  // just the first — this guards against redundant PMWordlist.setLanguage
+  // calls / duplicate [PM-LANG-APPLIED] noise on every single window).
+  // PMWordlist.setLanguage is called defensively (the wordlist agent owns
+  // per-language wordlist packs and may not have shipped this method yet,
+  // or ever, for a given build) — its absence must never break anything
+  // else here.
+  function applyDetectedLanguage(videoId, language) {
     if (!session || session.videoId !== videoId) return;
+    if (!language || session.language === language) return;
+    session.language = language;
+    TLOG(TAG, '[PM-LANG-APPLIED] language=' + language);
+    try {
+      if (globalThis.PMWordlist && typeof globalThis.PMWordlist.setLanguage === 'function') {
+        globalThis.PMWordlist.setLanguage(language);
+      }
+    } catch (e) {
+      TWARN(TAG, 'PMWordlist.setLanguage threw:', e);
+    }
+  }
+
+  function addWords(videoId, rawWords, windowStartS, windowEndS, wallMs, rtf, modelRtf, decodeMs, queueMs, computeMs, language, model) {
+    if (!session || session.videoId !== videoId) return;
+    applyDetectedLanguage(videoId, language);
 
     // Status-pill ETA input (0.1.18): last measured compute-only rtf, same
     // basis offscreen uses for its own rtf-aware cold-window sizing.
@@ -385,6 +410,7 @@
     TLOG(
       TAG,
       '[PM-WINDOW] mediaSpan=[' + (typeof windowStartS === 'number' ? windowStartS.toFixed(2) : 'NA') + ',' + (typeof windowEndS === 'number' ? windowEndS.toFixed(2) : 'NA') + ')' +
+        ' model=' + (model || 'NA') + // 0.1.25 -- RTF telemetry per model
         ' wallMs=' + (wallMs != null ? Math.round(wallMs) : 'NA') +
         // Split (0.1.18): wallMs used to bundle demux/decode + queue-wait-
         // for-the-shared-worker-mutex + actual compute into one number — a
@@ -414,8 +440,9 @@
   // for this session (words computed while the port was down must not be
   // silently lost) — this REPLACES local state rather than merging, since it
   // is authoritative.
-  function handleResync(videoId, words, coveredIntervals) {
+  function handleResync(videoId, words, coveredIntervals, language) {
     if (!session || session.videoId !== videoId) return;
+    applyDetectedLanguage(videoId, language);
     TLOG(TAG, 'resync received:', (words || []).length, 'words,', (coveredIntervals || []).length, 'covered intervals');
     var result = applyWordsToIntervals(words || []);
     session.intervals = result.intervals;
@@ -1045,6 +1072,14 @@
     else if (status.kind === 'buffering') label = '🛡 Buffering + analyzing…';
     else if (status.kind === 'needs-play') label = '🛡 Press play to load audio';
     else label = '🛡 Analyzing…';
+    // Multilingual support (0.1.25): show the detected language once known,
+    // whenever it's not English — e.g. "🛡 Protected · es". Omitted for
+    // English (the default/common case needs no extra label) and for the
+    // 'off' state (transcription has been given up on entirely; language
+    // isn't meaningful there).
+    if (status.kind !== 'off' && session && session.language && session.language !== 'en') {
+      label += ' · ' + session.language;
+    }
     var count = session ? session.mutedCount || 0 : 0;
     if (count > 0) label += ' · ' + count + ' muted';
     statusPillEl.textContent = label;
@@ -1592,9 +1627,15 @@
     port.onMessage.addListener(function (msg) {
       if (!msg || !msg.type) return;
       if (msg.type === 'words') {
-        addWords(msg.videoId, msg.words || [], msg.windowStartS, msg.windowEndS, msg.wallMs, msg.rtf, msg.modelRtf, msg.decodeMs, msg.queueMs, msg.computeMs);
+        addWords(msg.videoId, msg.words || [], msg.windowStartS, msg.windowEndS, msg.wallMs, msg.rtf, msg.modelRtf, msg.decodeMs, msg.queueMs, msg.computeMs, msg.language, msg.model);
       } else if (msg.type === 'resync-result') {
-        handleResync(msg.videoId, msg.words, msg.coveredIntervals);
+        handleResync(msg.videoId, msg.words, msg.coveredIntervals, msg.language);
+      } else if (msg.type === 'language') {
+        // 0.1.25: snappier-UI push, sent once right when detection resolves
+        // — the same 'words'/'resync-result' path above is the authoritative
+        // source (applyDetectedLanguage is idempotent past the first
+        // real change either way).
+        applyDetectedLanguage(msg.videoId, msg.language);
       } else if (msg.type === 'heartbeat') {
         if (session && session.videoId === msg.videoId) session.lastHeartbeatWall = Date.now();
       } else if (msg.type === 'diag') {
