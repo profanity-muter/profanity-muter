@@ -949,6 +949,25 @@
     if (isLiveStream(video)) return { kind: 'live' };
     var t = video.currentTime;
     var horizonEnd = t + PROTECT_MARGIN;
+    // End-of-video clamp (0.1.22): a user report showed the pill stuck on
+    // "Analyzing" forever at the end of a video — the [t, t+PROTECT_MARGIN]
+    // horizon extends past video.duration into audio that doesn't exist and
+    // can never be captured/transcribed, so the "protected" check below
+    // (which compares against the UNCLAMPED horizon) could never succeed
+    // even once everything real had actually finished transcribing. Clamp
+    // the horizon to video.duration whenever it's finite (a live stream
+    // already short-circuited above, via isLiveStream(), before this ever
+    // runs) — every downstream use of horizonEnd (the "protected" check
+    // right below, and the ETA's own `Math.min(horizonEnd,
+    // playheadRange.end)`) inherits the clamp automatically from this one
+    // assignment, and once the clamped horizon collapses to <= t (i.e. we're
+    // already at/past the last coverable point), uncoveredDurationWithin's
+    // own `hi <= lo` case naturally reports zero uncovered duration — so
+    // "protected" is reached directly with no separate near-the-end special
+    // case needed, which also means the buffering/needs-play branches below
+    // (which only run after that check fails) can never be reached for a
+    // region past the end either.
+    if (isFinite(video.duration)) horizonEnd = Math.min(horizonEnd, video.duration);
     // "Protected" means the whole [t, t+margin] window is covered, not just
     // its two endpoints — a gap in the middle (real, given how transcription
     // windows land) must not read as protected.

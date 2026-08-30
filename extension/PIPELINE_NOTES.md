@@ -2364,6 +2364,69 @@ actually just a slow-but-real resolve (i.e., whether raising
 `[PM-HANG]` line is actually captured, since that would redirect the real
 fix toward "give it longer" rather than "something is actually stuck."
 
+## 0.1.22: end-of-video horizon clamp (pill stuck "Analyzing" forever at the end)
+
+User-reported: the pill showed "Analyzing" forever at the END of a video,
+even once everything real had actually finished transcribing. Root cause:
+`computeStatusState()`'s `horizonEnd = t + PROTECT_MARGIN` (0.1.19's
+"whole-window-covered" Protected check) extends past `video.duration` in
+the final `PROTECT_MARGIN` (5s) seconds of any video — audio that doesn't
+exist and can never be captured/covered — so
+`uncoveredDurationWithin(coveredIntervals, t, horizonEnd)` could never
+reach `<= COVERAGE_EPS` even with the entire real video fully transcribed,
+because the phantom `[duration, horizonEnd)` slice always contributes
+uncovered duration. The pill then fell through to the `analyzing-safe`
+branch's ETA math (bounded to `Math.min(horizonEnd, playheadRange.end)`,
+which DOES happen to clamp near `duration` in practice via
+`playheadRange.end` — which is why this showed as a stuck "Analyzing", not
+a wrong ETA number) — permanently, since nothing could ever make the FIRST
+(unclamped) check succeed.
+
+**Fix (`content.js`, `computeStatusState`)**: `horizonEnd` is now clamped to
+`Math.min(t + PROTECT_MARGIN, video.duration)` whenever `video.duration` is
+finite (a live stream — `duration === Infinity` — already short-circuits
+to the `live` pill state earlier in this same function, from 0.1.21, before
+this code ever runs). Every downstream use of `horizonEnd` — the
+`protected` check right below, and the ETA's existing `Math.min(horizonEnd,
+playheadRange.end)` — inherits the clamp automatically from the single
+assignment. Once the clamped horizon collapses to `<= t` (playhead at or
+past the last coverable point), `uncoveredDurationWithin`'s own `hi <= lo`
+case naturally returns 0 uncovered duration with no separate near-the-end
+special case needed — which also means the `buffering`/`needs-play`
+branches (only reached after the `protected` check fails) can never
+mis-fire for a region past the end either, satisfying the "never claim
+'press play to load audio' for a region past the end" requirement for
+free from the same one-line fix.
+
+**Audited the safe-mode mute/pause-catchup path for the same trap, per the
+coordinator's explicit ask** — every mute/pause/resume decision in
+`runTickLogic()`, `handleCatchupModeChanged()`, `pauseForCatchup()`, and
+`resumeFromCatchup()` uses a plain `isCovered(t)` (or
+`isCovered(video.currentTime)`) POINT check at the exact playhead, never a
+`[t, t+margin]` horizon look-ahead — confirmed by grepping every
+`isCovered(` call site in `content.js`. Since `t` itself is always real,
+coverable audio (never past `duration`), these paths were never exposed to
+the phantom-past-the-end gap the pill was — muting/pause-catchup correctly
+releases as soon as transcription reaches the playhead itself, with no
+change needed. This matches the coordinator's own hunch ("isCovered(t)
+point checks are probably fine") — confirmed rather than assumed.
+
+**Verification status**: `node --check content.js` passes. Unit-verified
+in isolation (standalone Node harness re-implementing the exact clamp +
+`uncoveredDurationWithin` decision logic, matching the real
+`computeStatusState` line-for-line): a fully-transcribed video at
+t=119.5/duration=120 now reads `Protected` instead of the reported stuck
+`Analyzing`; t exactly at `duration` with zero coverage still reads
+`Protected` (nothing left to cover); a genuine, real, well-before-the-end
+uncovered gap is unaffected by the clamp and still reads `Analyzing`; a
+live (`Infinity` duration) video leaves the clamp itself a no-op (matching
+that `isLiveStream()` is what actually gates it in real code); and a
+worst-case "nothing buffered or covered at all, exactly at the end" scenario
+still resolves to `Protected`, never `needs-play`. **Not verified live** —
+no browser session this pass; the next live pass should confirm the pill
+actually flips to `Protected` in the final seconds of a real video, not
+just in the isolated harness's model of the logic.
+
 ## Known gaps
 
 - **`shared/wordlist.js` `pm_wordlist:undefined`-default bug** (finding #2
