@@ -1,17 +1,48 @@
 {
   "lang": "fr-CA-u-sd-caqc",
-  "quality": "community",
+  "quality": "curated",
   "words": {
     "core": [
-      "calice",
-      "criss",
-      "crisse",
-      "noune",
-      "osti",
-      "tabarnak",
-      "viarge"
+      "putain", "pute", "putes", "putassier",
+      "salope", "salopes", "salaud", "salauds", "salopard", "salopards",
+      "con", "cons", "conne", "connes", "connard", "connards", "connasse", "connasses",
+      "enculé", "enculée", "enculés", "enculées", "enculeur", "enculeuse",
+      "enfoiré", "enfoirée", "enfoirés", "enfoirées",
+      "bâtard", "bâtarde", "bâtards", "bâtardes",
+      "merde", "merdes", "merdeux", "merdeuse", "merdique",
+      "chier", "chiant", "chiante", "chiants", "chiantes", "chiasse", "chiottes",
+      "bordel", "bordel de merde",
+      "cul", "trou du cul", "trouduc",
+      "couille", "couilles", "couillon", "couillonne",
+      "bite", "bites", "bitte", "bittes", "teub",
+      "chatte", "chattes", "cramouille",
+      "clito",
+      "pédé", "pédés", "pédale", "pédales", "tapette", "tarlouze",
+      "gouine", "gouines",
+      "nègre", "négresse", "négros", "bougnoule", "bougnoules", "bicot", "youpin", "youpine", "crouille",
+      "niquer", "nique", "nique ta mère", "nique ta race", "va te faire enculer", "va te faire foutre",
+      "baiser", "baisée",
+      "branler", "branleur", "branleuse", "branlette",
+      "foutre",
+      "gueule", "ta gueule", "ferme ta gueule",
+      "suceur", "suceuse", "suce",
+      "fils de pute", "fille de pute", "putain de merde",
+      "déconner", "déconne",
+      "sac à merde", "sac à foutre",
+      "gerbe", "gerber",
+      "tringler", "troncher", "ramoner", "palucher",
+      "emmerdant", "emmerder", "emmerdeur", "emmerdeuse",
+      "étron",
+      "câlice", "calice", "câlisse", "criss", "crisse", "tabarnak", "tabarnac", "ostie", "osti", "esti",
+      "viarge", "ciboire", "cibole", "sacrament", "crisser",
+      "tabarnouche", "noune", "graine", "plotte"
     ],
-    "extended": []
+    "extended": [
+      "mon dieu", "bon dieu", "nom de dieu", "sacré nom de dieu",
+      "jésus", "jésus christ", "seigneur",
+      "punaise", "mince", "zut", "zut alors", "flûte", "purée", "bon sang", "sacrebleu",
+      "maudit", "maudite", "tabarouette", "câline"
+    ]
   },
   "matchConfig": {
     "stemming": "none",
