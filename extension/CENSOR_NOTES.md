@@ -739,7 +739,7 @@ stubbing `chrome.*`). The integration test's `setLanguage("es")`
 scenario additionally needs `global.fetch` and
 `chrome.runtime.getURL` stubbed (see the fake-fetch block near the top
 of that file) - it reads the real `shared/packs/es.json` off disk
-rather than a hand-rolled fixture, so it stays honest about the actual
+rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
 ## FEATURE (2026-09-02, 0.1.31): "Report a problem"
@@ -780,7 +780,7 @@ that name rather than churning a working file for cosmetics).
    watch URL would produce a confidently wrong link, so anything that
    doesn't look like an id yields an empty field instead.
 3. **"Include my debug log (recommended)"** - checked by default, with
-   one honest line about what that actually means: the matched words and
+   one plain line about what that actually means: the matched words and
    their timings, the settings, and which parts of the video were
    analyzed - *not* transcripts of what was said, unless the user turned
    on `pm_devlogVerbose` themselves. Below it, a live summary states in
@@ -866,7 +866,7 @@ point. The harness now injects the **real** manifest version into the
 stubbed `getManifest()`, so version assertions are exact rather than a
 moving target.
 
-## FEATURE (2026-09-02, 0.1.30): Onboarding, honest limits & growth surfaces
+## FEATURE (2026-09-02, 0.1.30): Onboarding, plain limits & growth surfaces
 
 Three surfaces that share one idea, which is why they share one module
 (`shared/moments.js`): each is a small, purely-arithmetic predicate over a
@@ -907,7 +907,7 @@ one-funnel lock rule (`persist()`), resolves what to display through
 `resolveSettingsFromStorage` so the 0.1.29 migration has one
 implementation, and defines no settings semantics of its own.
 
-**Honest-limits copy.** The tone target was to name the exact failure
+**Plain-limits copy.** The tone target was to name the exact failure
 mode plainly rather than reach for legalese - the register comparable
 products use (Enjoy Movies Your Way naming poorly-timed subtitles and
 words missing from captions; ClearPlay's "we do not guarantee that our
@@ -1130,7 +1130,7 @@ it is deliberately absent from `manifest.json`).
   Setting a password does not lock the parent out of the popup they are
   standing in front of; the next open is locked. While unlocked, "Remove
   password" is available.
-- **Honesty**: this is a **deterrent, not security**, and the caption
+- **Candor**: this is a **deterrent, not security**, and the caption
   under the control says so: anyone who can open `chrome://extensions`
   can clear this extension's storage or remove it, and a forgotten
   password means removing and re-adding the extension. All of this runs

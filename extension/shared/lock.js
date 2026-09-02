@@ -22,7 +22,7 @@
 // changing a setting from "one click" to "know that chrome://extensions
 // exists and be willing to visibly wipe the extension" - which is the
 // entire product goal. Do not describe it, in code or in copy, as
-// anything stronger. A forgotten password is not recoverable: the honest
+// anything stronger. A forgotten password is not recoverable: the plain
 // answer is "remove and re-add the extension (or clear its storage)",
 // and that is exactly what the popup's caption says.
 //
@@ -34,7 +34,7 @@
 //            local) so a lock set on one device roams with the profile,
 //            like every other setting.
 //
-// The salt exists for one honest reason: it stops the stored hash of a
+// The salt exists for one plain reason: it stops the stored hash of a
 // common password ("1234") from being recognizable at a glance, and stops
 // two devices/families with the same password from sharing a hash. It is
 // NOT meaningful protection against an offline attacker with the storage
@@ -106,7 +106,7 @@
   // Length-independent string compare. Genuinely constant-time comparison
   // is not achievable in JS and would be pointless here anyway (the
   // attacker already holds the hash if they can read storage) - this is
-  // just a plain, honest equality check written so it reads as deliberate
+  // just a plain, plain equality check written so it reads as deliberate
   // rather than as an oversight.
   function hashesEqual(a, b) {
     if (typeof a !== "string" || typeof b !== "string") return false;

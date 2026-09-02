@@ -24,6 +24,19 @@
     Finish setup - 1 minute
   </button>
 
+  <!-- Health warning (0.1.32). Shown when the content script on the ACTIVE
+       tab reports that nothing is being analyzed on the video playing
+       there. Sits above everything, including the setup banner: "your
+       filter is not working right now" outranks every other thing this
+       popup has to say. Not dismissable, because it describes a live
+       condition rather than a task; it disappears when the condition
+       does. -->
+  <section class="pm-health pm-hidden" id="pm-health" aria-hidden="true" role="alert">
+    <p class="pm-health-title" id="pm-health-message"></p>
+    <p class="pm-health-detail" id="pm-health-detail"></p>
+    <button id="pm-health-report" class="pm-link-button" type="button">Report a problem</button>
+  </section>
+
   <!-- Review prompt. Rendered only when PMMoments.reviewPromptEligibility
        says so; see shared/moments.js for the Chrome Web Store policy rules
        this surface has to obey (shown at most once ever, permanent

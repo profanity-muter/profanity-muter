@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Profanity Muter",
-  "version": "0.1.31",
+  "version": "0.1.32",
   "description": "On-device YouTube profanity muting: transcribes pre-buffered audio locally (Whisper) and mutes/censors matched words.",
   "permissions": [
     "storage",
@@ -31,6 +31,7 @@
       "js": [
         "shared/wordlist.js",
         "shared/devlog.js",
+        "shared/health.js",
         "content.js",
         "captions.js"
       ],

@@ -299,7 +299,19 @@
       // 0.1.28 - the currently-open catch-up gap for the persistent dev
       // log ({start, end, mode}), or null. See trackDevlogGap() below.
       devlogGap: null,
-      language: null // 0.1.25 - detected language ('en', a real code, or null before/without detection); see handleLanguage()/addWords()
+      language: null, // 0.1.25 - detected language ('en', a real code, or null before/without detection); see handleLanguage()/addWords()
+      // 0.1.32 health monitor (see shared/health.js). All per-video, all
+      // reset with the session, because "is this working" is a question
+      // about THIS video: a previous video's success says nothing about
+      // whether audio is being intercepted on this one.
+      windowsCompleted: 0, // analysis windows that actually came back
+      audioSegments: 0, // audio segments intercepted from capture.js
+      playbackMs: 0, // accumulated ACTUAL playback, not wall time (see tickHealth)
+      lastPlaybackSampleWall: 0, // wall clock at the previous playback sample
+      fatalReasons: [], // reason codes classified out of the diag stream
+      health: null, // last non-pending verdict from PMHealth.evaluate
+      healthEvalAt: 0, // when that verdict was reached (re-eval throttle)
+      liveNoticeShown: false // the calm livestream notice is shown once per video
     };
   }
 
@@ -524,6 +536,12 @@
   function addWords(videoId, rawWords, windowStartS, windowEndS, wallMs, rtf, modelRtf, decodeMs, queueMs, computeMs, language, model) {
     if (!session || session.videoId !== videoId) return;
     applyDetectedLanguage(videoId, language);
+
+    // Health monitor (0.1.32): a window coming back at all is THE evidence
+    // that the pipeline works end to end. Counted before anything below
+    // can throw, and counted even for a window that matched nothing: zero
+    // matches is a result, not a failure.
+    session.windowsCompleted++;
 
     // Status-pill ETA input (0.1.18): last measured compute-only rtf, same
     // basis offscreen uses for its own rtf-aware cold-window sizing.
@@ -917,24 +935,38 @@
   // handler. Never left silent: a rented/protected movie that can't be
   // transcribed should say so, not just quietly stop muting.
   var unanalyzableNoticeShown = false;
-  function showUnanalyzableNotice() {
-    if (unanalyzableNoticeShown) return;
-    unanalyzableNoticeShown = true;
+  // One-off banner across the top of the player. Two treatments: 'neutral'
+  // for a documented limitation (protected content, livestreams) and
+  // 'warning' for something actually broken. Factored out of the old
+  // unanalyzable-only version in 0.1.32 so the health monitor's livestream
+  // notice looks and behaves identically rather than being a second
+  // near-copy of the same DOM code.
+  function showPlayerNotice(text, kind) {
     var video = getVideo();
     var container = video ? video.closest('.html5-video-player') || video.parentElement : document.body;
     if (!container) return;
     var notice = document.createElement('div');
-    notice.textContent = "Profanity Muter can't analyze this video's audio (protected content) - muting disabled for this video";
+    notice.textContent = text;
     notice.style.cssText =
       'position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:2147483647;' +
-      'background:#555;color:#fff;font:12px/1.4 sans-serif;padding:5px 12px;border-radius:4px;' +
-      'pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,0.4);';
+      'background:' + (kind === 'warning' ? '#8a1f11' : '#555') + ';' +
+      'color:#fff;font:12px/1.4 sans-serif;padding:5px 12px;border-radius:4px;' +
+      'pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,0.4);max-width:80%;text-align:center;';
     if (container === document.body) {
       notice.style.position = 'fixed';
     } else if (getComputedStyle(container).position === 'static') {
       container.style.position = 'relative';
     }
     container.appendChild(notice);
+  }
+
+  function showUnanalyzableNotice() {
+    if (unanalyzableNoticeShown) return;
+    unanalyzableNoticeShown = true;
+    showPlayerNotice(
+      "Profanity Muter can't analyze this video's audio (protected content) - muting disabled for this video",
+      'neutral'
+    );
   }
 
   function showAnalyzingOverlay(show) {
@@ -1202,6 +1234,130 @@
     return horizonEnd;
   }
 
+  // ---- health monitor (0.1.32) --------------------------------------------
+  //
+  // "Failing silently is the worst outcome for a parental filter" is the
+  // whole reason this exists; shared/health.js holds the reasoning and the
+  // pure state machine, this is the wiring. Three inputs feed it, all of
+  // which this file already had: completed analysis windows (addWords),
+  // intercepted audio segments (the capture relay), and fatal diagnostics
+  // (the offscreen 'diag' stream). The fourth, accumulated playback time,
+  // is measured here.
+  //
+  // Guarded like every other optional module: a missing PMHealth degrades
+  // to no health monitoring, never to broken muting.
+  function healthApi() {
+    return globalThis.PMHealth || null;
+  }
+
+  function noteFatalDiag(text) {
+    var api = healthApi();
+    if (!api || !session) return;
+    var reason = api.classifyDiag(text);
+    if (!reason) return;
+    if (session.fatalReasons.indexOf(reason) === -1) {
+      session.fatalReasons.push(reason);
+      TWARN(TAG, '[PM-HEALTH] fatal signal classified: ' + reason);
+    }
+  }
+
+  // Accumulate ACTUAL playback, not wall time. A video paused for ten
+  // minutes has had no chance to be analyzed, and judging it on wall time
+  // would produce exactly the false alarm this feature must avoid.
+  //
+  // The per-sample clamp matters: this is driven from the rAF tick, which
+  // stops entirely while the tab is hidden, and from the 1s background
+  // backstop. Without a clamp, a tab hidden for an hour would return and
+  // book an hour of "playback" in a single sample, instantly crossing the
+  // threshold on evidence that was never collected.
+  var HEALTH_SAMPLE_CLAMP_MS = 1500;
+
+  function samplePlayback(video) {
+    if (!session) return;
+    var nowWall = Date.now();
+    var prev = session.lastPlaybackSampleWall;
+    session.lastPlaybackSampleWall = nowWall;
+    if (!prev) return; // first sample establishes the baseline only
+    if (!video || video.paused || video.ended) return;
+    var deltaMs = nowWall - prev;
+    if (deltaMs <= 0) return;
+    session.playbackMs += Math.min(deltaMs, HEALTH_SAMPLE_CLAMP_MS);
+  }
+
+  function evaluateHealth(video) {
+    var api = healthApi();
+    if (!api || !session) return;
+    var verdict = api.evaluate({
+      now: Date.now(),
+      playbackMs: session.playbackMs,
+      isWatchPage: !!video,
+      isPaused: !video || video.paused,
+      isLive: !!(video && isLiveStream(video)),
+      unanalyzable: !!session.unanalyzable,
+      windowsCompleted: session.windowsCompleted,
+      audioSegments: session.audioSegments,
+      fatalReasons: session.fatalReasons,
+      lastEvalAt: session.healthEvalAt || null
+    });
+    if (!verdict.due) return;
+
+    var prev = session.health;
+    session.healthEvalAt = Date.now();
+    var changed = api.isTransition(prev, verdict);
+    session.health = verdict;
+    if (!changed) return;
+
+    // Every transition is recorded, in both directions. A warning that
+    // appeared and then cleared is a materially different story from one
+    // that never appeared, and only the log can tell them apart later.
+    if (verdict.status === api.STATUS.OK) {
+      if (prev && prev.status !== api.STATUS.OK) {
+        TLOG(TAG, '[PM-HEALTH] recovered: analysis is progressing again');
+        devlog('logHealth', {
+          status: 'recovered',
+          reason: prev.reason || null,
+          playbackMs: Math.round(session.playbackMs),
+          windowsCompleted: session.windowsCompleted
+        });
+      }
+      return;
+    }
+
+    TWARN(
+      TAG,
+      '[PM-HEALTH] ' + verdict.status + ': ' + verdict.reason +
+        ' (playbackMs=' + Math.round(session.playbackMs) +
+        ' windows=' + session.windowsCompleted +
+        ' segments=' + session.audioSegments + ')'
+    );
+    devlog('logHealth', {
+      status: verdict.status,
+      reason: verdict.reason,
+      playbackMs: Math.round(session.playbackMs),
+      windowsCompleted: session.windowsCompleted,
+      audioSegments: session.audioSegments
+    });
+
+    // The livestream case gets a calm, one-time notice rather than the
+    // alarming pill treatment: it is a documented limitation, and telling
+    // someone their filter is BROKEN when it is merely inapplicable is its
+    // own kind of misrepresentation.
+    if (verdict.reason === api.REASONS.LIVESTREAM && !session.liveNoticeShown) {
+      session.liveNoticeShown = true;
+      showPlayerNotice(verdict.message, 'neutral');
+    }
+  }
+
+  function currentHealth() {
+    return session ? session.health : null;
+  }
+
+  function isUnhealthy() {
+    var api = healthApi();
+    var h = currentHealth();
+    return !!(api && h && h.status === api.STATUS.UNHEALTHY);
+  }
+
   function computeStatusState() {
     if (!session) return null;
     if (session.unanalyzable) return { kind: 'off' };
@@ -1246,6 +1402,18 @@
 
   function renderStatusPill() {
     var settings = currentSettings();
+    // A failure warning is NOT routine status, so pm_showStatus does not
+    // suppress it (0.1.32). Turning off the pill means "stop telling me
+    // things are fine"; it cannot reasonably be read as "don't tell me
+    // when the filter has stopped working". pm_enabled IS still respected:
+    // an extension the user switched off is not failing, it is off.
+    if (settings.enabled && isUnhealthy()) {
+      setStatusPillActive(true, 'warning');
+      if (statusPillEl) {
+        statusPillEl.textContent = 'Profanity Muter is NOT filtering this video';
+      }
+      return;
+    }
     if (!settings.enabled || !statusSettings.showStatus) {
       setStatusPillActive(false);
       return;
@@ -1255,7 +1423,7 @@
       setStatusPillActive(false);
       return;
     }
-    setStatusPillActive(true);
+    setStatusPillActive(true, 'normal');
     if (!statusPillEl) return;
     var label;
     if (status.kind === 'off') label = '🛡 Off';
@@ -1277,15 +1445,31 @@
     if (count > 0) label += ' · ' + count + ' muted';
     statusPillEl.textContent = label;
   }
-  function setStatusPillActive(active) {
+  // `tone` is 'normal' or 'warning'. The warning treatment is deliberately
+  // loud relative to the routine pill (solid red rather than translucent
+  // black, and bold) because it is the one pill state a user must not
+  // skim past. No emoji, consistent with the rest of the extension's
+  // styling.
+  var statusPillTone = null;
+  function setStatusPillActive(active, tone) {
+    tone = tone || 'normal';
+    // A tone change on an existing pill has to re-style it, not just
+    // re-label it; simplest correct thing is to rebuild.
+    if (active && statusPillEl && tone !== statusPillTone) {
+      setStatusPillActive(false);
+    }
     if (active && !statusPillEl) {
       var video = getVideo();
       var container = video ? video.closest('.html5-video-player') || video.parentElement : document.body;
       if (!container) return;
       statusPillEl = document.createElement('div');
+      statusPillTone = tone;
       statusPillEl.style.cssText =
         'position:absolute;bottom:8px;right:8px;z-index:2147483646;' +
-        'background:rgba(0,0,0,0.55);color:#fff;font:11px/1.4 sans-serif;padding:2px 7px;' +
+        (tone === 'warning'
+          ? 'background:#8a1f11;color:#fff;font:bold 11px/1.4 sans-serif;'
+          : 'background:rgba(0,0,0,0.55);color:#fff;font:11px/1.4 sans-serif;') +
+        'padding:2px 7px;' +
         'border-radius:3px;pointer-events:none;white-space:nowrap;';
       if (container === document.body) {
         statusPillEl.style.position = 'fixed';
@@ -1296,6 +1480,7 @@
     } else if (!active && statusPillEl) {
       if (statusPillEl.parentElement) statusPillEl.parentElement.removeChild(statusPillEl);
       statusPillEl = null;
+      statusPillTone = null;
     }
   }
   setInterval(renderStatusPill, 500); // ~2Hz per spec
@@ -1499,6 +1684,19 @@
   function runTickLogic() {
     var video = getVideo();
     var settings = currentSettings();
+    // Health monitoring runs on the same tick as everything else, before
+    // the enabled-gate below: the playback clock has to keep ticking (and
+    // the verdict has to stay current) independently of the mute/pause
+    // decisions further down. evaluateHealth throttles itself, so calling
+    // it every frame costs one comparison until a verdict is actually due.
+    if (session && settings.enabled) {
+      samplePlayback(video);
+      evaluateHealth(video);
+    } else if (session) {
+      // Disabled: stop accruing playback so re-enabling later doesn't
+      // instantly trip the threshold on time the pipeline never had.
+      session.lastPlaybackSampleWall = 0;
+    }
     if (video && session && settings.enabled) {
       var t = video.currentTime;
       var hit = inMutedInterval(t);
@@ -1805,6 +2003,45 @@
     true
   );
 
+  // ---- health query from the popup (0.1.32) --------------------------------
+  //
+  // The popup asks the ACTIVE TAB directly rather than reading a stored
+  // health key. Deliberate, and the reasons are worth stating because a
+  // storage key was the obvious alternative:
+  //
+  //   * Health is per-tab and per-video. A single stored value would be
+  //     clobbered by whichever tab wrote last, so a popup opened over a
+  //     working video could show a warning earned by a different tab.
+  //     Keying storage by tabId would work, but a content script does not
+  //     know its own tabId without asking the service worker for it.
+  //   * It is transient. Persisting a verdict means it can outlive the
+  //     thing it describes, so the popup would need staleness rules for a
+  //     value that is only ever interesting while that tab is open.
+  //   * Asking is always fresh, and the absence of an answer is itself the
+  //     right answer: no content script means not a YouTube tab, which is
+  //     exactly when the popup should show nothing.
+  //
+  // The DURABLE record still exists, in pm_devlog, which is where a
+  // verdict belongs for later diagnosis (see devlog 'health' entries).
+  if (typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.onMessage) {
+    try {
+      chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
+        if (!msg || msg.type !== 'pm-health-query') return undefined;
+        var h = currentHealth();
+        sendResponse({
+          videoId: session ? session.videoId : null,
+          status: h ? h.status : null,
+          reason: h ? h.reason : null,
+          message: h ? h.message : '',
+          detail: h ? h.detail : ''
+        });
+        return undefined; // responded synchronously
+      });
+    } catch (e) {
+      // ignore - the popup simply gets no answer and shows nothing
+    }
+  }
+
   // ---- background port, with reconnect on drop (SW idles after ~30s and
   // gets respawned by Chrome on the next connect/message - offscreen state
   // survives that, so reconnecting resumes cleanly without losing coverage). -
@@ -1868,6 +2105,12 @@
         // explicit deny-list of known-informational prefixes, never an
         // allow-list of known-bad ones - an unrecognized message is kept,
         // so the worst case is noise rather than blindness.
+        // Health monitor (0.1.32): the same relayed text is the only place
+        // a dead worker or an unloadable model is ever visible from the
+        // tab, so classify it here. Narrow by design (see
+        // PMHealth.classifyDiag) - survivable trouble must not be recorded
+        // as fatal, or the warning stops meaning anything.
+        noteFatalDiag(msg.text);
         if (!DEVLOG_DIAG_NOISE_RE.test(msg.text)) {
           devlog('logError', '[offscreen] ' + msg.text);
         }
@@ -1988,6 +2231,12 @@
       if (!session || session.videoId !== data.videoId) {
         session = newSession(data.videoId);
       }
+      // Health monitor (0.1.32): counted here, at the relay, rather than
+      // from bufferedRanges growth, so it means exactly "audio reached the
+      // extension" and nothing more. A segment with unusable growth
+      // metadata still proves interception is alive, which is the specific
+      // thing "no-audio-intercepted" is about.
+      session.audioSegments++;
       // Status-pill inputs (0.1.18): mirror offscreen's own bufferedRanges/
       // growth-recency tracking here too, purely from data already flowing
       // through this relay - no new message needed.

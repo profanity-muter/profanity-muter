@@ -168,6 +168,10 @@
   var shareRowEl = document.getElementById("pm-share-row");
   var shareEl = document.getElementById("pm-share");
   var reportProblemEl = document.getElementById("pm-report-problem");
+  var healthEl = document.getElementById("pm-health");
+  var healthMessageEl = document.getElementById("pm-health-message");
+  var healthDetailEl = document.getElementById("pm-health-detail");
+  var healthReportEl = document.getElementById("pm-health-report");
 
   var hasStorage =
     typeof chrome !== "undefined" &&
@@ -810,7 +814,7 @@
   // fast click on a toggle would sail through maySaveSettings() and
   // write. The controls stay live and correct-looking during that window
   // (the popup's standing rule), but a write inside it is deferred to
-  // the honest answer rather than assumed.
+  // the plain answer rather than assumed.
   var lockStateLoaded = false;
 
   function lockApi() {
@@ -1167,6 +1171,58 @@
     );
   }
 
+  // ---- Health warning (0.1.32) --------------------------------------------
+  //
+  // Asks the ACTIVE TAB's content script how it is doing, rather than
+  // reading a stored value. content.js's 'pm-health-query' handler carries
+  // the full reasoning for that choice; the short version is that health
+  // is per-tab, per-video and transient, so a single stored key would be
+  // clobbered across tabs and could outlive the thing it describes. The
+  // durable record lives in pm_devlog.
+  //
+  // Silence is a valid answer: no content script means this is not a
+  // YouTube tab, and the popup shows nothing at all.
+  function renderHealth(health) {
+    var unhealthy = !!(health && health.status === "unhealthy" && health.message);
+    healthEl.classList.toggle("pm-hidden", !unhealthy);
+    healthEl.setAttribute("aria-hidden", unhealthy ? "false" : "true");
+    if (!unhealthy) return;
+    healthMessageEl.textContent = health.message;
+    healthDetailEl.textContent = health.detail || "";
+  }
+
+  function loadHealth() {
+    if (
+      typeof chrome === "undefined" ||
+      !chrome.tabs ||
+      typeof chrome.tabs.query !== "function" ||
+      typeof chrome.tabs.sendMessage !== "function"
+    ) {
+      return;
+    }
+    try {
+      chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
+        if (chrome.runtime && chrome.runtime.lastError) return;
+        var tab = tabs && tabs[0];
+        if (!tab || tab.id == null) return;
+        try {
+          chrome.tabs.sendMessage(tab.id, { type: "pm-health-query" }, function (resp) {
+            // lastError here is the ordinary "no listener in that tab"
+            // case (not a YouTube page, or the content script has not
+            // loaded). Read it so Chrome does not log it, and show
+            // nothing, which is the correct answer.
+            if (chrome.runtime && chrome.runtime.lastError) return;
+            renderHealth(resp);
+          });
+        } catch (e) {
+          /* same as above: show nothing */
+        }
+      });
+    } catch (e) {
+      /* show nothing */
+    }
+  }
+
   // ---- Copy debug log ---------------------------------------------------
   // Hands over the whole `pm_devlog` ring (last 10 videos: analyzed
   // windows, matched words, mute intervals, unanalyzed-playback gaps,
@@ -1271,6 +1327,7 @@
   reviewNoEl.addEventListener("click", onReviewNo);
   shareEl.addEventListener("click", shareWithFriend);
   reportProblemEl.addEventListener("click", openReportProblem);
+  healthReportEl.addEventListener("click", openReportProblem);
   lockPasswordEl.addEventListener("keydown", function (ev) {
     if (ev.key === "Enter") unlock();
   });
@@ -1294,7 +1351,8 @@
   // hidden in the HTML and are only ever revealed by a real storage read.
   // The popup's usual "render correct defaults immediately" rule would
   // mean flashing "Finish setup" at someone who finished setup weeks ago,
-  // on every single open - and the honest default for "have you
+  // on every single open - and the plain default for "have you
   // acknowledged?" is "we don't know yet", which shows nothing.
   loadMoments();
+  loadHealth();
 })();

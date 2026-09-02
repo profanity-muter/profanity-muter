@@ -34,6 +34,8 @@
 }
 
 body {
+  hyphens: none;
+  -webkit-hyphens: none;
   width: auto;
   min-height: 100vh;
   padding: 0;
@@ -52,13 +54,13 @@ body {
 /* ---- Header: mark, quiet wordmark, progress rail -------------------- */
 
 .ob-header {
-  margin-bottom: 44px;
+  margin-bottom: 34px;
 }
 
 .ob-title {
   margin: 0;
-  font-size: 32px;
-  font-weight: 350;
+  font-size: 22px;
+  font-weight: 500;
   letter-spacing: -0.015em;
   line-height: 1.15;
 }
@@ -68,7 +70,7 @@ body {
   font-size: 14px;
   line-height: 1.6;
   color: var(--ink-60);
-  max-width: 46ch;
+  max-width: none;
 }
 
 /* Progress: a hairline rail with numbered stations. Same four .ob-dot
@@ -122,16 +124,16 @@ body {
   color: var(--paper);
 }
 
-.ob-dot--done:last-of-type,
-.ob-dot--done + .ob-dot:not(.ob-dot--done) {
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 45%, transparent);
+.ob-dot--done:has(+ .ob-dot:not(.ob-dot--done)),
+.ob-dot--done:last-child {
+  box-shadow: 0 0 0 2px var(--paper), 0 0 0 3.5px var(--ink);
 }
 
 /* ---- Step body ------------------------------------------------------ */
 
 .ob-step-title {
   margin: 0 0 14px;
-  font-size: 20px;
+  font-size: 26px;
   font-weight: 550;
   letter-spacing: -0.01em;
 }
@@ -140,7 +142,7 @@ body {
   margin: 0 0 22px;
   font-size: 14.5px;
   line-height: 1.65;
-  max-width: 50ch;
+  max-width: none;
 }
 
 .ob-list {
@@ -163,9 +165,7 @@ body {
   position: relative;
 }
 
-.ob-list li:last-child {
-  border-bottom: 1px solid var(--hairline);
-}
+
 
 .ob-list li::before {
   content: counter(point, lower-roman) ".";
@@ -175,8 +175,11 @@ body {
   font-style: italic;
   font-family: Georgia, "Times New Roman", serif;
   font-size: 15px;
-  color: var(--gold-deep);
-  min-width: 28px;
+  color: var(--ink-60);
+  width: 30px;
+  text-align: right;
+  padding-right: 10px;
+  left: -8px;
 }
 
 .ob-list strong {
@@ -213,6 +216,12 @@ body {
 
 .ob-field .pm-button {
   align-self: flex-start;
+  background: none;
+  border: 1px solid var(--ink);
+  color: var(--ink);
+  border-radius: 4px;
+  padding: 8px 18px;
+  font-size: 13px;
 }
 
 /* Radios: full-width quiet rows; selection is an ink ring, the current
@@ -231,8 +240,8 @@ body {
 }
 
 .pm-radio-group--stacked .pm-radio-label--stacked:has(input:checked) {
-  border-color: var(--ink);
-  box-shadow: inset 3px 0 0 var(--gold);
+  border: 1.5px solid var(--ink);
+  background: color-mix(in srgb, var(--gold) 9%, var(--paper-raised));
 }
 
 .pm-radio-title {
@@ -298,13 +307,26 @@ body {
 
 /* ---- Navigation ----------------------------------------------------- */
 
+.ob-page {
+  padding-bottom: 120px;
+}
+
 .ob-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 12px;
-  margin-top: 36px;
-  padding-top: 24px;
+  padding: 16px calc(50vw - 280px + 28px);
+  background: var(--paper);
   border-top: 1px solid var(--hairline);
+}
+
+@media (max-width: 620px) {
+  .ob-nav { padding: 16px 20px; }
 }
 
 .ob-nav .pm-button {
@@ -386,4 +408,42 @@ input:focus-visible {
   .ob-title {
     font-size: 26px;
   }
+}
+
+/* Disabled primary stays legible: outline treatment, never grey-on-grey. */
+.ob-nav .pm-button:disabled {
+  background: none;
+  border: 1px solid var(--ink-30);
+  color: var(--ink-60);
+  cursor: not-allowed;
+}
+
+.ob-ack input {
+  width: 19px;
+  height: 19px;
+}
+
+/* Evidence figure on step 1: a waveform with the word taken out. */
+.ob-demo {
+  margin: 26px 0 4px;
+  padding: 18px 20px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--paper-raised);
+}
+
+.ob-demo svg { display: block; width: 100%; height: 46px; }
+
+.ob-demo figcaption {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--ink-60);
+}
+
+.ob-demo .ob-demo-word {
+  background: color-mix(in srgb, var(--gold) 30%, transparent);
+  padding: 0 3px;
+  border-radius: 2px;
+  color: var(--ink);
+  font-weight: 570;
 }

@@ -145,6 +145,10 @@
   var MAX_GAPS = 300;
   var MAX_CAPTIONS = 400;
   var MAX_ERRORS = 100;
+  // Health transitions are rare by construction (one verdict per state
+  // change, throttled to one evaluation per 15s of playback), so a small
+  // cap is plenty and a runaway is itself a bug worth capping.
+  var MAX_HEALTH = 40;
   // ~256KB serialized. Measured against JSON.stringify's output length
   // (UTF-16 code units, not bytes) - deliberately the cheap approximation
   // rather than a TextEncoder round trip on every flush; for ASCII-ish
@@ -205,6 +209,13 @@
       captions: [],
       captionCount: 0,
       errors: [],
+      // 0.1.32: health verdicts for this video, oldest first. Every
+      // transition, in both directions, so a log shows not just that a
+      // warning fired but whether it later cleared. Deliberately NOT
+      // trimmed by the size guard below: the whole list is a handful of
+      // small records, and it is the single most useful thing in the file
+      // when the question is "was the extension even working".
+      health: [],
       truncated: false
     };
   }
@@ -587,6 +598,29 @@
     markDirty();
   }
 
+  // A health verdict transition (see shared/health.js). Kept separate from
+  // `errors` because it is a CONCLUSION, not a symptom: errors say what
+  // went wrong, this says whether the extension was working, which is the
+  // question a user's report actually starts from.
+  function logHealth(entry) {
+    if (!current || !entry) return;
+    pushCapped(
+      current.health,
+      {
+        t: mediaTime(),
+        wall: now(),
+        status: String(entry.status || "unknown"),
+        reason: entry.reason == null ? null : String(entry.reason),
+        playbackMs: typeof entry.playbackMs === "number" ? entry.playbackMs : null,
+        windowsCompleted:
+          typeof entry.windowsCompleted === "number" ? entry.windowsCompleted : null,
+        audioSegments: typeof entry.audioSegments === "number" ? entry.audioSegments : null
+      },
+      MAX_HEALTH
+    );
+    markDirty();
+  }
+
   function logError(text) {
     var ev = { t: mediaTime(), wall: now(), text: String(text) };
     if (!current) {
@@ -644,6 +678,7 @@
     logGap: logGap,
     logCaptionCensor: logCaptionCensor,
     logError: logError,
+    logHealth: logHealth,
     setTimeSource: setTimeSource,
     flushNow: flushNow,
     // exposed for tests/inspection; not part of the contract consumers use

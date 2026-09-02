@@ -506,3 +506,50 @@ body {
 .pm-row--share .pm-hint {
   margin-top: 6px;
 }
+
+/* ---- Health warning (0.1.32) --------------------------------------------
+   Deliberately louder than .pm-banner: that one is an unfinished task,
+   this one says the filter is not working right now. Uses a dedicated
+   warning color rather than the accent, so it cannot be mistaken for a
+   routine notice, and states the consequence in the title with the cause
+   underneath. */
+:root {
+  --pm-warn-fg: #8a1f11;
+  --pm-warn-bg: #fdeceb;
+  --pm-warn-border: #f0c2bd;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pm-warn-fg: #ff9c8f;
+    --pm-warn-bg: #3a1a17;
+    --pm-warn-border: #5c2a25;
+  }
+}
+
+.pm-health {
+  padding: 11px 16px;
+  background: var(--pm-warn-bg);
+  border-bottom: 1px solid var(--pm-warn-border);
+}
+
+.pm-health-title {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 650;
+  line-height: 1.4;
+  color: var(--pm-warn-fg);
+}
+
+.pm-health-detail {
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--pm-warn-fg);
+  opacity: 0.85;
+}
+
+.pm-health .pm-link-button {
+  margin-top: 7px;
+  color: var(--pm-warn-fg);
+}

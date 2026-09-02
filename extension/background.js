@@ -92,7 +92,7 @@ chrome.runtime.onInstalled.addListener(function () {
 //  1. pm_installedAt - stamped once, and only if absent. It gates the review
 //     prompt's "installed >= 7 days" rule (see shared/moments.js). Written on
 //     UPDATE too, not just install, so the ~zero existing 0.1.29 installs get
-//     a date at all; the honest consequence is that they wait 7 days from the
+//     a date at all; the plain consequence is that they wait 7 days from the
 //     update rather than from their real install, which is the conservative
 //     direction (see moments.js's NOTE ON BACKFILL).
 //

@@ -45,7 +45,7 @@
 //   pm_reviewPrompt {shownAt, dismissed} | absent - the review prompt has
 //                   been shown. Its mere EXISTENCE is what makes the
 //                   prompt never appear again; `dismissed` records which
-//                   button ended it, for nothing but honesty in a support
+//                   button ended it, for nothing but candor in a support
 //                   log. There is no "ask me later".
 //
 // NOTE ON BACKFILL: an install that predates 0.1.30 has no pm_installedAt.

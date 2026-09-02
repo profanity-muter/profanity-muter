@@ -1863,7 +1863,7 @@ settings keys rather than validating the object's shape/key count, so
 extra keys are inherently non-breaking. Active padding now logged in
 `[PM-SESSION]`.
 
-### Verification status - live attempt blocked, documented honestly
+### Verification status - live attempt blocked, documented plainly
 
 Attempted the requested live verification (seek several times in a real
 tab, read `[PM-CATCHUP-TIME]`; the still-owed 0.1.16 popup-paint-under-load
@@ -2223,7 +2223,7 @@ exact reported before/after ranges, the discontinuity gate's on/off cases,
 and the location-bucketed loop breaker's stuck-vs-resolved-vs-forward-
 progressing cases - all pass. **Not yet run live** - no working
 `claude-in-chrome` session against this regression this pass (noted
-honestly, not glossed over); the next verification step is a real backward
+plainly, not glossed over); the next verification step is a real backward
 scrub on `o-7Fvkq-Nug` in `catchupMode: "play"`, confirming (1) no
 `[PM-SKIP] no decodable audio` storm after a backward seek (should now
 show a `[PM-RUN-BOUNDARY]` line instead), (2) no repeated re-transcription
@@ -2232,7 +2232,7 @@ either resolving normally or a single `[PM-WINDOW-LOOP]` alarm), and (3) a
 forced stall (e.g. throttle the tab) in "play" mode actually produces a
 `[PM-STALL]`/restart within ~15s instead of silence.
 
-## 0.1.21: silent AAC/fMP4 hang (bounded stage timeouts) + live-stream pill honesty
+## 0.1.21: silent AAC/fMP4 hang (bounded stage timeouts) + live-stream pill candor
 
 A 0.1.20 live user session hit a LIVE STREAM (`videoId=/live/yCTJQrXt9x8`,
 `audio/mp4` with `codecs="mp4a.40.2"` - the fMP4/AAC path flagged as
@@ -2274,7 +2274,7 @@ conclusively reproducible was found without a live AAC/fMP4 session to
 step through, which this pass didn't have (WebCodecs is a real-browser API
 with no Node polyfill available in this environment, so a from-scratch
 fMP4/AAC fixture couldn't actually be run against mediabunny's real decode
-path here either - noted honestly rather than faked).
+path here either - noted plainly rather than faked).
 
 **Fix, scoped to what this file CAN own**: per the standing "every
 did-not-attempt must surface" rule, a hang with no rejection can't be
@@ -2312,10 +2312,10 @@ this stage) points at the demux side, not this one, so it was left alone
 rather than risk a partial, worse-than-nothing fix. Flagged as a known
 residual gap below.
 
-### 2. Live-stream pill honesty (no full live-stream support - deferred by design)
+### 2. Live-stream pill candor (no full live-stream support - deferred by design)
 
 Per the coordinator's explicit scope: do NOT attempt full live-stream
-support. Two honest, narrow changes:
+support. Two plain, narrow changes:
 
 - **Detection** (`content.js`, `isLiveStream()`): `video.duration ===
   Infinity` (the standard, spec-level HTML5 signal for a live stream, not
@@ -2804,7 +2804,7 @@ clean (no regressions). **Not verified live against a real Spanish video**
 - no working browser session this pass to reload the extension into (the
 standing constraint: only the user can trigger a `chrome://extensions`
 reload, and 0.1.25's code isn't visible to the currently-loaded extension
-until that happens) - noted honestly rather than claimed. The next live
+until that happens) - noted plainly rather than claimed. The next live
 pass should confirm: (1) an English video shows zero latency/behavior
 change from pre-0.1.25 (the core regression-safety claim), (2) a real
 Spanish/non-English video's `[PM-LANG]` line reports a plausible detected
@@ -2951,7 +2951,7 @@ better check than the harness's own assertions - it is the real
   ("Steve Jobs' 2005 Stanford Commencement Address - YouTube"), i.e. the
   `logVideoInfoOnce` title refinement works - at `startVideo` time the
   title was still the pre-navigation one.
-- Settings snapshot recorded the harness's seeded state honestly:
+- Settings snapshot recorded the harness's seeded state plainly:
   `{"strictness":"custom","wordlistSource":"strictness:custom","wordCount":3,...}`
   - source and count, no word list.
 - 4 windows on the Stanford video, the 4th carrying
@@ -2995,7 +2995,7 @@ normally, because the lock gates *changing* settings, not reading them.
 ## 0.1.30: onboarding + growth surfaces (pipeline-adjacent notes only)
 
 The release is almost entirely popup/onboarding-side (see CENSOR_NOTES.md
-"Onboarding, honest limits & growth surfaces"). Two things touch this
+"Onboarding, plain limits & growth surfaces"). Two things touch this
 side of the codebase:
 
 - **`background.js` gained a second `onInstalled` listener** - separate

@@ -67,7 +67,7 @@
     el.setAttribute("aria-hidden", visible ? "false" : "true");
   }
 
-  // A one-line, honest summary of what the checkbox will actually attach,
+  // A one-line, plain summary of what the checkbox will actually attach,
   // in numbers rather than adjectives - including the truncation, before
   // it happens rather than as a surprise inside the report.
   function renderLogSummary() {
