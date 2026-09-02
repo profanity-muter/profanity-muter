@@ -3311,3 +3311,34 @@ protected". Pipeline-side specifics:
 - **Devlog `runs` array**, via `devlog('logRunTopology', ...)`, fed from
   both capture.js (`run-topology` over the segment bridge) and offscreen
   (`pm-run-topology` through background).
+
+## 0.1.42: seek preemption
+
+Full write-up in CENSOR_NOTES.md "computing audio nobody is waiting for".
+Pipeline-side specifics:
+
+- **The worker is respawnable.** `whisperWorker` is a `let`, built by
+  `spawnWhisperWorker()`; `respawnWhisperWorker(reason)` rejects every entry
+  in `pendingWorkerRequests`, terminates, clears `inFlightCompute`, rebuilds
+  `transcribeChain` and spawns. Rejecting first is not optional: the mutex
+  only advances when its current call settles, so a terminated worker with a
+  live pending promise wedges the pipeline permanently.
+- **`inFlightCompute` is module-level, not per-session**, because the worker
+  is shared by every tab using the offscreen document. It carries
+  `sessionKey`, and `PMPreempt.decide` refuses to preempt when that key is
+  not ours.
+- **Published at QUEUE time, not compute start.** Queue wait is elapsed time
+  a preemption reclaims just as surely as compute time; the field window
+  spent 3647ms of 8410ms waiting for the mutex. Cleared in a `finally` that
+  checks the span still matches, so a preemption rejection cannot leave a
+  stale entry.
+- **`s.wallRtf`** is a new EWMA of wall ms per second of audio, kept
+  separate from `lastKnownRtf` (compute-only, drives window sizing where
+  queue wait would be the wrong signal). It is the input `decide()` needs.
+- **`pm-seek` now calls `scheduleSeekPreemptionCheck(s)`**, which debounces
+  by `PMPreempt.SETTLE_MS` and then runs `evaluateSeekPreemption(s)`.
+  `measuredRespawnMs()` prefers the last real respawn, then PM-WARM's
+  spawn+load, then the module's pessimistic default.
+- **Devlog `preempt` array** via `devlog('logPreempt', ...)`, fed by
+  `pm-preempt-decision` through background. Declines are recorded too: the
+  wager is only checkable if both sides of it were written down.

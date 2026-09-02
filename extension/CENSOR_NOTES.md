@@ -742,6 +742,111 @@ of that file) - it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
+## FIX ROUND (2026-09-02, 0.1.42): computing audio nobody is waiting for
+
+0.1.41 fixed run-poisoning, and catch-up after a seek storm improved from
+35.8s to 25.2s. The same log then made the next cost obvious:
+
+```
+14:11:23.9  URL restore seek to t=25; window [24.00,26.50) enters the worker
+14:11:24.8  user seeks to t=1633.93
+14:11:32.4  that window finishes (wallMs=8410) and is applied via STALE-KEPT
+14:11:32.4  only NOW does the first window at the real position start
+```
+
+Seven and a half seconds of a single-threaded worker computing audio for a
+position the user had left before it even began.
+
+The generation machinery from 0.1.18 already made the RESULT harmless, and
+0.1.34's STALE-KEPT even put it to use. Neither can stop the WORK: a
+running WASM call is not interruptible from outside. The only way to take
+the thread back is to terminate the worker and spawn a fresh one.
+
+### Preemption is a wager, so both sides get priced
+
+`shared/preempt.js` abandons work only when finishing costs more than
+starting over.
+
+**The cost side** charges for spawn plus model load, measured from PM-WARM
+or from the last real respawn rather than assumed, AND for the warmup that
+follows. The first inferences after a fresh worker run several times slower
+than steady state, which the same log shows plainly: rtf around 1.0 to 1.9
+on the windows right after a seek against 0.23 once settled. A respawn is
+not paid for once, it is paid again on the next window or two, and charging
+only for spawn would make preemption look cheaper than it is.
+
+**The remaining-work side** uses WALL-clock throughput, not compute-only.
+The field window spent 3647ms of its 8410ms waiting for the worker mutex.
+An estimate built from `computeMs` would have put its remaining time at
+roughly half the truth and talked itself out of a preemption that was
+clearly worth making. Offscreen now keeps a `wallRtf` EWMA alongside the
+compute-only `lastKnownRtf`, which still drives window sizing where queue
+wait would be the wrong signal.
+
+For the field numbers: about 7.5s remaining against a 3.5s cost, a 4s net
+win, comfortably clear of the margin.
+
+### Biased toward letting work finish
+
+The failures are asymmetric. A wrong "let it finish" costs some latency. A
+wrong "preempt" costs that latency plus a respawn plus a slow window, and
+can repeat. So:
+
+- a **marginal** win is declined, since both sides are estimates and a few
+  hundred milliseconds of predicted gain is noise, not a reason;
+- an **unmeasurable** case is declined, because no basis for an estimate is
+  no basis for a wager;
+- a window **still covering** the new playhead is kept;
+- a **nearly-finished** compute is kept.
+
+### Three guards beyond the arithmetic
+
+A **settle delay** before evaluating, because a scrub is many seeks and
+only the last one is worth acting on. A **minimum interval** between
+preemptions, since even settled seeks repeat when someone is working
+through a long video; a sequence test asserts that twenty seconds of
+seeking cannot turn into twenty respawns. And a rule that we **never
+abandon another tab's window**: the worker is shared across the offscreen
+document, and terminating it to serve our own seek would cost someone else
+work they never agreed to lose.
+
+Respawning rejects every pending request before terminating and rebuilds
+the mutex chain. The promise chain only advances when its current call
+settles, so a terminated worker with a live pending promise would wedge the
+pipeline far worse than the compute being abandoned.
+
+### The slow windows after a seek
+
+Asked as part of this round, answered as far as the evidence allows. The
+pattern is consistent across the log: the first windows after a seek run at
+rtf near 1.0 to 1.9, then settle to 0.23. The queue delays (up to 2.3s) are
+downstream of that, since a slow compute holds the shared mutex and the
+next window waits behind it, which is congestion rather than a second
+fault.
+
+Window sizing is ruled out: the slow windows are ordinary sizes, and one of
+them (2.5s of audio taking 4688ms) is small. Contention from the stale
+compute is ruled out for the same reason the queue delays are explained by
+it rather than the reverse: the transcribe path is globally serialized, so
+there is no parallel work to contend with.
+
+That leaves runtime warm-up (WASM JIT and allocator behaviour on the first
+inferences of a model instance) as the consistent explanation, which is
+also what makes the warmup penalty in the cost model necessary rather than
+decorative. It is not proven: proving it needs per-inference instrumentation
+inside the worker, which this round did not add. It is stated as the
+working hypothesis, and the cost model is built to be correct either way,
+since it charges for the observed slowdown regardless of its cause.
+
+### Tests
+
+`preempt_test.js` (20): the field case preempted with a real margin, every
+decline path, the shared-worker rule, the settle and thrash guards
+including a twenty-seek sequence, and the estimator's arithmetic. Writing
+them caught a wrong assertion of mine about overlap at the protect-span
+edge, where the code was right and the test was not. Suite: 390 node
+checks, 184 browser checks.
+
 ## FIX ROUND (2026-09-02, 0.1.41): the backstop that broke the thing it protected
 
 A user seek-stormed: 25 -> 1495 -> 1596 -> 1566, inside about two seconds.
