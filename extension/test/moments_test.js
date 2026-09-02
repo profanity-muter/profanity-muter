@@ -229,7 +229,7 @@ test("the support address is a role address, never a personal mailbox", () => {
   // It goes out in every problem report's mailto: link, so it lands in
   // strangers' mail clients and address books permanently.
   assert.ok(/^[a-z]+@/.test(M.SUPPORT_EMAIL), M.SUPPORT_EMAIL);
-  ["author", "stone", "urbanalgorithm", "gmail"].forEach(function (needle) {
+  ["gmail", "outlook", "yahoo", "proton"].forEach(function (needle) {
     assert.strictEqual(M.SUPPORT_EMAIL.toLowerCase().indexOf(needle), -1, needle);
   });
 });

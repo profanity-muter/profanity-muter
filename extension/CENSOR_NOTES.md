@@ -2125,7 +2125,7 @@ $ node wordlist_integration_test.js
 ```js
 // save as wordlist_test.js anywhere and run `node wordlist_test.js`
 var { PMWordlistCore, DEFAULT_WORDLIST } = require(
-  "~/Desktop/profanity-muter/extension/shared/wordlist.js"
+  "~/profanity-muter/extension/shared/wordlist.js"
 );
 // ... assertions against PMWordlistCore.isProfaneCore / censorTextCore /
 // findMatchesCore / resolveSettingsFromStorage, see the "Test results"
