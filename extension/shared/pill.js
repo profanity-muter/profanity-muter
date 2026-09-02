@@ -126,7 +126,59 @@
     return { label: "Analyzing…", presented: "analyzing" };
   }
 
+  // ---- badge geometry and behaviour (0.1.36 addendum) --------------------
+  //
+  // ONE badge, top-left, clickable. Previously there were four separate
+  // on-player surfaces (status pill bottom-right, a one-off notice banner
+  // top-center, an "Analyzing audio" overlay top-left, and the dev
+  // overlay), which is three more places than a user should have to look to
+  // learn one thing.
+  //
+  // The vertical offset clears YouTube's hover chrome: the player fades in
+  // a title gradient across the top on mouse-over, and a badge at top:8px
+  // sits underneath that text. 56px puts it below the band while staying in
+  // the corner people look at first.
+  var BADGE_TOP_PX = 56;
+  var BADGE_LEFT_PX = 8;
+  // The dev overlay is anchored directly beneath, so the two can never
+  // overlap regardless of badge width.
+  var DEBUG_OVERLAY_TOP_PX = 86;
+
+  // Clicking the badge opens the extension UI. The badge is the only part
+  // of this that catches the pointer; everything around it stays
+  // click-through, because a filter that eats clicks on the player it is
+  // filtering would be worse than no affordance at all.
+  var OPEN_UI_MESSAGE_TYPE = "pm-open-ui";
+
+  function openUiMessage() {
+    return { type: OPEN_UI_MESSAGE_TYPE };
+  }
+
+  // The ordered list of ways to open the UI, most to least direct.
+  //
+  // chrome.action.openPopup() is the real thing (it opens the actual
+  // toolbar popup) but it is only available to a user-gesture-initiated
+  // flow and has shipped and unshipped across Chrome versions, so it is
+  // attempted rather than relied on. The popup page renders fine in a tab
+  // (it is a fixed 320px column, which reads as a narrow panel rather than
+  // breaking), so that is the fallback. The setup guide is the last resort
+  // for a build where neither is available.
+  function openUiPlan(caps) {
+    caps = caps || {};
+    var plan = [];
+    if (caps.canOpenPopup !== false) plan.push("action-popup");
+    if (caps.canOpenTab !== false) plan.push("popup-tab");
+    plan.push("onboarding-tab");
+    return plan;
+  }
+
   var PMPillCore = {
+    BADGE_TOP_PX: BADGE_TOP_PX,
+    BADGE_LEFT_PX: BADGE_LEFT_PX,
+    DEBUG_OVERLAY_TOP_PX: DEBUG_OVERLAY_TOP_PX,
+    OPEN_UI_MESSAGE_TYPE: OPEN_UI_MESSAGE_TYPE,
+    openUiMessage: openUiMessage,
+    openUiPlan: openUiPlan,
     ETA_FLOOR_COLD_S: ETA_FLOOR_COLD_S,
     ETA_FLOOR_S: ETA_FLOOR_S,
     ETA_CEILING_S: ETA_CEILING_S,

@@ -3179,3 +3179,29 @@ stops costing content". Pipeline-side specifics:
   the rewind cannot mistake itself for the user superseding it. Only
   `not-covered-yet` keeps the pending rewind alive; every other refusal
   retires it. The rewind is recorded in the devlog.
+
+## 0.1.36 addendum: one clickable badge
+
+- **Four injected surfaces became one.** `showPlayerNotice()` no longer
+  builds a banner; it sets a timed text override on the badge, the same
+  mechanism the milestone moment already used. `showAnalyzingOverlay()` no
+  longer builds anything (the badge's processing state covers every moment
+  it appeared) but keeps its call sites, which still express real intent
+  and remove any element left over in a long-lived tab from a previous
+  version. The dev overlay is anchored at `DEBUG_OVERLAY_TOP_PX`, directly
+  beneath the badge.
+- **Badge geometry** lives in `shared/pill.js`: `BADGE_TOP_PX = 56` clears
+  the player's hover title gradient, which is why it is not 8.
+- **Interactivity**: `pointer-events:auto` on the badge and nowhere else in
+  the routine path; `test/pill_test.js` pins that by reading the source and
+  permits exactly one exception, the dev-only Copy logs button. The click
+  handler calls `stopPropagation`/`preventDefault` so asking for settings
+  does not also pause the video.
+- **The ladder**: content.js sends `{type:'pm-open-ui'}` and background.js
+  walks `PMPill.openUiPlan()` = action-popup, popup-tab, onboarding-tab,
+  falling through on a rejected promise, a thrown call, a missing return
+  value, or `chrome.runtime.lastError` from `tabs.create`. background.js
+  now importScripts shared/pill.js alongside shared/moments.js.
+- **The context-invalidated banner stays separate** and non-interactive by
+  design: it fires when chrome.runtime is gone, so a clickable badge there
+  would invite a click it could not honour.

@@ -192,6 +192,81 @@ test("computeStatusState computes capture inputs before ANY branch returns", () 
   );
 });
 
+// ---- the badge: geometry and the open-UI ladder (0.1.36 addendum) --------
+
+test("the badge clears YouTube's hover title band", () => {
+  // At top:8px the badge sits underneath the title gradient the player
+  // fades in on mouse-over, which is where it was originally put and why
+  // it had to move.
+  assert.ok(P.BADGE_TOP_PX >= 40, "must clear the hover chrome: " + P.BADGE_TOP_PX);
+  assert.strictEqual(P.BADGE_LEFT_PX, 8);
+});
+
+test("the dev overlay is anchored below the badge, never overlapping it", () => {
+  assert.ok(
+    P.DEBUG_OVERLAY_TOP_PX > P.BADGE_TOP_PX,
+    "dev overlay must sit below the badge"
+  );
+});
+
+test("the click message shape is fixed", () => {
+  // content.js sends it and background.js matches on it; a typo in either
+  // would be a silently dead affordance.
+  assert.deepStrictEqual(P.openUiMessage(), { type: "pm-open-ui" });
+  assert.strictEqual(P.OPEN_UI_MESSAGE_TYPE, "pm-open-ui");
+});
+
+test("the open-UI ladder tries the real popup first", () => {
+  // chrome.action.openPopup() opens the ACTUAL toolbar popup, which is what
+  // the user asked for; a tab is a consolation prize.
+  assert.deepStrictEqual(P.openUiPlan({}), ["action-popup", "popup-tab", "onboarding-tab"]);
+  assert.strictEqual(P.openUiPlan()[0], "action-popup");
+});
+
+test("the ladder degrades in order, and always ends somewhere real", () => {
+  // openPopup has shipped and unshipped across Chrome versions and needs a
+  // user gesture, so it is attempted rather than relied on. Whatever is
+  // missing, the ladder must still end at something that opens.
+  assert.deepStrictEqual(P.openUiPlan({ canOpenPopup: false }), ["popup-tab", "onboarding-tab"]);
+  assert.deepStrictEqual(P.openUiPlan({ canOpenPopup: false, canOpenTab: false }), [
+    "onboarding-tab"
+  ]);
+  [{}, { canOpenPopup: false }, { canOpenTab: false }].forEach(function (caps) {
+    assert.ok(P.openUiPlan(caps).length > 0, JSON.stringify(caps));
+  });
+});
+
+test("content.js injects exactly one interactive on-player surface", () => {
+  // Source-shape guard for the consolidation. Four surfaces existed before
+  // this round (status pill, notice banner, analyzing overlay, dev
+  // overlay). Only the badge may catch the pointer: a filter that ate
+  // clicks on the video it is filtering would be a worse bug than the
+  // missing affordance this fixed.
+  const src = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
+  const interactive = src.match(/pointer-events:auto/g) || [];
+  // Two, and only two: the badge, and the dev overlay's Copy logs button.
+  // The latter is gated behind pm_debugOverlay, is off by default, and
+  // needs a real gesture for clipboard access, so it is a deliberate
+  // exception rather than a second routine surface.
+  assert.strictEqual(interactive.length, 2, "badge + dev-only Copy logs button");
+  const badgeAt = src.indexOf("cursor:pointer;white-space:nowrap;");
+  const copyLogsAt = src.indexOf("debugOverlayButtonEl.style.cssText");
+  assert.ok(badgeAt > 0, "the badge must be the interactive routine surface");
+  assert.ok(copyLogsAt > 0, "the other must be the dev-only Copy logs button");
+  assert.ok(src.indexOf("aria-label', 'Profanity Muter - open settings") !== -1);
+  // The two folded surfaces must not have grown their own elements again.
+  assert.strictEqual(
+    src.indexOf("analyzingOverlayEl = document.createElement"),
+    -1,
+    "the analyzing overlay should be folded into the badge"
+  );
+  assert.strictEqual(
+    src.indexOf("notice.style.cssText"),
+    -1,
+    "the notice banner should be folded into the badge"
+  );
+});
+
 // ---- summary -------------------------------------------------------------
 
 console.log("pill_test.js: " + passed + "/" + (passed + failed) + " passed");

@@ -845,14 +845,71 @@ by people who want nothing unchecked to reach a child's ears, and it has to
 be exactly as careful with their content as with their protection. You may
 wait, but you eventually hear every analyzed second.
 
+### One badge, top-left, clickable (addendum)
+
+The consolidation the presentation collapse implied but did not finish.
+Four surfaces were being injected into the player: the status pill
+(bottom-right), a one-off notice banner (top-center), an "Analyzing audio"
+overlay (top-left), and the dev overlay. Three more places than a user
+should have to look to learn one thing, and two of them said what the badge
+already said.
+
+Now there is one badge. All states share it, and only its content and tone
+change: the countdown, Protected, the milestone moment, warnings, and the
+one-off notices for Shorts, livestreams and protected content, which take
+the badge for a few seconds and then revert. The "Analyzing audio" overlay
+is gone entirely, since the badge's own processing state covers every
+moment it appeared. The dev overlay stays separate, correctly, because it
+is dev-only and off by default, but it is anchored directly beneath the
+badge so the two can never overlap.
+
+**Position**: top-left, offset 56px down. At the obvious 8px the badge sits
+underneath the title gradient YouTube fades in across the top of the player
+on mouse-over, which is exactly where it started life and why it had to
+move.
+
+**Clickable**: `cursor:pointer`, a brightness hover, `role="button"`,
+`tabindex="0"`, Enter and Space, and `aria-label="Profanity Muter - open
+settings"`. The click is stopped from reaching the player underneath, which
+would otherwise pause the video as a side effect of asking for settings.
+
+`pointer-events:auto` appears on the badge and nowhere else in the routine
+path. That constraint is worth stating plainly: a filter that ate clicks on
+the video it is filtering would be a worse bug than the missing affordance
+this fixed. A source-shape test pins it, allowing exactly one deliberate
+exception, the dev overlay's Copy logs button, which is gated behind
+`pm_debugOverlay` and needs a real gesture for clipboard access anyway.
+
+**The click ladder** lives in `shared/pill.js` so its ordering is testable,
+and executes in the service worker. `chrome.action.openPopup()` first,
+because it opens the actual toolbar popup and that is what was asked for;
+it needs a user gesture (this click is one) and has shipped and unshipped
+across Chrome versions, so it is attempted rather than relied on. The popup
+page in a tab is the fallback, and the browser harness now asserts that
+page survives tab width rather than assuming it: it stays a narrow column
+with no horizontal overflow and its controls intact. The setup guide is the
+last resort.
+
+The one surface deliberately NOT folded in is the context-invalidated
+banner, which fires only when the extension has been reloaded under a live
+page. That is precisely the state where the badge cannot do its job:
+`chrome.runtime` is gone, so a click could not open anything, and a badge
+inviting a click it cannot honour is worse than a plain sentence saying
+refresh.
+
+**Copy**: the completion page's pin request no longer implies pinning is
+the only route to settings, since it is now demonstrably not. It reads "Pin
+for one-click access" and says the badge on the video always works. The pin
+request itself stays.
+
 ### Tests
 
-`pill_test.js` (17) covers the collapse, the countdown, both floors, and
+`pill_test.js` (23) covers the collapse, the countdown, both floors, and
 the source-shape guard for input uniformity. `catchup_test.js` (24) covers
 self-action tagging including expiry, ownership in both directions, the
 debounce, the fallback trigger-gating matrix, and the rewind path including
-user-supersede, sub-threshold, and the not-yet-covered wait. Suite: 293
-node checks, 181 browser checks.
+user-supersede, sub-threshold, and the not-yet-covered wait. Suite: 299 node checks,
+184 browser checks.
 
 ## FIX ROUND (2026-09-02, 0.1.35): the pill was right, the session was not
 

@@ -15,7 +15,7 @@
 // and milestone decisions so the SW and the popup cannot disagree about
 // what "eligible" means (0.1.33).
 try {
-  importScripts('shared/moments.js');
+  importScripts('shared/moments.js', 'shared/pill.js');
 } catch (e) {
   console.warn('[PM-BG] could not load shared/moments.js:', String(e));
 }
@@ -247,6 +247,31 @@ chrome.tabs.onRemoved.addListener(function (tabId) {
 
 refreshReviewNudge();
 
+function openExtensionUi(plan, index) {
+  if (!plan || index >= plan.length) return;
+  var step = plan[index];
+  var next = function () { openExtensionUi(plan, index + 1); };
+
+  if (step === 'action-popup') {
+    try {
+      var p = chrome.action.openPopup();
+      if (p && typeof p.then === 'function') p.then(function () {}, next);
+      else next(); // no promise returned: assume unsupported and fall through
+    } catch (e) {
+      next();
+    }
+    return;
+  }
+  var url = step === 'popup-tab' ? 'popup/popup.html' : 'onboarding/onboarding.html';
+  try {
+    chrome.tabs.create({ url: chrome.runtime.getURL(url) }, function () {
+      if (chrome.runtime.lastError) next();
+    });
+  } catch (e) {
+    next();
+  }
+}
+
 function sendModelConfig(tabId, videoId) {
   try {
     // pm_multilingual (0.1.25, default true - the wordlist agent owns the
@@ -375,6 +400,23 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   // A content script asking whether to show the one-shot milestone pill. The
   // SW owns the decision because it is the only context that sees both the
   // stats and the latch without the popup being open.
+  // The on-player badge asking for the extension UI (0.1.36 addendum).
+  //
+  // chrome.action.openPopup() is the real thing, opening the actual toolbar
+  // popup, but it requires a user gesture and has shipped and unshipped
+  // across Chrome versions, so it is ATTEMPTED rather than relied on. The
+  // popup page renders fine in a tab (a fixed 320px column reads as a
+  // narrow panel rather than breaking), so that is the fallback, with the
+  // setup guide as the last resort. The ladder itself is
+  // PMMoments-adjacent pure logic in shared/pill.js so its ordering is
+  // testable; this is just the execution.
+  if (msg.type === 'pm-open-ui') {
+    var plan = typeof PMPill !== 'undefined' && PMPill.openUiPlan
+      ? PMPill.openUiPlan({})
+      : ['action-popup', 'popup-tab', 'onboarding-tab'];
+    openExtensionUi(plan, 0);
+    return;
+  }
   if (msg.type === 'pm-milestone-check') {
     var m0 = moments();
     if (!m0) return;

@@ -966,6 +966,13 @@
       return false;
     }
   }
+  // The ONE surface deliberately not folded into the badge (0.1.36
+  // addendum). It fires only when the extension context is dead, which is
+  // exactly the state where the badge cannot do its job: chrome.runtime is
+  // gone, so a click could not open anything, and a badge that invites a
+  // click it cannot honour is worse than a plain sentence. This one is
+  // non-interactive, says the one thing that helps (refresh), and appears
+  // once.
   function showContextInvalidBanner() {
     if (contextInvalidBannerShown) return;
     contextInvalidBannerShown = true;
@@ -997,23 +1004,30 @@
   // unanalyzable-only version in 0.1.32 so the health monitor's livestream
   // notice looks and behaves identically rather than being a second
   // near-copy of the same DOM code.
+  // 0.1.36 addendum: this used to inject its own banner across the top of
+  // the player, which made three surfaces where there should be one. The
+  // explanatory text now takes over the badge for a spell and then reverts
+  // to whatever the state says, reusing the same timed-override mechanism
+  // the milestone moment already used. One badge, one place, content and
+  // tone are the only things that change.
+  var NOTICE_VISIBLE_MS = 9000; // long enough to read a sentence, not a fixture
+  var noticeText = null;
+  var noticeUntilWall = 0;
+
   function showPlayerNotice(text, kind) {
-    var video = getVideo();
-    var container = video ? video.closest('.html5-video-player') || video.parentElement : document.body;
-    if (!container) return;
-    var notice = document.createElement('div');
-    notice.textContent = text;
-    notice.style.cssText =
-      'position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:2147483647;' +
-      'background:' + (kind === 'warning' ? '#8a1f11' : '#555') + ';' +
-      'color:#fff;font:12px/1.4 sans-serif;padding:5px 12px;border-radius:4px;' +
-      'pointer-events:none;box-shadow:0 1px 4px rgba(0,0,0,0.4);max-width:80%;text-align:center;';
-    if (container === document.body) {
-      notice.style.position = 'fixed';
-    } else if (getComputedStyle(container).position === 'static') {
-      container.style.position = 'relative';
+    noticeText = text;
+    noticeUntilWall = Date.now() + NOTICE_VISIBLE_MS;
+    TLOG(TAG, '[PM-NOTICE] ' + text);
+    refreshPillSoon();
+  }
+
+  function activeNoticeText() {
+    if (!noticeText) return null;
+    if (Date.now() > noticeUntilWall) {
+      noticeText = null;
+      return null;
     }
-    container.appendChild(notice);
+    return noticeText;
   }
 
   function showUnanalyzableNotice() {
@@ -1025,24 +1039,21 @@
     );
   }
 
+  // 0.1.36 addendum: the "Analyzing audio…" overlay was a fourth surface
+  // saying what the badge already says, in a different place and in
+  // different words. The badge's own processing state ("Analyzing ~Ns")
+  // covers every moment this was shown, so the element is gone and the
+  // call sites remain, both because they still express real intent
+  // (pause-catchup engaged / released) and because they are the natural
+  // place for a future affordance if one is ever wanted. Any element left
+  // over from a previous version of the extension in a long-lived tab is
+  // cleaned up here.
   function showAnalyzingOverlay(show) {
-    var video = getVideo();
-    if (show) {
-      if (analyzingOverlayEl || !video) return;
-      analyzingOverlayEl = document.createElement('div');
-      analyzingOverlayEl.textContent = 'Analyzing audio…';
-      analyzingOverlayEl.style.cssText =
-        'position:absolute;top:8px;left:8px;z-index:2147483647;background:rgba(0,0,0,0.65);' +
-        'color:#fff;font:12px/1.4 sans-serif;padding:3px 8px;border-radius:4px;pointer-events:none;';
-      var container = video.closest('.html5-video-player') || video.parentElement;
-      if (container) {
-        if (getComputedStyle(container).position === 'static') container.style.position = 'relative';
-        container.appendChild(analyzingOverlayEl);
-      }
-    } else if (analyzingOverlayEl) {
+    if (analyzingOverlayEl) {
       if (analyzingOverlayEl.parentElement) analyzingOverlayEl.parentElement.removeChild(analyzingOverlayEl);
       analyzingOverlayEl = null;
     }
+    if (show) refreshPillSoon();
   }
 
   // ---- pm_debugOverlay: an instrument for measuring the reported "off by
@@ -1064,7 +1075,10 @@
     if (!video) return null;
     debugOverlayEl = document.createElement('div');
     debugOverlayEl.style.cssText =
-      'position:absolute;bottom:40px;left:8px;right:8px;z-index:2147483647;' +
+      // Anchored directly beneath the badge (0.1.36 addendum) so the two
+      // can never overlap, whatever the badge's width.
+      'position:absolute;top:' + ((globalThis.PMPill && globalThis.PMPill.DEBUG_OVERLAY_TOP_PX) || 86) +
+        'px;left:8px;right:8px;z-index:2147483647;' +
       'background:rgba(0,0,0,0.78);color:#eee;font:11px/1.5 monospace;' +
       'padding:6px 8px;border-radius:4px;pointer-events:none;white-space:pre-wrap;' +
       'max-height:40%;overflow:hidden;';
@@ -1769,6 +1783,15 @@
       setStatusPillActive(false);
       return;
     }
+    // A one-off notice (livestream, Shorts, protected content) takes the
+    // badge for a few seconds, then it reverts to the state label. Ranked
+    // below the health warning, which outranks everything.
+    var notice = activeNoticeText();
+    if (notice) {
+      setStatusPillActive(true, 'notice');
+      if (statusPillEl) setPillContent(notice);
+      return;
+    }
     // Health outranks the milestone everywhere, which is why this sits
     // below the unhealthy branch above rather than before it.
     var milestone = activeMilestoneText();
@@ -1847,6 +1870,23 @@
     statusPillEl.appendChild(document.createTextNode(text));
   }
   var statusPillTone = null;
+
+  // Clicking the badge opens the extension UI. The service worker owns the
+  // attempt ladder (see background.js): chrome.action.openPopup() needs a
+  // user gesture and has shipped and unshipped across Chrome versions, so
+  // it is tried rather than relied on, with the popup page in a tab as the
+  // fallback.
+  function openExtensionUi() {
+    var api = globalThis.PMPill;
+    var msg = api ? api.openUiMessage() : { type: 'pm-open-ui' };
+    try {
+      var p = chrome.runtime.sendMessage(msg);
+      if (p && typeof p.catch === 'function') p.catch(function () {});
+      TLOG(TAG, '[PM-BADGE] clicked: requested the extension UI');
+    } catch (e) {
+      TWARN(TAG, '[PM-BADGE] could not reach the service worker: ' + String(e));
+    }
+  }
   function setStatusPillActive(active, tone) {
     tone = tone || 'normal';
     // A tone change on an existing pill has to re-style it, not just
@@ -1860,15 +1900,56 @@
       if (!container) return;
       statusPillEl = document.createElement('div');
       statusPillTone = tone;
+      var pillGeom = globalThis.PMPill;
+      var topPx = pillGeom ? pillGeom.BADGE_TOP_PX : 56;
+      var leftPx = pillGeom ? pillGeom.BADGE_LEFT_PX : 8;
+      // 0.1.36 addendum: ONE badge, top-left, clickable.
+      //
+      // The vertical offset clears YouTube's hover chrome. The player fades
+      // in a title gradient across the top on mouse-over, and a badge at
+      // top:8px sits underneath that text, which is why this is 56 and not
+      // 8. It stays in the corner people look at first.
+      //
+      // pointer-events is now `auto` on the badge and nowhere else: the
+      // badge is the only thing that catches the pointer, and the player
+      // around it stays fully click-through. A filter that ate clicks on
+      // the video it is filtering would be a worse bug than the missing
+      // affordance it fixed.
       statusPillEl.style.cssText =
-        'position:absolute;bottom:8px;right:8px;z-index:2147483646;' +
+        'position:absolute;top:' + topPx + 'px;left:' + leftPx + 'px;z-index:2147483646;' +
         (tone === 'warning'
           ? 'background:#8a1f11;color:#fff;font:bold 11px/1.4 sans-serif;'
           : tone === 'milestone'
             ? 'background:#1d2f54;color:#f3e6c0;font:11px/1.4 sans-serif;'
-            : 'background:rgba(0,0,0,0.55);color:#fff;font:11px/1.4 sans-serif;') +
-        'padding:2px 7px;' +
-        'border-radius:3px;pointer-events:none;white-space:nowrap;';
+            : tone === 'notice'
+              ? 'background:#555;color:#fff;font:11px/1.4 sans-serif;'
+            : 'background:rgba(0,0,0,0.62);color:#fff;font:11px/1.4 sans-serif;') +
+        'padding:3px 8px;' +
+        'border-radius:3px;pointer-events:auto;cursor:pointer;white-space:nowrap;' +
+        'user-select:none;transition:filter 120ms ease;';
+      statusPillEl.setAttribute('role', 'button');
+      statusPillEl.setAttribute('tabindex', '0');
+      statusPillEl.setAttribute('aria-label', 'Profanity Muter - open settings');
+      statusPillEl.setAttribute('title', 'Profanity Muter - open settings');
+      statusPillEl.addEventListener('mouseenter', function () {
+        if (statusPillEl) statusPillEl.style.filter = 'brightness(1.35)';
+      });
+      statusPillEl.addEventListener('mouseleave', function () {
+        if (statusPillEl) statusPillEl.style.filter = '';
+      });
+      // Stop the click reaching the player underneath, which would pause
+      // the video as a side effect of asking for settings.
+      statusPillEl.addEventListener('click', function (ev) {
+        ev.stopPropagation();
+        ev.preventDefault();
+        openExtensionUi();
+      });
+      statusPillEl.addEventListener('keydown', function (ev) {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+        ev.stopPropagation();
+        ev.preventDefault();
+        openExtensionUi();
+      });
       if (container === document.body) {
         statusPillEl.style.position = 'fixed';
       } else if (getComputedStyle(container).position === 'static') {

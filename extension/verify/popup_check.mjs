@@ -903,6 +903,28 @@ const devlogFixture = {
   await page.close();
 }
 
+// ---- 0.1.36: the popup page must survive being opened as a TAB ----
+// The badge's click falls back to opening popup/popup.html in a tab when
+// chrome.action.openPopup() is unavailable, so a layout that breaks at tab
+// width would turn the fallback into a worse experience than no affordance.
+{
+  const page = await browser.newPage();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.addInitScript(stub({ pm_ackNotPerfect: ACK }, {}));
+  await page.goto(URL);
+  await page.waitForTimeout(150);
+  const layout = await page.evaluate(() => ({
+    bodyWidth: document.body.getBoundingClientRect().width,
+    overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
+    saveVisible: !!document.getElementById('pm-save').offsetParent,
+    healthPresent: !!document.getElementById('pm-health')
+  }));
+  check('popup-as-tab: stays a narrow column rather than stretching', layout.bodyWidth <= 400, layout.bodyWidth);
+  check('popup-as-tab: no horizontal overflow', layout.overflowX === false);
+  check('popup-as-tab: primary controls still rendered', layout.saveVisible === true && layout.healthPresent === true);
+  await page.close();
+}
+
 // ===== 0.1.32: health warning banner =====
 //
 // The popup asks the active tab's content script how it is doing, so the
