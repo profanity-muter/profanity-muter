@@ -28,7 +28,7 @@
 //                                key is never an active source again.
 //   pm_muteAudio      boolean   default true  - audio-pipeline toggle
 //   pm_censorCaptions boolean   default true  - caption-censoring toggle
-//   pm_catchupMode    "mute" | "pause" | "play"  default "mute" - the
+//   pm_catchupMode    "mute" | "pause" | "play"  default "play" - the
 //                                ONE setting for what happens in parts
 //                                of the video not yet analyzed:
 //                                  "mute"  - mute audio until caught up
@@ -38,7 +38,7 @@
 //                                  "play"  - let it play unanalyzed
 //                                            (old "safe mode off")
 //                                Any other/invalid stored value
-//                                defaults to "mute". The popup no
+//                                defaults to "play". The popup no
 //                                longer writes pm_safeMode at all -
 //                                this single setting replaced it.
 //   pm_safeMode       boolean   DEPRECATED, read-only (migration path).
@@ -853,7 +853,7 @@
   ];
 
   var CATCHUP_MODES = ["mute", "pause", "play"];
-  var DEFAULT_CATCHUP_MODE = "mute";
+  var DEFAULT_CATCHUP_MODE = "play";
 
   // Pure defaulting logic for raw chrome.storage.sync.get() results.
   //

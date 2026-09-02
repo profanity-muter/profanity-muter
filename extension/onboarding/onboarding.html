@@ -134,10 +134,21 @@
           the not-yet-analyzed window described on the last screen.
         </p>
         <div class="pm-radio-group pm-radio-group--stacked" role="radiogroup" aria-label="While a video is still being analyzed">
-          <label class="pm-radio-label pm-radio-label--stacked">
-            <input type="radio" name="ob-catchup-mode" id="ob-catchup-mute" value="mute" checked />
+                    <label class="pm-radio-label pm-radio-label--stacked">
+            <input type="radio" name="ob-catchup-mode" id="ob-catchup-play" value="play" checked />
             <span>
-              <span class="pm-radio-title">Mute until ready (recommended)</span>
+              <span class="pm-radio-title">Play unfiltered (recommended)</span>
+              <span class="pm-radio-desc">
+                Nothing waits and nothing is muted until analysis catches up,
+                so profanity in that window is heard normally. The smoothest
+                viewing experience.
+              </span>
+            </span>
+          </label>
+          <label class="pm-radio-label pm-radio-label--stacked">
+            <input type="radio" name="ob-catchup-mode" id="ob-catchup-mute" value="mute" />
+            <span>
+              <span class="pm-radio-title">Mute until ready</span>
               <span class="pm-radio-desc">
                 The video plays, silently, until analysis catches up. Nothing
                 unchecked is ever heard; you miss a few seconds of clean audio.
@@ -151,16 +162,6 @@
               <span class="pm-radio-desc">
                 Playback waits. Nothing unchecked ever plays at all, at the
                 cost of a pause at the start of videos and after skipping.
-              </span>
-            </span>
-          </label>
-          <label class="pm-radio-label pm-radio-label--stacked">
-            <input type="radio" name="ob-catchup-mode" id="ob-catchup-play" value="play" />
-            <span>
-              <span class="pm-radio-title">Play unfiltered (not recommended)</span>
-              <span class="pm-radio-desc">
-                Nothing waits and nothing is muted until analysis catches up -
-                so profanity in that window is heard normally.
               </span>
             </span>
           </label>
@@ -247,7 +248,7 @@
         <p class="pm-hint">
           This is a deterrent, not security: anyone who can open
           chrome://extensions can clear this extension's storage or remove
-          it. If you forget the password, remove and re-add the extension.
+          it. There is no way to reset or recover the password: it is stored only on your device and we keep no backup of it. If you forget it, the only option is to remove and re-add the extension, which also clears your settings.
         </p>
       </div>
     </section>
