@@ -4,8 +4,28 @@
 //
 // Storage schema (chrome.storage.sync):
 //   pm_enabled        boolean   default true  — master on/off
-//   pm_wordlist       string[]  default unset -> built-in DEFAULT_WORDLIST
-//                                (once saved, respected as-is, even [])
+//   pm_additionalWords string[] default unset -> [] — the user's OWN
+//                                words, ADDED ON TOP of the built-in tier
+//                                selected by pm_strictness. This is the
+//                                only word-list key the popup writes as
+//                                of 0.1.29, and the only one whose
+//                                contents are ever displayed in the UI.
+//                                The built-in lists' contents are never
+//                                shown anywhere. See "pm_strictness
+//                                (LEVEL) + pm_additionalWords (ADDITIVE)"
+//                                in resolveSettingsFromStorage for the
+//                                full migration table off the old schema.
+//   pm_wordlist       string[]  DEPRECATED as of 0.1.29, read-only
+//                                (migration path). Under the old schema
+//                                this was the user's REPLACEMENT list,
+//                                active only while pm_strictness was
+//                                "custom". It is now only read to migrate
+//                                a pre-0.1.29 install onto
+//                                pm_additionalWords, and is deliberately
+//                                left untouched in storage afterwards so
+//                                a rollback finds it intact. Once
+//                                pm_additionalWords has been saved, this
+//                                key is never an active source again.
 //   pm_muteAudio      boolean   default true  — audio-pipeline toggle
 //   pm_censorCaptions boolean   default true  — caption-censoring toggle
 //   pm_catchupMode    "mute" | "pause" | "play"  default "mute" — the
@@ -41,25 +61,47 @@
 //                                this is a lightweight always-on-by-
 //                                default status indicator, not the
 //                                opt-in diagnostic overlay.
-//   pm_strictness     "standard" | "strict" | "custom"  default "strict".
-//                                Selects which word list is used WHEN
-//                                pm_wordlist is not the active source:
+//   pm_strictness     "none" | "standard" | "strict"  default "strict".
+//                                The LEVEL: how much of the BUILT-IN list
+//                                is switched on.
+//                                  "none"     -> no built-in words at all
 //                                  "standard" -> CORE_WORDLIST only
 //                                  "strict"   -> DEFAULT_WORDLIST (CORE
 //                                                + EXTENDED euphemisms/
 //                                                mishears/religious
 //                                                exclamations)
-//                                  "custom"   -> pm_wordlist verbatim
-//                                "Explicit mode beats implicit
-//                                override": in "standard"/"strict",
-//                                pm_wordlist is ignored (but left alone
-//                                in storage); in "custom", the built-in
-//                                lists are ignored. Migration: a saved
-//                                pm_wordlist with no saved pm_strictness
-//                                resolves to "custom" (preserves
-//                                pre-strictness-feature behavior); no
-//                                saved list at all resolves to "strict".
-//                                See resolveSettingsFromStorage.
+//                                The active list is ALWAYS this tier PLUS
+//                                pm_additionalWords, deduped — the user's
+//                                words are additive, never a replacement
+//                                (0.1.29 redesign; before that, a third
+//                                mode "custom" replaced the built-ins with
+//                                pm_wordlist, which both required showing
+//                                the built-in contents in the UI to edit
+//                                them and froze the user out of future
+//                                list updates).
+//                                "custom" is NO LONGER a valid level; it
+//                                is still understood as a legacy stored
+//                                value and migrated (see the full
+//                                migration table in
+//                                resolveSettingsFromStorage — including
+//                                why legacy "custom" with no saved list
+//                                migrates to "strict", not "none").
+//   pm_lock           {salt: string, hash: string} | absent — the
+//                                optional PARENTAL LOCK (0.1.29). When
+//                                present, the popup opens with every
+//                                setting disabled until the password is
+//                                entered; unlock lasts for that popup
+//                                session only. Owned entirely by
+//                                shared/lock.js and popup/popup.js, which
+//                                read/write it directly — deliberately
+//                                NOT in this file's STORAGE_KEYS and NOT
+//                                part of the PMWordlist.settings contract,
+//                                since nothing in the matching path or
+//                                the content scripts consults it. hash is
+//                                SHA-256(salt + password), hex; the
+//                                plaintext password is never stored. It
+//                                is a deterrent, not security — see
+//                                shared/lock.js's header.
 //   pm_devlogVerbose  boolean  default false — when true, the persistent
 //                                dev log (shared/devlog.js, key pm_devlog
 //                                in chrome.storage.LOCAL) also stores each
@@ -162,18 +204,95 @@
     return !EXTENDED_SET.has(w);
   });
 
-  // pm_strictness: "standard" | "strict" | "custom", default "strict".
+  // pm_strictness (0.1.29 redesign): a three-way LEVEL selecting how much
+  // of the built-in list is switched on. Default "strict".
+  //   "none"     -> no built-in words at all
   //   "standard" -> CORE_WORDLIST only (clear profanity/slurs/crude terms)
-  //   "strict"   -> DEFAULT_WORDLIST (CORE + EXTENDED, current full defaults)
-  //   "custom"   -> the user's saved pm_wordlist, ignoring the built-ins
-  //                 entirely (explicit mode beats implicit override: in
-  //                 "standard"/"strict", pm_wordlist is ignored too, but
-  //                 preserved in storage for switching back)
-  // See resolveSettingsFromStorage for the full defaulting + migration
-  // rules (a legacy saved pm_wordlist with no pm_strictness migrates to
-  // "custom", preserving pre-strictness-feature behavior).
-  var STRICTNESS_MODES = ["standard", "strict", "custom"];
-  var DEFAULT_STRICTNESS = "strict"; // preserves pre-existing behavior
+  //   "strict"   -> DEFAULT_WORDLIST (CORE + EXTENDED, the full defaults)
+  //
+  // The user's own words are no longer a MODE that replaces the built-ins
+  // — they are ADDITIVE, stored separately in pm_additionalWords, and the
+  // active list is always `tier(level) + additionalWords` (deduped). This
+  // replaced the old third mode, "custom", which meant "use pm_wordlist
+  // INSTEAD of the built-ins".
+  //
+  // Two product reasons for the change, in this order:
+  //   1. The built-in lists' CONTENTS must never be shown in the UI. Under
+  //      the old model the only way to add one word was to switch to
+  //      "custom", which seeded the textarea with the entire built-in list
+  //      for the user to edit — i.e. the feature REQUIRED displaying a
+  //      screenful of slurs to anyone who wanted to add "poop". With an
+  //      additive list, the popup shows the user's own words and nothing
+  //      else, ever.
+  //   2. Adding a word silently cost you every future update to the
+  //      built-in lists, because your snapshot of them became the whole
+  //      list. Additive words keep tracking the shipped tier.
+  //
+  // "custom" is no longer a valid stored level, but is still UNDERSTOOD by
+  // resolveSettingsFromStorage as a legacy value to migrate off — see the
+  // full migration table there.
+  var STRICTNESS_MODES = ["none", "standard", "strict"];
+  var LEGACY_STRICTNESS_CUSTOM = "custom";
+  var DEFAULT_STRICTNESS = "strict"; // over-censoring beats under-censoring
+
+  // The built-in tier for a level. "none" is a real, supported choice: the
+  // user gets exactly their own words and nothing else.
+  function tierWordlist(level) {
+    if (level === "none") return [];
+    if (level === "standard") return CORE_WORDLIST;
+    return DEFAULT_WORDLIST; // "strict"
+  }
+
+  // Active list = built-in tier + the user's additional words, deduped.
+  //
+  // Dedupe is case-insensitive and whitespace-normalized because that is
+  // how matching itself treats entries (normalizeToken/buildStemSet
+  // lowercase everything) — without it, a user adding "Damn" while on the
+  // strict tier would produce two entries that stem identically, which is
+  // harmless for matching but makes every count shown in the UI wrong by
+  // one. Tier entries win position (they come first); the user's list
+  // keeps its own order after that. Non-strings and blank lines are
+  // dropped rather than trusted, since additionalWords comes straight from
+  // a free-text textarea.
+  function mergeWordlists(tier, additional) {
+    var out = [];
+    var seen = new Set();
+    function add(list) {
+      if (!Array.isArray(list)) return;
+      for (var i = 0; i < list.length; i++) {
+        var entry = list[i];
+        if (typeof entry !== "string") continue;
+        var trimmed = entry.trim().replace(/\s+/g, " ");
+        if (!trimmed) continue;
+        var key = trimmed.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(trimmed);
+      }
+    }
+    add(tier);
+    add(additional);
+    return out;
+  }
+
+  // Sanitize a raw pm_additionalWords value into a clean string[]. Applied
+  // on every read, so a hand-edited or partially-corrupted stored value
+  // can never put non-strings into the matcher.
+  function sanitizeAdditionalWords(raw) {
+    if (!Array.isArray(raw)) return [];
+    var out = [];
+    var seen = new Set();
+    for (var i = 0; i < raw.length; i++) {
+      if (typeof raw[i] !== "string") continue;
+      var trimmed = raw[i].trim().replace(/\s+/g, " ");
+      if (!trimmed) continue;
+      var key = trimmed.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(trimmed);
+    }
+    return out;
+  }
 
   var PADDING_MODES = ["tight", "normal", "wide"];
   var DEFAULT_PADDING = "normal";
@@ -696,6 +815,7 @@
     "pm_debugOverlay",
     "pm_showStatus",
     "pm_strictness",
+    "pm_additionalWords",
     "pm_padding",
     "pm_multilingual"
   ];
@@ -754,34 +874,71 @@
   // pm_debugOverlay) — it's a lightweight on-player status pill shown
   // by default, not an opt-in diagnostic.
   //
-  // pm_strictness + pm_wordlist interaction ("explicit mode beats
-  // implicit override"):
-  //   1. A valid, explicitly saved pm_strictness ("standard"/"strict"/
-  //      "custom") always wins outright, and fully determines which
-  //      word list is used:
-  //        "standard" -> CORE_WORDLIST, pm_wordlist IGNORED (but left
-  //                      untouched in storage, so switching back to
-  //                      "custom" later recovers it)
-  //        "strict"   -> DEFAULT_WORDLIST (CORE + EXTENDED), pm_wordlist
-  //                      IGNORED the same way
-  //        "custom"   -> pm_wordlist verbatim (even an empty array —
-  //                      same "respected as-is once saved" rule as
-  //                      before), built-ins IGNORED. If pm_wordlist
-  //                      isn't actually a saved array in this edge case
-  //                      (custom explicitly selected but nothing saved
-  //                      yet), fall back to DEFAULT_WORDLIST as a safety
-  //                      net rather than an empty list.
-  //   2. Otherwise (pm_strictness has never been saved, or is
-  //      corrupted/mistyped/wrong-type), migrate based on pm_wordlist:
-  //      a saved pm_wordlist (Array.isArray true, even []) means the
-  //      user already had a custom list under the pre-strictness-
-  //      feature schema — migrate to "custom" so their existing list
-  //      keeps being used unchanged. No saved pm_wordlist at all ->
-  //      default to "strict" (matches the pre-strictness-feature
-  //      default of the full DEFAULT_WORDLIST).
-  // This mirrors the same "explicit value wins, else migrate off a
-  // legacy signal, else default" pattern already used for
-  // pm_catchupMode/pm_safeMode above.
+  // pm_strictness (LEVEL) + pm_additionalWords (ADDITIVE) — 0.1.29
+  // ---------------------------------------------------------------
+  // The active English list is always:
+  //
+  //     mergeWordlists(tierWordlist(level), additionalWords)
+  //
+  // i.e. the built-in tier for the level ("none" -> nothing, "standard"
+  // -> CORE_WORDLIST, "strict" -> CORE + EXTENDED) plus the user's own
+  // words, deduped. There is no longer a mode in which the user's list
+  // REPLACES the built-ins; "custom" is gone as a level and survives only
+  // as a legacy value to migrate off.
+  //
+  // Resolution order (same "explicit value wins, else migrate off a
+  // legacy signal, else default" pattern used for pm_catchupMode above):
+  //
+  //   1. pm_additionalWords is a saved array -> the migration has already
+  //      happened (or the user has saved words under the new schema).
+  //      Use it verbatim (after sanitizing), and take the level from a
+  //      valid saved pm_strictness, defaulting to "strict". A stale
+  //      legacy pm_strictness of "custom" alongside it still maps to
+  //      "none" (rule 2a's mapping), so a half-migrated storage state
+  //      can't silently re-enable a tier the user had switched off.
+  //
+  //   2. pm_additionalWords has NEVER been saved -> migrate, from
+  //      whatever the pre-0.1.29 schema left behind. `hasSavedWordlist`
+  //      means Array.isArray(pm_wordlist) — true even for [], which was
+  //      an intentionally-emptied list under the old rules.
+  //
+  //      a. pm_strictness === "custom" (legacy) AND a saved pm_wordlist
+  //         -> level "none", additionalWords = pm_wordlist.
+  //         EXACTLY equivalent: "custom" meant "pm_wordlist verbatim,
+  //         built-ins ignored", and "none" + those same words is the
+  //         same resulting list, including the empty case.
+  //
+  //      b. pm_strictness === "custom" (legacy) with NO saved
+  //         pm_wordlist -> level "strict", additionalWords = [].
+  //         This preserves the OLD safety net exactly: that edge case
+  //         (custom selected, nothing ever saved) fell back to
+  //         DEFAULT_WORDLIST rather than to an empty list, and level
+  //         "strict" with no additions IS DEFAULT_WORDLIST. Mapping it
+  //         to "none" instead would silently disable all filtering for
+  //         these users — the one migration outcome that must never
+  //         happen.
+  //
+  //      c. pm_strictness === "none"/"standard"/"strict" (valid new
+  //         level, or an untouched pre-existing "standard"/"strict")
+  //         -> keep that level, additionalWords = []. Any saved
+  //         pm_wordlist is IGNORED, exactly as it was ignored in those
+  //         modes before.
+  //
+  //      d. pm_strictness never saved / corrupted / wrong type, but a
+  //         saved pm_wordlist exists -> level "none", additionalWords =
+  //         pm_wordlist. This is the pre-strictness-feature schema (a
+  //         saved list and nothing else), which used to migrate to
+  //         "custom" and therefore meant "that list, no built-ins" —
+  //         "none" + that list is the identical outcome.
+  //
+  //      e. Nothing saved at all -> level "strict", additionalWords =
+  //         [], i.e. the full DEFAULT_WORDLIST. Unchanged default.
+  //
+  // pm_wordlist is deliberately left UNTOUCHED in storage by all of the
+  // above (nothing here writes, and the popup no longer writes it
+  // either). It is no longer an active source once pm_additionalWords
+  // has been saved — it is kept purely so a rollback to 0.1.28 finds the
+  // user's old list exactly where it left it.
   //
   // pm_padding is a simple, independent three-way setting with no
   // interaction with anything else — validated and defaulted exactly
@@ -807,26 +964,49 @@
       catchupMode = DEFAULT_CATCHUP_MODE;
     }
 
+    // ---- level + additional words (see the migration table above) ----
     var hasSavedWordlist = Array.isArray(items.pm_wordlist);
+    var hasSavedAdditional = Array.isArray(items.pm_additionalWords);
+    var isValidLevel = STRICTNESS_MODES.indexOf(items.pm_strictness) !== -1;
+    var isLegacyCustom = items.pm_strictness === LEGACY_STRICTNESS_CUSTOM;
 
     var strictness;
-    if (STRICTNESS_MODES.indexOf(items.pm_strictness) !== -1) {
-      strictness = items.pm_strictness;
-    } else if (hasSavedWordlist) {
-      strictness = "custom"; // migration: a saved list predates pm_strictness
-    } else {
+    var additionalWords;
+
+    if (hasSavedAdditional) {
+      // Rule 1: already on the new schema.
+      additionalWords = sanitizeAdditionalWords(items.pm_additionalWords);
+      strictness = isValidLevel
+        ? items.pm_strictness
+        : isLegacyCustom
+          ? "none" // half-migrated storage: never re-enable a switched-off tier
+          : DEFAULT_STRICTNESS;
+    } else if (isLegacyCustom && hasSavedWordlist) {
+      // Rule 2a: "custom" + a saved list -> the same list, no built-ins.
+      strictness = "none";
+      additionalWords = sanitizeAdditionalWords(items.pm_wordlist);
+    } else if (isLegacyCustom) {
+      // Rule 2b: "custom" with nothing ever saved fell back to the FULL
+      // built-in list. Preserve that, not an empty list.
       strictness = DEFAULT_STRICTNESS;
+      additionalWords = [];
+    } else if (isValidLevel) {
+      // Rule 2c: an explicit level wins; any legacy pm_wordlist was
+      // already being ignored in these modes and stays ignored.
+      strictness = items.pm_strictness;
+      additionalWords = [];
+    } else if (hasSavedWordlist) {
+      // Rule 2d: pre-strictness-feature schema — a saved list meant "that
+      // list, no built-ins".
+      strictness = "none";
+      additionalWords = sanitizeAdditionalWords(items.pm_wordlist);
+    } else {
+      // Rule 2e: nothing saved at all.
+      strictness = DEFAULT_STRICTNESS;
+      additionalWords = [];
     }
 
-    var wordlist;
-    if (strictness === "standard") {
-      wordlist = CORE_WORDLIST;
-    } else if (strictness === "strict") {
-      wordlist = DEFAULT_WORDLIST;
-    } else {
-      // "custom"
-      wordlist = hasSavedWordlist ? items.pm_wordlist : DEFAULT_WORDLIST;
-    }
+    var wordlist = mergeWordlists(tierWordlist(strictness), additionalWords);
 
     var padding = PADDING_MODES.indexOf(items.pm_padding) !== -1
       ? items.pm_padding
@@ -843,6 +1023,11 @@
       strictness: strictness,
       padding: padding,
       multilingual: items.pm_multilingual !== false,
+      // The user's OWN words, resolved/migrated and sanitized — what the
+      // popup renders in "My additional words". Never contains built-ins.
+      additionalWords: additionalWords,
+      // The EFFECTIVE list: tier + additionalWords, deduped. This is what
+      // matching uses; it is never displayed anywhere in the UI.
       wordlist: wordlist
     };
   }
@@ -867,6 +1052,10 @@
     EXTENDED_WORDLIST: EXTENDED_WORDLIST,
     STRICTNESS_MODES: STRICTNESS_MODES,
     DEFAULT_STRICTNESS: DEFAULT_STRICTNESS,
+    LEGACY_STRICTNESS_CUSTOM: LEGACY_STRICTNESS_CUSTOM,
+    tierWordlist: tierWordlist,
+    mergeWordlists: mergeWordlists,
+    sanitizeAdditionalWords: sanitizeAdditionalWords,
     PADDING_MODES: PADDING_MODES,
     DEFAULT_PADDING: DEFAULT_PADDING,
     DEFAULT_MULTILINGUAL: DEFAULT_MULTILINGUAL,
@@ -896,6 +1085,10 @@
     // to wait for another refresh() to restore the right strictness/
     // custom selection. See setLanguage below.
     enWordlist: DEFAULT_WORDLIST.slice(),
+    // The user's own additive words (pm_additionalWords), resolved by
+    // resolveSettingsFromStorage. Kept on _state (not on `settings`,
+    // which is contractually free of arrays) for the popup to render.
+    additionalWords: [],
     wordlist: DEFAULT_WORDLIST.slice(),
     stemSet: buildStemSet(DEFAULT_WORDLIST, EN_MATCH_CONFIG),
     phrases: buildPhraseList(DEFAULT_WORDLIST, EN_MATCH_CONFIG),
@@ -904,7 +1097,7 @@
 
   // Minimal, stable-shape settings object handed to other content
   // scripts (the audio pipeline's content.js reads PMWordlist.settings
-  // directly). Deliberately exactly these ten keys — no internal
+  // directly). Deliberately exactly these eleven keys — no internal
   // Set/Map/array fields — so consumers can safely read or even
   // serialize it without pulling in wordlist/stemSet/phrase internals.
   // The SAME object reference is mutated in place on every refresh()
@@ -919,7 +1112,12 @@
     showStatus: true,
     strictness: DEFAULT_STRICTNESS,
     padding: DEFAULT_PADDING,
-    multilingual: DEFAULT_MULTILINGUAL
+    multilingual: DEFAULT_MULTILINGUAL,
+    // 0.1.29: how many words the user added on top of the built-in tier.
+    // A COUNT, not the array — `settings` stays free of arrays/Sets so
+    // consumers can serialize it (content.js's dev-log settings snapshot
+    // reads exactly this, and must never carry word-list contents).
+    additionalWordCount: 0
   };
 
   function hasChromeStorage() {
@@ -984,6 +1182,7 @@
           state.strictness = resolved.strictness;
           state.padding = resolved.padding;
           state.multilingual = resolved.multilingual;
+          state.additionalWords = resolved.additionalWords;
           // Cache the English-strictness-resolved wordlist regardless of
           // which language is currently active, so a later
           // setLanguage("en") can restore it immediately (see below).
@@ -1006,6 +1205,7 @@
           settings.strictness = resolved.strictness;
           settings.padding = resolved.padding;
           settings.multilingual = resolved.multilingual;
+          settings.additionalWordCount = resolved.additionalWords.length;
 
           resolve(state);
         });
@@ -1167,6 +1367,7 @@
           changes.pm_debugOverlay ||
           changes.pm_showStatus ||
           changes.pm_strictness ||
+          changes.pm_additionalWords ||
           changes.pm_padding ||
           changes.pm_multilingual
         ) {
@@ -1191,7 +1392,9 @@
     // reading pm_muteAudio) — always in sync with the last refresh().
     // Exactly {enabled, muteAudio, censorCaptions, safeMode,
     // catchupMode, debugOverlay, showStatus, strictness, padding,
-    // multilingual}, no internal Set/Map/array fields.
+    // multilingual, additionalWordCount}, no internal Set/Map/array
+    // fields. additionalWordCount (0.1.29) is a COUNT, never the words —
+    // the user's own list lives on _state.additionalWords.
     settings: settings,
     // exposed for the popup and for tests; not part of the "required" contract
     _state: state,

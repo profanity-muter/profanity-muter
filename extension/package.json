@@ -5,8 +5,9 @@
   "type": "commonjs",
   "scripts": {
     "build": "node build.js",
-    "test": "node test/devlog_test.js && node test/devlog_integration_test.js",
-    "verify": "node verify/run_playwright.mjs"
+    "test": "node test/wordlist_test.js && node test/lock_test.js && node test/devlog_test.js && node test/devlog_integration_test.js",
+    "verify": "node verify/run_playwright.mjs",
+    "verify:popup": "node verify/popup_check.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

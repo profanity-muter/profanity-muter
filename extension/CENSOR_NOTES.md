@@ -742,6 +742,147 @@ of that file) — it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays honest about the actual
 shipped pack shape.
 
+## FEATURE (2026-09-02, 0.1.29): Hidden lists & parental lock
+
+Two changes that only make sense together: the popup stops showing the
+built-in word lists, and it gains an optional password over settings.
+Both come from the same use: a parent configuring this on a child's
+machine, with the child in the room.
+
+### 1. Hidden built-in lists, additive custom words
+
+`pm_strictness` is now a three-way **level** — `"none"` / `"standard"` /
+`"strict"`, default `"strict"` (product doctrine unchanged:
+over-censoring beats under-censoring) — selecting how much of the
+BUILT-IN list is on. The user's own words moved to a separate, **additive**
+key, `pm_additionalWords`. The active English list is always:
+
+```js
+mergeWordlists(tierWordlist(level), additionalWords)   // deduped
+```
+
+**The built-in lists' contents are never displayed in the UI again.** Not
+in the textarea, not in the masked view, not as a count. The old model
+made that impossible to hold: `"custom"` meant "use my list INSTEAD of
+the built-ins", so the only way to add one word was to switch to Custom,
+which seeded the textarea with the entire built-in list to edit down —
+i.e. adding "poop" to the filter required first showing a parent (and
+whoever was looking over their shoulder) a screenful of slurs. It also
+silently froze that user's copy of the built-ins at whatever shipped that
+day; every later list improvement passed them by. Additive words fix
+both, and `"none"` covers the case the old Custom mode really existed
+for.
+
+Popup surface: a **Built-in list** radio group (None / Standard / Strict)
+with one-line descriptions that enumerate nothing, and a **My additional
+words** textarea holding only the user's own entries. The summary line
+reads e.g. `Strict list, plus 3 of your own` — level + the user's count,
+never a built-in count (a built-in count only invites "which 123
+words?"). Masking still applies to the user's own words: this popup gets
+opened in front of the child it is filtering for.
+
+`Restore defaults` now means "back to the shipped starting point": level
+`strict`, no additional words. It writes immediately rather than staging
+an edit, because there is nothing left to review.
+
+**Migration table** (`resolveSettingsFromStorage`; `hasSavedWordlist`
+means `Array.isArray(pm_wordlist)`, true even for `[]`):
+
+| stored state | -> level | -> additionalWords | why |
+|---|---|---|---|
+| `pm_additionalWords` is an array | valid `pm_strictness`, else `strict` | that array (sanitized) | already on the new schema |
+| ...with a stale `pm_strictness: "custom"` | `none` | that array | half-migrated storage must not re-enable a tier the user switched off |
+| `"custom"` + saved `pm_wordlist` | `none` | that list | identical effective list to before |
+| `"custom"` + saved `[]` | `none` | `[]` | an intentionally emptied list stays empty |
+| `"custom"`, nothing ever saved | **`strict`** | `[]` | the OLD code fell back to `DEFAULT_WORDLIST` in this edge case. Mapping it to `none` would silently disable all filtering — the one migration outcome that must never happen |
+| `"none"`/`"standard"`/`"strict"` | kept | `[]` | any `pm_wordlist` was already ignored in these modes and stays ignored |
+| no/invalid `pm_strictness` + saved `pm_wordlist` | `none` | that list | pre-strictness schema meant "that list, no built-ins" |
+| nothing saved | `strict` | `[]` | unchanged default |
+
+`pm_wordlist` is never written again — not by `resolveSettingsFromStorage`
+(which is pure) and not by the popup. It is left exactly where it was so
+a rollback to 0.1.28 finds the user's old list intact.
+
+The invariant the whole table is built around, asserted directly in
+`test/wordlist_test.js`: **no pre-0.1.29 install filters LESS after the
+upgrade.** For every legacy shape, every word that used to match still
+matches.
+
+### 2. Parental lock (`pm_lock`)
+
+Optional password over every settings change in the popup. New module
+`shared/lock.js` (plain script, Node-loadable pure core, loaded by
+`popup.html` only — nothing in the content-script path consults it, so
+it is deliberately absent from `manifest.json`).
+
+- **Storage**: `pm_lock = {salt, hash}` in sync (so it roams), where
+  `hash = SHA-256(salt + password)` in hex via `crypto.subtle`. The
+  plaintext is never stored. The salt stops a common password's hash
+  being recognizable at a glance; it is **not** meaningful protection
+  against an offline attacker, and key stretching (PBKDF2/scrypt) was
+  deliberately skipped — see below for why the threat model doesn't
+  warrant it.
+- **UX**: no lock -> a "Lock settings with a password" setup panel
+  (enter + confirm). Lock set -> the popup opens LOCKED: settings visible
+  but `disabled`, with a password field. Correct password unlocks **for
+  that popup session only** — there is deliberately no persisted unlocked
+  flag, so closing the popup re-locks (a parent who unlocks, changes a
+  setting and walks away has re-locked by the time it loses focus).
+  Setting a password does not lock the parent out of the popup they are
+  standing in front of; the next open is locked. While unlocked, "Remove
+  password" is available.
+- **Honesty**: this is a **deterrent, not security**, and the caption
+  under the control says so: anyone who can open `chrome://extensions`
+  can clear this extension's storage or remove it, and a forgotten
+  password means removing and re-adding the extension. All of this runs
+  in the child's own profile; the lock raises changing a setting from one
+  click to "know chrome://extensions exists and be willing to visibly
+  wipe the extension", which is the whole product goal. Nothing in the
+  code or the copy claims more.
+- **Enforcement depth**: popup-side only, by explicit decision — this is
+  client-side either way, and no content-script-side enforcement was
+  built. But the check is **one rule in one place**:
+  `persistSettings()` is the only function in `popup.js` that writes to
+  storage (settings, word list, and the stats reset, which passes
+  `area: "local"`), and it asks `PMLock.mayWriteSettings()` before doing
+  anything. There are no per-handler checks to drift, and a future
+  options surface inherits the rule by using the same funnel. The
+  `disabled` attributes are the visible half; `persistSettings` is the
+  half that actually enforces.
+- **Two failure modes chosen deliberately**: a *corrupted* lock record
+  reads as NO lock (a half-written record must not brick a profile), and
+  an unreadable `pm_lock` (sync error) fails OPEN — a flaky sync quota
+  must not lock a parent out of their own settings.
+- **Startup race, closed**: `lockRecord === null` before `pm_lock` has
+  been read means *unknown*, not *unlocked*. Without the separate
+  `lockStateLoaded` flag, the milliseconds between the popup painting and
+  the storage callback were a real bypass — a fast click would sail
+  through. Writes in that window are refused with "One moment…" while the
+  controls stay live and correct-looking.
+
+**"Copy debug log" is exempt from the lock** (and from the debug-overlay
+toggle): a kid who hits a problem must still be able to export a log and
+send it to whoever can read it. It only reads storage.
+
+### Tests
+
+`test/wordlist_test.js` (34) — the full migration matrix above, the
+additive merge (dedupe, whitespace normalization, EXTENDED-tier
+interaction: `standard` + a re-added `"gosh"` gets that one word back
+without the rest of the euphemism tier), and the never-filter-less
+invariant. `test/lock_test.js` (19) — hash round trip against **real**
+WebCrypto (Node's own `crypto.subtle`, injected rather than mocked, since
+a mocked digest would only prove the plumbing calls something), salt
+participation, malformed-record handling, and the write gate including
+its fail-open behaviour.
+
+`verify/popup_check.mjs` (39, `npm run verify:popup`, ~5s headless, no
+network) covers the two properties that are properties of the RENDERED
+PAGE and unreachable from a pure test: that no built-in word appears
+anywhere in `document.body.innerText`, and that a locked popup writes
+nothing even when the `disabled` attribute is stripped from devtools and
+the change event dispatched anyway.
+
 ## FEATURE (2026-09-02, 0.1.28): persistent dev log (`pm_devlog`)
 
 The question that kept coming up and could not be answered after the
@@ -1020,20 +1161,28 @@ Avoiding self-triggered observer loops:
 | `pm_catchupMode`    | `"mute"\|"pause"\|"play"` | `"mute"` — THE ONE setting for what happens in parts of the video not yet analyzed (see below); any other/invalid stored value defaults to `"mute"` |
 | `pm_debugOverlay`   | `boolean`                 | `false` — shows an on-player diagnostic overlay (consumed by the audio pipeline's `content.js`); opt-in, unlike the other booleans which default to `true` |
 | `pm_showStatus`     | `boolean`                 | `true` — shows an on-player status pill (consumed by the audio pipeline's `content.js`). Distinct from `pm_debugOverlay`: this is a lightweight, on-by-default status indicator, not an opt-in diagnostic |
-| `pm_strictness`     | `"standard"\|"strict"\|"custom"` | `"strict"` — selects the ACTIVE word list (`CORE_WORDLIST` / `DEFAULT_WORDLIST` / the user's `pm_wordlist`, respectively); see "FEATURE: pm_strictness" below for the full "explicit mode beats implicit override" + migration rules |
+| `pm_strictness`     | `"none"\|"standard"\|"strict"` | `"strict"` — the LEVEL: how much of the BUILT-IN list is on (nothing / `CORE_WORDLIST` / `DEFAULT_WORDLIST`). The active list is always this tier PLUS `pm_additionalWords`. `"custom"` is no longer a valid value — see "Hidden lists & parental lock" below for the full migration table |
+| `pm_additionalWords` | `string[]`               | unset -> `[]` — the user's OWN words, ADDED ON TOP of the tier. The only word-list key the popup writes from 0.1.29, and the only one whose contents are ever shown in the UI |
+| `pm_lock`           | `{salt, hash}` or absent  | absent -> no lock. Optional parental lock over the popup's settings; `hash` = SHA-256(salt + password), hex. Owned by `shared/lock.js` + `popup/popup.js`; NOT in `STORAGE_KEYS`, NOT in the `PMWordlist.settings` contract. A deterrent, not security |
 | `pm_padding`        | `"tight"\|"normal"\|"wide"` | `"normal"` — how much surrounding audio the mute interval pads around a matched word; consumed entirely by the audio pipeline's `content.js` for its interval math |
 | `pm_multilingual`   | `boolean`                 | `true` — "Filter other languages (auto-detect)"; stored/exposed here only — the audio pipeline's language detection reads it to decide whether to call `PMWordlist.setLanguage(lang)`; see "FEATURE: language pack architecture" below |
 | `pm_safeMode`       | `boolean`                 | DEPRECATED, read-only. No longer written by the popup — merged into `pm_catchupMode`. Only consulted, once, to migrate a legacy `false` forward (see "Safe mode + catch-up mode merge" below) |
 | `pm_devlogVerbose`  | `boolean`                 | `false` — when true, the persistent dev log also stores each analyzed window's FULL transcript text. Owned and read directly by `shared/devlog.js`; deliberately NOT in this file's `STORAGE_KEYS` and NOT part of the `PMWordlist.settings` contract — it is a debugging escape hatch with no popup UI (set it from the extension console), not a user-facing setting. See "FEATURE: persistent dev log" above |
-| `pm_wordlist`       | `string[]`                | unset -> built-in `DEFAULT_WORDLIST` (or `CORE_WORDLIST`/nothing, depending on `pm_strictness` — see below); once saved, respected exactly as-is (even `[]`) WHEN `pm_strictness` is `"custom"` (or migrates to it) |
+| `pm_wordlist`       | `string[]`                | **DEPRECATED as of 0.1.29, read-only.** Was the user's REPLACEMENT list under the old `"custom"` mode. Now read only to migrate an existing install onto `pm_additionalWords`, and deliberately left untouched in storage afterwards so a rollback finds it intact |
 
-`pm_wordlist` semantics matter: built-in defaults are used **only** when
-the key has never been saved at all (`items.pm_wordlist === undefined`
-from `chrome.storage.sync.get`'s default). Once the popup has saved
-*anything* — including an intentionally emptied list — that saved value
-is used verbatim, with no length-based fallback. This lets a user
-deliberately turn off word-based filtering by clearing the list and
-saving, without silently reverting to defaults.
+`pm_additionalWords` semantics: it is respected exactly as saved,
+including an intentionally emptied list, and it is **additive** — it
+never suppresses the built-in tier. A user who wants only their own words
+selects level `"none"`, which is a first-class choice rather than an
+emergent consequence of emptying a list.
+
+(Historical note on `pm_wordlist`, which the above replaced: built-in
+defaults were used **only** when that key had never been saved at all
+(`items.pm_wordlist === undefined`), and once anything was saved —
+including an emptied list — it was used verbatim with no length-based
+fallback. That rule still governs how the 0.1.29 migration reads the old
+key: `Array.isArray(pm_wordlist)` is the "the user saved something" test,
+and `[]` counts.)
 
 ### `chrome.storage.LOCAL` (stats — per-install, NOT synced) — new, 2026-08-30
 
@@ -1120,8 +1269,10 @@ the migration check and then to `DEFAULT_CATCHUP_MODE` (`"mute"`).
 ### `PMWordlist.settings`
 
 `PMWordlist.settings` is a dedicated object containing **exactly**
-`{enabled, muteAudio, censorCaptions, safeMode, catchupMode, debugOverlay, showStatus, strictness, padding, multilingual}`
-(10 keys, as of the `pm_multilingual` addition — see "FEATURE: language
+`{enabled, muteAudio, censorCaptions, safeMode, catchupMode, debugOverlay, showStatus, strictness, padding, multilingual, additionalWordCount}`
+(11 keys, as of the 0.1.29 `additionalWordCount` addition — a COUNT, never
+the words themselves; the user's own list lives on `_state.additionalWords`.
+See also "FEATURE: language
 pack architecture" above) — no `wordlist`, `stemSet`, `phrases`, or
 `phraseIndex` leakage (those live on the separate internal `_state`
 object used by `isProfane`/`censorText`/`findMatches`). `safeMode` is

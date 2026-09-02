@@ -124,13 +124,22 @@
     var s = (pm && pm.settings) || {};
     var lang = (pm && pm.activeLanguage) || 'en';
     var count = (pm && pm._state && pm._state.wordlist && pm._state.wordlist.length) || 0;
-    var source = lang === 'en' ? 'strictness:' + (s.strictness || 'strict') : 'pack:' + lang;
+    // 0.1.29: the active English list is the built-in TIER plus the
+    // user's own additive words, so the source has to name both — a bare
+    // "strictness:strict" no longer says whether the word in question
+    // could have come from the user's own list. Still only counts and a
+    // tier name, never contents.
+    var added = typeof s.additionalWordCount === 'number' ? s.additionalWordCount : 0;
+    var source = lang === 'en'
+      ? 'tier:' + (s.strictness || 'strict') + '+own:' + added
+      : 'pack:' + lang;
     if (pm && pm.packAvailable === false) source += ' (pack unavailable)';
     return {
       enabled: s.enabled !== false,
       strictness: s.strictness || 'strict',
       wordlistSource: source,
       wordCount: count,
+      additionalWordCount: added,
       catchupMode: s.catchupMode || 'mute',
       muteAudio: s.muteAudio !== false,
       censorCaptions: s.censorCaptions !== false,

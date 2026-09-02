@@ -43,7 +43,8 @@
 //     startedAt:  number        — Date.now() when the video's session began
 //     version:    string        — extension version from the manifest
 //     settings:   {enabled, strictness, wordlistSource, wordCount,
-//                  catchupMode, muteAudio, censorCaptions, padding}
+//                  additionalWordCount, catchupMode, muteAudio,
+//                  censorCaptions, padding}
 //                                 — RESOLVED settings snapshot at video
 //                                 start (see below). Deliberately NOT the
 //                                 full word list: a custom list can be
@@ -51,7 +52,13 @@
 //                                 biggest size risk in this whole record,
 //                                 while `wordlistSource` + `wordCount` is
 //                                 what actually answers "was the word even
-//                                 in the active list".
+//                                 in the active list". As of 0.1.29
+//                                 `wordlistSource` names the built-in TIER
+//                                 and the user's own count together
+//                                 ("tier:strict+own:3"), since the active
+//                                 list is tier + additions and a bare tier
+//                                 name no longer says where a match could
+//                                 have come from.
 //     windows:    Window[]      — one per analyzed audio window
 //     gaps:       Gap[]         — unanalyzed-playback periods
 //     captions:   CaptionEvent[]— caption censor events

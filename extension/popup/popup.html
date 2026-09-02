@@ -117,44 +117,48 @@
   </section>
 
   <section class="pm-row pm-row--radio">
-    <span class="pm-label">Strictness</span>
-    <div class="pm-radio-group pm-radio-group--stacked" role="radiogroup" aria-label="Strictness">
+    <span class="pm-label">Built-in list</span>
+    <div class="pm-radio-group pm-radio-group--stacked" role="radiogroup" aria-label="Built-in list">
+      <label class="pm-radio-label pm-radio-label--stacked">
+        <input type="radio" name="pm-strictness" id="pm-strictness-none" value="none" />
+        <span>
+          <span class="pm-radio-title">None</span>
+          <span class="pm-radio-desc">Only the words you add below</span>
+        </span>
+      </label>
       <label class="pm-radio-label pm-radio-label--stacked">
         <input type="radio" name="pm-strictness" id="pm-strictness-standard" value="standard" />
         <span>
           <span class="pm-radio-title">Standard</span>
-          <span class="pm-radio-desc">Clear profanity only</span>
+          <span class="pm-radio-desc">Clear profanity and slurs</span>
         </span>
       </label>
       <label class="pm-radio-label pm-radio-label--stacked">
         <input type="radio" name="pm-strictness" id="pm-strictness-strict" value="strict" checked />
         <span>
           <span class="pm-radio-title">Strict</span>
-          <span class="pm-radio-desc">Also likely-profanity and religious exclamations</span>
-        </span>
-      </label>
-      <label class="pm-radio-label pm-radio-label--stacked">
-        <input type="radio" name="pm-strictness" id="pm-strictness-custom" value="custom" />
-        <span>
-          <span class="pm-radio-title">Custom</span>
-          <span class="pm-radio-desc">Your own edited word list</span>
+          <span class="pm-radio-desc">Also euphemisms and religious exclamations</span>
         </span>
       </label>
     </div>
+    <p class="pm-hint">
+      The built-in lists aren't shown here — they're maintained by the
+      extension and updated with it.
+    </p>
   </section>
 
   <section class="pm-row pm-row--list">
     <div class="pm-list-heading">
-      <label class="pm-label" for="pm-wordlist">Word list</label>
+      <label class="pm-label" for="pm-wordlist">My additional words</label>
       <button id="pm-toggle-mask" class="pm-link-button" type="button">Show words to edit</button>
     </div>
     <p id="pm-wordlist-mode-note" class="pm-hint pm-wordlist-mode-note">
-      Showing: Strict (123 words)
+      Strict list, plus 0 of your own
     </p>
     <p id="pm-active-language-note" class="pm-hint pm-active-language-note pm-hidden" aria-hidden="true"></p>
     <p id="pm-wordlist-hint" class="pm-hint">
-      Words are masked by default. Click "Show words to edit" to reveal and
-      edit the real list (one word or phrase per line).
+      Words you add here are filtered on top of the built-in list, one word
+      or phrase per line. They're masked until you click "Show words to edit".
     </p>
 
     <div id="pm-masked-list" class="pm-masked-list" aria-hidden="false"></div>
@@ -191,6 +195,64 @@
     <button id="pm-reset-stats" class="pm-link-button" type="button">Reset stats</button>
   </section>
 
+  <!-- Parental lock. Deliberately the last section before the action
+       buttons: it is the thing a parent sets once and never touches
+       again, so it sits out of the way of everything used daily. The
+       "Copy debug log" button above stays usable while locked on
+       purpose — a kid who hits a problem must still be able to export a
+       log and send it on. -->
+  <section class="pm-row pm-row--lock">
+    <span class="pm-label pm-label--muted">Parental lock</span>
+
+    <div id="pm-lock-setup" class="pm-lock-panel">
+      <p class="pm-hint">Lock these settings with a password.</p>
+      <input
+        type="password"
+        id="pm-lock-new"
+        class="pm-input"
+        placeholder="New password"
+        autocomplete="new-password"
+      />
+      <input
+        type="password"
+        id="pm-lock-confirm"
+        class="pm-input"
+        placeholder="Confirm password"
+        autocomplete="new-password"
+      />
+      <button id="pm-lock-set" class="pm-button pm-button--secondary" type="button">
+        Set password
+      </button>
+    </div>
+
+    <div id="pm-lock-locked" class="pm-lock-panel pm-hidden" aria-hidden="true">
+      <p class="pm-hint">Settings are locked. Enter the password to change them.</p>
+      <input
+        type="password"
+        id="pm-lock-password"
+        class="pm-input"
+        placeholder="Password"
+        autocomplete="current-password"
+      />
+      <button id="pm-lock-unlock" class="pm-button pm-button--secondary" type="button">
+        Unlock
+      </button>
+    </div>
+
+    <div id="pm-lock-unlocked" class="pm-lock-panel pm-hidden" aria-hidden="true">
+      <p class="pm-hint">Unlocked for now. Closing this popup locks it again.</p>
+      <button id="pm-lock-remove" class="pm-link-button" type="button">Remove password</button>
+    </div>
+
+    <p id="pm-lock-status" class="pm-hint pm-lock-status" role="status" aria-live="polite"></p>
+
+    <p class="pm-hint pm-lock-caption">
+      This is a deterrent, not security: anyone who can open
+      chrome://extensions can clear this extension's storage or remove it.
+      If you forget the password, remove and re-add the extension.
+    </p>
+  </section>
+
   <section class="pm-row pm-row--actions">
     <button id="pm-restore" class="pm-button pm-button--secondary" type="button">Restore defaults</button>
     <button id="pm-save" class="pm-button" type="button">Save</button>
@@ -198,6 +260,7 @@
   </section>
 
   <script src="../shared/wordlist.js"></script>
+  <script src="../shared/lock.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

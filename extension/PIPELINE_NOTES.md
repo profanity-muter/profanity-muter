@@ -2965,3 +2965,29 @@ better check than the harness's own assertions — it is the real
 - Whole log: **4432 bytes** for two videos, i.e. ~1.7% of the 256KB cap.
 - `pm_devlog` was written 15 times across ~10 minutes of playback across
   two tabs — consistent with the 5s batching, not per-event writes.
+
+## 0.1.29: word-list model change, as seen from the pipeline
+
+The censor-side redesign (built-in lists hidden, user words additive —
+full detail in CENSOR_NOTES.md "Hidden lists & parental lock") is almost
+invisible from here: `PMWordlist.findMatches` still matches against
+whatever `_state.wordlist` resolved to, which is now `tier + the user's
+own words` instead of `tier OR the user's own words`. Nothing in the
+audio path needed to change for that.
+
+Two things did:
+
+- **`PMWordlist.settings` gained an 11th key**, `additionalWordCount` —
+  a COUNT, not the words (the settings object's no-arrays contract is
+  intact). `content.js` reads it in `devlogSettingsSnapshot()`.
+- **The dev log's `wordlistSource` now names both halves**:
+  `"tier:strict+own:3"` rather than `"strictness:strict"`. A bare tier
+  name stopped being a sufficient answer to "could word X even have been
+  in the active list" the moment the list became a sum of two sources —
+  and that question is the entire reason the dev log exists. The
+  snapshot also carries `additionalWordCount` as its own field.
+
+The parental lock (`pm_lock`) is popup-only by explicit decision and is
+consulted nowhere in the content scripts. Worth knowing when reading a
+dev log from a locked install: the settings snapshot is still recorded
+normally, because the lock gates *changing* settings, not reading them.

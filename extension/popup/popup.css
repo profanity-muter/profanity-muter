@@ -380,3 +380,74 @@ body {
   color: var(--pm-muted);
   font-size: 11px;
 }
+
+/* ---- Parental lock ------------------------------------------------------
+   Three mutually-exclusive panels (setup / locked / unlocked) share this
+   row; popup.js shows exactly one by toggling .pm-hidden. */
+.pm-lock-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.pm-lock-panel .pm-hint {
+  margin: 0;
+}
+
+.pm-lock-panel .pm-button,
+.pm-lock-panel .pm-link-button {
+  align-self: flex-start;
+}
+
+.pm-input {
+  width: 100%;
+  background: var(--pm-bg);
+  color: var(--pm-fg);
+  border: 1px solid var(--pm-border);
+  border-radius: 6px;
+  padding: 7px 8px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.pm-input:focus {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: -1px;
+}
+
+/* Lock errors ("Passwords don't match", "Wrong password") belong next to
+   the fields, not in the action row's status line at the bottom of a
+   scrolled popup where they would go unseen. */
+.pm-lock-status:empty {
+  display: none;
+}
+
+.pm-lock-status {
+  margin-top: 8px;
+  color: var(--pm-accent);
+}
+
+.pm-lock-caption {
+  margin-top: 10px;
+}
+
+/* Locked state: every settings control is genuinely `disabled` (set by
+   popup.js, not merely styled), so this only has to make that visible.
+   Native `:disabled` already greys form controls; the custom switch
+   tracks and link-buttons need saying out loud. */
+.pm-row--locked {
+  opacity: 0.55;
+}
+
+.pm-row--locked .pm-switch-label,
+.pm-row--locked .pm-radio-label {
+  cursor: not-allowed;
+}
+
+.pm-link-button:disabled,
+.pm-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  text-decoration: none;
+}
