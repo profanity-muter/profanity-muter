@@ -2831,6 +2831,21 @@
         // source (applyDetectedLanguage is idempotent past the first
         // real change either way).
         applyDetectedLanguage(msg.videoId, msg.language);
+      } else if (msg.type === 'preempt-decision') {
+        TLOG(
+          TAG,
+          '[PM-PREEMPT] ' + msg.action + ' (' + msg.reason + ')' +
+            (msg.remainingMs != null ? ' remaining=' + Math.round(msg.remainingMs) + 'ms' : '') +
+            ' cost=' + Math.round(msg.costMs) + 'ms' +
+            (msg.actualCostMs != null ? ' actual=' + msg.actualCostMs + 'ms' : '')
+        );
+        devlog('logPreempt', {
+          action: msg.action,
+          reason: msg.reason,
+          remainingMs: msg.remainingMs,
+          costMs: msg.costMs,
+          actualCostMs: msg.actualCostMs
+        });
       } else if (msg.type === 'request-run-rebuild') {
         // 0.1.41: offscreen found that no run can decode the playhead. Only
         // capture.js (MAIN world) holds the cached init bytes needed to

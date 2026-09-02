@@ -48,6 +48,9 @@ import '../shared/decode.js';
 // retirement). Imported for its side effect, like the others, so the
 // shipped decision is the tested one.
 import '../shared/runs.js';
+// 0.1.42: the seek-preemption decision. Imported for its side effect, like
+// the others, so the shipped wager is the tested one.
+import '../shared/preempt.js';
 
 // 'small' added 0.1.13 as an opt-in accuracy tier (per the quiet-speech-
 // recall investigation) - Xenova/whisper-small.en is confirmed on the Hub to
@@ -121,10 +124,18 @@ function base64ToUint8(b64) {
 // transcribe step specifically; everything else (mediabunny demux,
 // session/run/coverage state) is unchanged and still lives here (see that
 // file's header for why the split is at exactly this point).
-const whisperWorker = new Worker(chrome.runtime.getURL('dist/whisper.worker.js'));
-whisperWorker.postMessage({ type: 'init', wasmPathsBase: chrome.runtime.getURL('dist/') });
+// 0.1.42: `let`, not `const`. A running WASM call cannot be interrupted
+// from outside, so the ONLY way to take the thread back from a
+// transcription nobody is waiting for is to terminate the worker and
+// spawn a fresh one. See shared/preempt.js for when that wager is worth
+// making.
+let whisperWorker = null;
 let nextWorkerRequestId = 1;
 const pendingWorkerRequests = new Map(); // requestId -> {resolve, reject}
+// Measured cost of a respawn, fed back into the preemption decision so the
+// wager is priced from this machine rather than from a guess.
+let lastRespawnCostMs = null;
+let workerSpawnedAtWall = 0;
 
 // Eager warm-up visibility (0.1.18): the worker/model load already starts
 // as early as technically possible (this whole file's top-level code runs
@@ -148,7 +159,43 @@ function logWarmToSession(s) {
   );
 }
 
-whisperWorker.onmessage = (ev) => {
+function spawnWhisperWorker() {
+  workerSpawnedAtWall = Date.now();
+  whisperWorker = new Worker(chrome.runtime.getURL('dist/whisper.worker.js'));
+  whisperWorker.postMessage({ type: 'init', wasmPathsBase: chrome.runtime.getURL('dist/') });
+  whisperWorker.onmessage = handleWorkerMessage;
+  whisperWorker.onerror = (ev) => {
+    broadcastDiag('whisper worker onerror: ' + (ev.message || ev));
+  };
+}
+
+// Terminate whatever is running and start over. Every pending request is
+// rejected first: the promise-chain mutex only advances when its current
+// call settles, so a terminated worker with a live pending promise would
+// wedge the pipeline far worse than the compute we are trying to abandon.
+function respawnWhisperWorker(reason) {
+  const startedWall = Date.now();
+  for (const [, pending] of pendingWorkerRequests) {
+    try {
+      pending.reject(new Error('worker preempted: ' + reason));
+    } catch (e) {}
+  }
+  pendingWorkerRequests.clear();
+  try {
+    if (whisperWorker) whisperWorker.terminate();
+  } catch (e) {
+    log('[PM-PREEMPT] terminate threw (continuing): ' + String(e));
+  }
+  inFlightCompute = null;
+  // The chain is rebuilt rather than reused: its tail is a promise for a
+  // call that will now never settle normally.
+  transcribeChain = Promise.resolve();
+  spawnWhisperWorker();
+  lastRespawnCostMs = Date.now() - startedWall;
+  return lastRespawnCostMs;
+}
+
+function handleWorkerMessage(ev) {
   const msg = ev.data;
   if (!msg) return;
   if (msg.type === 'worker-error') {
@@ -170,10 +217,8 @@ whisperWorker.onmessage = (ev) => {
   // 'error' already does.
   if (msg.type === 'result' || msg.type === 'lang-result') pending.resolve(msg);
   else pending.reject(new Error(msg.error || 'unknown whisper worker error'));
-};
-whisperWorker.onerror = (ev) => {
-  broadcastDiag('whisper worker onerror: ' + (ev.message || ev));
-};
+}
+spawnWhisperWorker();
 
 // Transfers `float16k`'s own buffer into the worker (0.1.15: "transfer, not
 // copy" - this ~1.1MB-per-18s-window array is detached from this thread by
@@ -208,7 +253,13 @@ function detectLanguageInWorker(float16k) {
 // call across ALL sessions/tabs sharing this offscreen document - the
 // worker is a single dedicated thread, so this guarantees at most one
 // transcribe request in flight at a time, globally.
-let transcribeChain = Promise.resolve();
+// 0.1.42: what the worker is computing right now, or null. Module-level
+// rather than per-session because the worker is shared by every tab using
+// this offscreen document, and preemption must never abandon a window
+// belonging to someone else's tab.
+let inFlightCompute = null; // {sessionKey, start, end, startedWall, audioS}
+
+let transcribeChain = Promise.resolve(); // reassigned by respawnWhisperWorker
 function runSerialized(fn) {
   const run = transcribeChain.then(fn, fn);
   transcribeChain = run.then(
@@ -492,6 +543,11 @@ function getOrCreateSession(tabId, videoId) {
       // agreement). See shared/language.js for why a single confident-
       // looking probe is not enough to leave English.
       languageGate: globalThis.PMLanguage ? globalThis.PMLanguage.newState() : null,
+      // 0.1.42 preemption inputs.
+      wallRtf: null, // EWMA of wall ms per second of audio
+      lastSeekWall: 0,
+      lastPreemptWall: 0,
+      preemptTimer: null,
       // Generation counter (0.1.18) - bumped on a page-load reset (dropped
       // entirely, see dropSessionsForTab) or a seek (pm-seek, in place -
       // coverage/state untouched). maybeProcess's loop and transcribeWindow
@@ -792,6 +848,93 @@ function withStageTimeout(promise, label, timeoutMs) {
     }, limitMs);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
+// ---- seek preemption (0.1.42) ---------------------------------------------
+//
+// A seek makes the in-flight window's RESULT irrelevant, which the
+// generation machinery already handles. What it cannot do is stop the
+// WORK: a running WASM call is not interruptible, so the thread stays
+// busy on an abandoned position while the one the user is actually
+// watching waits its turn. The field log spent 7.6 seconds that way.
+//
+// Evaluated after a settle delay, because a scrub is many seeks and only
+// the last one is worth acting on. See shared/preempt.js for the wager.
+function scheduleSeekPreemptionCheck(s) {
+  const api = globalThis.PMPreempt;
+  if (!api) return;
+  s.lastSeekWall = Date.now();
+  if (s.preemptTimer) clearTimeout(s.preemptTimer);
+  s.preemptTimer = setTimeout(() => {
+    s.preemptTimer = null;
+    try {
+      evaluateSeekPreemption(s);
+    } catch (e) {
+      log('[PM-PREEMPT] evaluation threw (continuing): ' + String(e));
+    }
+  }, api.SETTLE_MS);
+}
+
+function evaluateSeekPreemption(s) {
+  const api = globalThis.PMPreempt;
+  if (!api || s.dropped) return;
+  const now = Date.now();
+  const verdict = api.decide({
+    inFlight: inFlightCompute,
+    ownSessionKey: sessionKey(s.tabId, s.videoId),
+    playheadT: s.currentTimeS,
+    protectMarginS: 5,
+    effectiveRtf: s.wallRtf,
+    now: now,
+    sinceSeekMs: now - (s.lastSeekWall || 0),
+    lastPreemptWall: s.lastPreemptWall || null,
+    respawnMeasuredMs: measuredRespawnMs()
+  });
+
+  if (verdict.action === 'none') return;
+
+  const detail =
+    'remaining=' + (verdict.remainingMs != null ? Math.round(verdict.remainingMs) + 'ms' : 'unknown') +
+    ' respawnCost=' + Math.round(verdict.costMs) + 'ms';
+
+  if (verdict.action === 'let-finish') {
+    notifyTab(s, '[PM-PREEMPT] letting the in-flight window finish (' + verdict.reason + ') ' + detail);
+    reportPreemptDecision(s, verdict, null);
+    return;
+  }
+
+  const abandoned = inFlightCompute;
+  const actualCostMs = respawnWhisperWorker('seek to ' + (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : '?'));
+  s.lastPreemptWall = now;
+  notifyTab(
+    s,
+    '[PM-PREEMPT] terminated the worker mid-window ' +
+      (abandoned ? '[' + abandoned.start.toFixed(2) + ',' + abandoned.end.toFixed(2) + ') ' : '') +
+      '(' + verdict.reason + ') ' + detail + ' actualRespawn=' + actualCostMs + 'ms'
+  );
+  reportPreemptDecision(s, verdict, actualCostMs);
+  maybeProcess(s);
+}
+
+// PM-WARM measures spawn plus model load for THIS machine; a measured
+// respawn is better still. Either beats a constant.
+function measuredRespawnMs() {
+  if (lastRespawnCostMs != null) return lastRespawnCostMs;
+  if (warmInfo) return (warmInfo.workerSpawnMs || 0) + (warmInfo.modelLoadMs || 0);
+  return null; // shared/preempt.js applies its own pessimistic default
+}
+
+function reportPreemptDecision(s, verdict, actualCostMs) {
+  chrome.runtime.sendMessage({
+    type: 'pm-preempt-decision',
+    tabId: s.tabId,
+    videoId: s.videoId,
+    action: verdict.action,
+    reason: verdict.reason,
+    remainingMs: verdict.remainingMs,
+    costMs: verdict.costMs,
+    actualCostMs: actualCostMs
+  }).catch(() => {});
 }
 
 function markUnanalyzable(s, reason) {
@@ -1472,8 +1615,21 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // so modelRtf keeps measuring real transcribe time, not queue-wait.
   const tBeforeQueue = performance.now(); // wallMs SPLIT (0.1.18) - see queueMs/computeMs below
   let tTranscribeStart = 0;
-  const workerResult = await runSerialized(() => {
-    tTranscribeStart = performance.now();
+  // 0.1.42: published from the moment the window is QUEUED, not from when
+  // it starts computing. Queue wait is real elapsed time that a preemption
+  // reclaims just as surely as compute time, and the field case spent
+  // 3647ms of its 8410ms waiting for the mutex.
+  inFlightCompute = {
+    sessionKey: sessionKey(s.tabId, s.videoId),
+    start: absStart,
+    end: absEnd,
+    startedWall: Date.now(),
+    audioS: absEnd - absStart
+  };
+  let workerResult;
+  try {
+    workerResult = await runSerialized(() => {
+      tTranscribeStart = performance.now();
     return transcribeInWorker(effectiveModelId, float16k, {
       return_timestamps: 'word',
       chunk_length_s: 30,
@@ -1489,7 +1645,15 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       // guaranteed defense is collapseHallucinationLoops() below, not this.
       no_repeat_ngram_size: 3
     });
-  });
+    });
+  } finally {
+    // Cleared whichever way the call ended, including a preemption
+    // rejection: a stale entry here would let a later seek believe the
+    // worker is busy with something it is not.
+    if (inFlightCompute && inFlightCompute.start === absStart && inFlightCompute.end === absEnd) {
+      inFlightCompute = null;
+    }
+  }
   const transcribeMs = performance.now() - tTranscribeStart;
   // wallMs SPLIT (0.1.18): a live paste showed wallMs-derived rtf of 3-8
   // right next to modelRtf of 0.2-0.5 - almost all of it was QUEUE wait (a
@@ -1501,6 +1665,18 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   const decodeMs = tDecoded - t0;
   const queueMs = tTranscribeStart - tBeforeQueue;
   const computeMs = transcribeMs;
+  // 0.1.42: WALL-clock throughput, folding in queue wait and any hang
+  // losses, because that is what a preemption actually reclaims. Kept
+  // separate from lastKnownRtf, which is compute-only and drives window
+  // sizing where queue wait would be the wrong signal.
+  {
+    const audioS = absEnd - absStart;
+    const wallMs = performance.now() - t0;
+    if (audioS > 0 && wallMs > 0) {
+      const sample = wallMs / 1000 / audioS;
+      s.wallRtf = s.wallRtf == null ? sample : s.wallRtf * 0.7 + sample * 0.3;
+    }
+  }
 
   if (s.generation !== myGeneration) {
     // 0.1.34: this is the exact line the user's field log hit twice on the
@@ -2032,6 +2208,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (s) {
       s.generation++;
       if (typeof msg.currentTime === 'number' && !Number.isNaN(msg.currentTime)) s.currentTimeS = msg.currentTime;
+      scheduleSeekPreemptionCheck(s);
       maybeProcess(s);
     }
     return;

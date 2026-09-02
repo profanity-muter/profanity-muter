@@ -228,6 +228,10 @@
       // symptom is audio that simply never decodes. Without these records
       // a paste shows the consequence and none of the decisions.
       runs: [],
+      // 0.1.42: seek-preemption decisions, including the declines. The
+      // wager (estimated remaining work against respawn cost) is only
+      // checkable after the fact if both sides of it were recorded.
+      preempt: [],
       truncated: false
     };
   }
@@ -670,6 +674,24 @@
     markDirty();
   }
 
+  function logPreempt(entry) {
+    if (!current || !entry) return;
+    pushCapped(
+      current.preempt,
+      {
+        t: mediaTime(),
+        wall: now(),
+        action: String(entry.action || "unknown"),
+        reason: entry.reason == null ? null : String(entry.reason),
+        remainingMs: typeof entry.remainingMs === "number" ? Math.round(entry.remainingMs) : null,
+        costMs: typeof entry.costMs === "number" ? Math.round(entry.costMs) : null,
+        actualCostMs: typeof entry.actualCostMs === "number" ? entry.actualCostMs : null
+      },
+      MAX_HEALTH
+    );
+    markDirty();
+  }
+
   function logError(text) {
     var ev = { t: mediaTime(), wall: now(), text: String(text) };
     if (!current) {
@@ -730,6 +752,7 @@
     logHealth: logHealth,
     logLanguage: logLanguage,
     logRunTopology: logRunTopology,
+    logPreempt: logPreempt,
     setTimeSource: setTimeSource,
     flushNow: flushNow,
     // exposed for tests/inspection; not part of the contract consumers use

@@ -14168,6 +14168,89 @@
     }
   });
 
+  // shared/preempt.js
+  var require_preempt = __commonJS({
+    "shared/preempt.js"(exports, module) {
+      (function(root) {
+        "use strict";
+        var DEFAULT_RESPAWN_MS = 2500;
+        var WARMUP_PENALTY_MS = 1500;
+        var SETTLE_MS = 400;
+        var MIN_PREEMPT_INTERVAL_MS = 5e3;
+        var DEFAULT_RTF = 0.3;
+        var MIN_NET_SAVING_MS = 2e3;
+        function stillUseful(inFlight, playheadT, protectMarginS) {
+          if (!inFlight) return false;
+          if (typeof playheadT !== "number") return true;
+          var margin = typeof protectMarginS === "number" ? protectMarginS : 5;
+          return inFlight.start <= playheadT + margin && inFlight.end >= playheadT;
+        }
+        function estimateRemainingMs(inFlight, effectiveRtf, now) {
+          if (!inFlight || typeof inFlight.startedWall !== "number") return null;
+          var audioS = typeof inFlight.audioS === "number" && inFlight.audioS > 0 ? inFlight.audioS : null;
+          if (audioS == null) return null;
+          var rtf = typeof effectiveRtf === "number" && isFinite(effectiveRtf) && effectiveRtf > 0 ? effectiveRtf : DEFAULT_RTF;
+          var expectedTotalMs = audioS * rtf * 1e3;
+          var elapsedMs = Math.max(0, (typeof now === "number" ? now : Date.now()) - inFlight.startedWall);
+          return Math.max(0, expectedTotalMs - elapsedMs);
+        }
+        function respawnCostMs(input) {
+          var measured = typeof input.respawnMeasuredMs === "number" && input.respawnMeasuredMs > 0 ? input.respawnMeasuredMs : DEFAULT_RESPAWN_MS;
+          var warmup = typeof input.warmupPenaltyMs === "number" ? input.warmupPenaltyMs : WARMUP_PENALTY_MS;
+          return measured + warmup;
+        }
+        function decide(input) {
+          input = input || {};
+          var now = typeof input.now === "number" ? input.now : Date.now();
+          var inFlight = input.inFlight;
+          var cost = respawnCostMs(input);
+          if (!inFlight) {
+            return { action: "none", reason: "nothing-in-flight", remainingMs: null, costMs: cost };
+          }
+          if (input.ownSessionKey != null && inFlight.sessionKey != null && inFlight.sessionKey !== input.ownSessionKey) {
+            return { action: "none", reason: "other-session-owns-worker", remainingMs: null, costMs: cost };
+          }
+          var settleMs = typeof input.settleMs === "number" ? input.settleMs : SETTLE_MS;
+          if (typeof input.sinceSeekMs === "number" && input.sinceSeekMs < settleMs) {
+            return { action: "none", reason: "not-settled", remainingMs: null, costMs: cost };
+          }
+          if (stillUseful(inFlight, input.playheadT, input.protectMarginS)) {
+            return { action: "let-finish", reason: "still-useful", remainingMs: null, costMs: cost };
+          }
+          var minInterval = typeof input.minPreemptIntervalMs === "number" ? input.minPreemptIntervalMs : MIN_PREEMPT_INTERVAL_MS;
+          if (typeof input.lastPreemptWall === "number" && now - input.lastPreemptWall < minInterval) {
+            return { action: "let-finish", reason: "thrash-guard", remainingMs: null, costMs: cost };
+          }
+          var remainingMs = estimateRemainingMs(inFlight, input.effectiveRtf, now);
+          if (remainingMs == null) {
+            return { action: "let-finish", reason: "no-estimate", remainingMs: null, costMs: cost };
+          }
+          var minNet = typeof input.minNetSavingMs === "number" ? input.minNetSavingMs : MIN_NET_SAVING_MS;
+          if (remainingMs <= cost + minNet) {
+            return { action: "let-finish", reason: "cheaper-to-finish", remainingMs, costMs: cost };
+          }
+          return { action: "preempt", reason: "abandoned-and-slow", remainingMs, costMs: cost };
+        }
+        var PMPreemptCore = {
+          DEFAULT_RESPAWN_MS,
+          WARMUP_PENALTY_MS,
+          SETTLE_MS,
+          MIN_PREEMPT_INTERVAL_MS,
+          DEFAULT_RTF,
+          MIN_NET_SAVING_MS,
+          stillUseful,
+          estimateRemainingMs,
+          respawnCostMs,
+          decide
+        };
+        root.PMPreempt = PMPreemptCore;
+        if (typeof module !== "undefined" && module.exports) {
+          module.exports = { PMPreemptCore };
+        }
+      })(typeof globalThis !== "undefined" ? globalThis : exports);
+    }
+  });
+
   // src/offscreen-src.js
   var require_offscreen_src = __commonJS({
     "src/offscreen-src.js"() {
@@ -14175,6 +14258,7 @@
       var import_language = __toESM(require_language());
       var import_decode = __toESM(require_decode());
       var import_runs = __toESM(require_runs());
+      var import_preempt = __toESM(require_preempt());
       var MODEL_IDS = {
         tiny: "Xenova/whisper-tiny.en",
         base: "Xenova/whisper-base.en",
@@ -14204,10 +14288,11 @@
         for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
         return bytes;
       }
-      var whisperWorker = new Worker(chrome.runtime.getURL("dist/whisper.worker.js"));
-      whisperWorker.postMessage({ type: "init", wasmPathsBase: chrome.runtime.getURL("dist/") });
+      var whisperWorker = null;
       var nextWorkerRequestId = 1;
       var pendingWorkerRequests = /* @__PURE__ */ new Map();
+      var lastRespawnCostMs = null;
+      var workerSpawnedAtWall = 0;
       var warmInfo = null;
       function logWarmToSession(s) {
         if (!warmInfo) return;
@@ -14217,7 +14302,36 @@
           "[PM-WARM] worker spawn=" + warmInfo.workerSpawnMs + "ms model load=" + warmInfo.modelLoadMs + "ms (ready " + sinceReadyS + "s before this session started)"
         );
       }
-      whisperWorker.onmessage = (ev) => {
+      function spawnWhisperWorker() {
+        workerSpawnedAtWall = Date.now();
+        whisperWorker = new Worker(chrome.runtime.getURL("dist/whisper.worker.js"));
+        whisperWorker.postMessage({ type: "init", wasmPathsBase: chrome.runtime.getURL("dist/") });
+        whisperWorker.onmessage = handleWorkerMessage;
+        whisperWorker.onerror = (ev) => {
+          broadcastDiag("whisper worker onerror: " + (ev.message || ev));
+        };
+      }
+      function respawnWhisperWorker(reason) {
+        const startedWall = Date.now();
+        for (const [, pending] of pendingWorkerRequests) {
+          try {
+            pending.reject(new Error("worker preempted: " + reason));
+          } catch (e) {
+          }
+        }
+        pendingWorkerRequests.clear();
+        try {
+          if (whisperWorker) whisperWorker.terminate();
+        } catch (e) {
+          log("[PM-PREEMPT] terminate threw (continuing): " + String(e));
+        }
+        inFlightCompute = null;
+        transcribeChain = Promise.resolve();
+        spawnWhisperWorker();
+        lastRespawnCostMs = Date.now() - startedWall;
+        return lastRespawnCostMs;
+      }
+      function handleWorkerMessage(ev) {
         const msg = ev.data;
         if (!msg) return;
         if (msg.type === "worker-error") {
@@ -14235,10 +14349,8 @@
         pendingWorkerRequests.delete(msg.requestId);
         if (msg.type === "result" || msg.type === "lang-result") pending.resolve(msg);
         else pending.reject(new Error(msg.error || "unknown whisper worker error"));
-      };
-      whisperWorker.onerror = (ev) => {
-        broadcastDiag("whisper worker onerror: " + (ev.message || ev));
-      };
+      }
+      spawnWhisperWorker();
       function transcribeInWorker(modelId, float16k, options) {
         return new Promise((resolve, reject) => {
           const requestId = nextWorkerRequestId++;
@@ -14253,6 +14365,7 @@
           whisperWorker.postMessage({ type: "detect-language", requestId, float16k });
         });
       }
+      var inFlightCompute = null;
       var transcribeChain = Promise.resolve();
       function runSerialized(fn) {
         const run = transcribeChain.then(fn, fn);
@@ -14468,6 +14581,12 @@
             // agreement). See shared/language.js for why a single confident-
             // looking probe is not enough to leave English.
             languageGate: globalThis.PMLanguage ? globalThis.PMLanguage.newState() : null,
+            // 0.1.42 preemption inputs.
+            wallRtf: null,
+            // EWMA of wall ms per second of audio
+            lastSeekWall: 0,
+            lastPreemptWall: 0,
+            preemptTimer: null,
             // Generation counter (0.1.18) - bumped on a page-load reset (dropped
             // entirely, see dropSessionsForTab) or a seek (pm-seek, in place -
             // coverage/state untouched). maybeProcess's loop and transcribeWindow
@@ -14640,6 +14759,70 @@
           }, limitMs);
         });
         return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+      }
+      function scheduleSeekPreemptionCheck(s) {
+        const api = globalThis.PMPreempt;
+        if (!api) return;
+        s.lastSeekWall = Date.now();
+        if (s.preemptTimer) clearTimeout(s.preemptTimer);
+        s.preemptTimer = setTimeout(() => {
+          s.preemptTimer = null;
+          try {
+            evaluateSeekPreemption(s);
+          } catch (e) {
+            log("[PM-PREEMPT] evaluation threw (continuing): " + String(e));
+          }
+        }, api.SETTLE_MS);
+      }
+      function evaluateSeekPreemption(s) {
+        const api = globalThis.PMPreempt;
+        if (!api || s.dropped) return;
+        const now = Date.now();
+        const verdict = api.decide({
+          inFlight: inFlightCompute,
+          ownSessionKey: sessionKey(s.tabId, s.videoId),
+          playheadT: s.currentTimeS,
+          protectMarginS: 5,
+          effectiveRtf: s.wallRtf,
+          now,
+          sinceSeekMs: now - (s.lastSeekWall || 0),
+          lastPreemptWall: s.lastPreemptWall || null,
+          respawnMeasuredMs: measuredRespawnMs()
+        });
+        if (verdict.action === "none") return;
+        const detail = "remaining=" + (verdict.remainingMs != null ? Math.round(verdict.remainingMs) + "ms" : "unknown") + " respawnCost=" + Math.round(verdict.costMs) + "ms";
+        if (verdict.action === "let-finish") {
+          notifyTab(s, "[PM-PREEMPT] letting the in-flight window finish (" + verdict.reason + ") " + detail);
+          reportPreemptDecision(s, verdict, null);
+          return;
+        }
+        const abandoned = inFlightCompute;
+        const actualCostMs = respawnWhisperWorker("seek to " + (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : "?"));
+        s.lastPreemptWall = now;
+        notifyTab(
+          s,
+          "[PM-PREEMPT] terminated the worker mid-window " + (abandoned ? "[" + abandoned.start.toFixed(2) + "," + abandoned.end.toFixed(2) + ") " : "") + "(" + verdict.reason + ") " + detail + " actualRespawn=" + actualCostMs + "ms"
+        );
+        reportPreemptDecision(s, verdict, actualCostMs);
+        maybeProcess(s);
+      }
+      function measuredRespawnMs() {
+        if (lastRespawnCostMs != null) return lastRespawnCostMs;
+        if (warmInfo) return (warmInfo.workerSpawnMs || 0) + (warmInfo.modelLoadMs || 0);
+        return null;
+      }
+      function reportPreemptDecision(s, verdict, actualCostMs) {
+        chrome.runtime.sendMessage({
+          type: "pm-preempt-decision",
+          tabId: s.tabId,
+          videoId: s.videoId,
+          action: verdict.action,
+          reason: verdict.reason,
+          remainingMs: verdict.remainingMs,
+          costMs: verdict.costMs,
+          actualCostMs
+        }).catch(() => {
+        });
       }
       function markUnanalyzable(s, reason) {
         if (s.unanalyzable) return;
@@ -14995,28 +15178,50 @@
         const effectiveModelId = s.multilingualEnabled && s.languageState === "resolved" && s.detectedLanguage && s.detectedLanguage !== "en" ? "multilingual" : s.modelId;
         const tBeforeQueue = performance.now();
         let tTranscribeStart = 0;
-        const workerResult = await runSerialized(() => {
-          tTranscribeStart = performance.now();
-          return transcribeInWorker(effectiveModelId, float16k, {
-            return_timestamps: "word",
-            chunk_length_s: 30,
-            // Repetition mitigation (0.1.13), best-effort: each window is already
-            // its own independent transcribe call with no prior window's text fed
-            // back in, so cross-window conditioning is already effectively off
-            // (transformers.js's ASR pipeline doesn't expose a direct
-            // condition_on_previous_text toggle to set this explicitly). A SINGLE
-            // window's own decode can still degenerate into a repetition loop on
-            // ambiguous/quiet audio (the "it's him" x40 case) - no_repeat_ngram_size
-            // is passed through in case the underlying generate() call honors it;
-            // NOT verified against this exact transformers.js version, so the
-            // guaranteed defense is collapseHallucinationLoops() below, not this.
-            no_repeat_ngram_size: 3
+        inFlightCompute = {
+          sessionKey: sessionKey(s.tabId, s.videoId),
+          start: absStart,
+          end: absEnd,
+          startedWall: Date.now(),
+          audioS: absEnd - absStart
+        };
+        let workerResult;
+        try {
+          workerResult = await runSerialized(() => {
+            tTranscribeStart = performance.now();
+            return transcribeInWorker(effectiveModelId, float16k, {
+              return_timestamps: "word",
+              chunk_length_s: 30,
+              // Repetition mitigation (0.1.13), best-effort: each window is already
+              // its own independent transcribe call with no prior window's text fed
+              // back in, so cross-window conditioning is already effectively off
+              // (transformers.js's ASR pipeline doesn't expose a direct
+              // condition_on_previous_text toggle to set this explicitly). A SINGLE
+              // window's own decode can still degenerate into a repetition loop on
+              // ambiguous/quiet audio (the "it's him" x40 case) - no_repeat_ngram_size
+              // is passed through in case the underlying generate() call honors it;
+              // NOT verified against this exact transformers.js version, so the
+              // guaranteed defense is collapseHallucinationLoops() below, not this.
+              no_repeat_ngram_size: 3
+            });
           });
-        });
+        } finally {
+          if (inFlightCompute && inFlightCompute.start === absStart && inFlightCompute.end === absEnd) {
+            inFlightCompute = null;
+          }
+        }
         const transcribeMs = performance.now() - tTranscribeStart;
         const decodeMs = tDecoded - t0;
         const queueMs = tTranscribeStart - tBeforeQueue;
         const computeMs = transcribeMs;
+        {
+          const audioS = absEnd - absStart;
+          const wallMs2 = performance.now() - t0;
+          if (audioS > 0 && wallMs2 > 0) {
+            const sample = wallMs2 / 1e3 / audioS;
+            s.wallRtf = s.wallRtf == null ? sample : s.wallRtf * 0.7 + sample * 0.3;
+          }
+        }
         if (s.generation !== myGeneration) {
           if (s.dropped) {
             notifyTab(
@@ -15331,6 +15536,7 @@
           if (s) {
             s.generation++;
             if (typeof msg.currentTime === "number" && !Number.isNaN(msg.currentTime)) s.currentTimeS = msg.currentTime;
+            scheduleSeekPreemptionCheck(s);
             maybeProcess(s);
           }
           return;
