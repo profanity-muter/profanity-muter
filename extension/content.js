@@ -1250,6 +1250,37 @@
     return globalThis.PMHealth || null;
   }
 
+  // Shorts (0.1.33). The content script matches all of youtube.com, so it
+  // has always RUN on /shorts/ pages; it just never said anything about
+  // them. Code-level findings, before gating:
+  //   - videoId comes from location.search's `v` param or, failing that,
+  //     the pathname (capture.js currentVideoId / this file's
+  //     currentVideoIdFromLocation), so every Short gets a distinct id and
+  //     every swipe fires a RESET that discards all accumulated coverage.
+  //   - Transcription intentionally trails playback by seconds. A Short is
+  //     commonly 15-60s, starts instantly, and LOOPS, so analysis has to
+  //     win a race it was never designed for, on every swipe.
+  //   - resolveRealVideo prefers '#movie_player video.html5-main-video',
+  //     the watch-page player; the Shorts player is a different container,
+  //     so element resolution falls back to a size heuristic.
+  //   - The whole session model assumes one monotonic video per page.
+  // None of that adds up to working support, and the default catch-up mode
+  // is "play", so a user scrolling Shorts today gets unfiltered audio with
+  // a pill implying otherwise. Say so instead.
+  function isShortsPage() {
+    try {
+      return location.pathname.indexOf('/shorts/') === 0;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Page-scoped, NOT session-scoped: every swipe starts a new session, so a
+  // per-session flag would fire the notice on every Short in a scroll.
+  // Reset when the user leaves Shorts, so returning later informs them once
+  // more rather than never again.
+  var shortsNoticeShown = false;
+
   function noteFatalDiag(text) {
     var api = healthApi();
     if (!api || !session) return;
@@ -1296,6 +1327,7 @@
   function evaluateHealth(video) {
     var api = healthApi();
     if (!api || !session) return;
+    if (!isShortsPage()) shortsNoticeShown = false;
     var nowWall = Date.now();
     if (nowWall - lastHealthCallWall < HEALTH_CALL_INTERVAL_MS) return;
     lastHealthCallWall = nowWall;
@@ -1305,6 +1337,7 @@
       isWatchPage: !!video,
       isPaused: !video || video.paused,
       isLive: !!(video && isLiveStream(video)),
+      isShorts: isShortsPage(),
       unanalyzable: !!session.unanalyzable,
       windowsCompleted: session.windowsCompleted,
       audioSegments: session.audioSegments,
@@ -1358,6 +1391,12 @@
       session.liveNoticeShown = true;
       showPlayerNotice(verdict.message, 'neutral');
     }
+    // Page-scoped flag, so a fast scroll through twenty Shorts produces one
+    // notice rather than twenty.
+    if (verdict.reason === api.REASONS.SHORTS && !shortsNoticeShown) {
+      shortsNoticeShown = true;
+      showPlayerNotice(verdict.message, 'neutral');
+    }
   }
 
   function currentHealth() {
@@ -1375,6 +1414,7 @@
     if (session.unanalyzable) return { kind: 'off' };
     var video = getVideo();
     if (!video) return null;
+    if (isShortsPage()) return { kind: 'shorts' };
     if (isLiveStream(video)) return { kind: 'live' };
     var t = video.currentTime;
     var horizonEnd = clampedHorizonEnd(video, t);
@@ -1439,6 +1479,7 @@
     if (!statusPillEl) return;
     var label;
     if (status.kind === 'off') label = '🛡 Off';
+    else if (status.kind === 'shorts') label = '🛡 Shorts not supported';
     else if (status.kind === 'live') label = '🛡 Live - limited support';
     else if (status.kind === 'protected') label = '🛡 Protected';
     else if (status.kind === 'analyzing-safe') label = '🛡 Analyzing - safe to pause (~' + status.etaS + 's)';

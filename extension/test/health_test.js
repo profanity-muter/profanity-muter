@@ -237,6 +237,32 @@ test("a livestream that somehow analyzed windows is still reported as unsupporte
   assert.strictEqual(v.reason, R.LIVESTREAM);
 });
 
+test("a Short is unsupported, never 'broken'", () => {
+  const v = evaluate({ isShorts: true, windowsCompleted: 0, audioSegments: 0 });
+  assert.strictEqual(v.status, S.UNSUPPORTED);
+  assert.strictEqual(v.reason, R.SHORTS);
+  assert.ok(/Shorts aren't supported yet/.test(v.message), v.message);
+  assert.ok(!/isn't working/.test(v.message), "must not use the alarming copy");
+});
+
+test("a Short is judged immediately, without waiting out the clock", () => {
+  const v = evaluate({ isShorts: true, playbackMs: 0, windowsCompleted: 0, audioSegments: 0 });
+  assert.strictEqual(v.status, S.UNSUPPORTED);
+  assert.strictEqual(v.due, true);
+});
+
+test("Shorts outranks live, since a Short can also be a premiere", () => {
+  const v = evaluate({ isShorts: true, isLive: true });
+  assert.strictEqual(v.reason, R.SHORTS);
+});
+
+test("a Short that somehow analyzed windows is still reported as unsupported", () => {
+  // Best-effort coverage can happen on a looping clip; the guarantee still
+  // does not hold, so the accurate label wins.
+  const v = evaluate({ isShorts: true, windowsCompleted: 5 });
+  assert.strictEqual(v.reason, R.SHORTS);
+});
+
 test("protected/undecodable content is unsupported, not broken", () => {
   const v = evaluate({ unanalyzable: true, windowsCompleted: 0, audioSegments: 0 });
   assert.strictEqual(v.status, S.UNSUPPORTED);

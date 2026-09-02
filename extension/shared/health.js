@@ -63,6 +63,7 @@
     WORKER_DEAD: "worker-dead",
     ZERO_WINDOWS: "zero-windows-completed",
     LIVESTREAM: "livestream-unsupported",
+    SHORTS: "shorts-unsupported",
     UNANALYZABLE: "content-unanalyzable"
   };
 
@@ -96,6 +97,8 @@
     "Profanity Muter isn't working on this video. Audio is NOT being filtered.";
   MESSAGES[REASONS.LIVESTREAM] =
     "Livestreams aren't supported. Audio is not filtered on this video.";
+  MESSAGES[REASONS.SHORTS] =
+    "Shorts aren't supported yet. Audio is not filtered here.";
   MESSAGES[REASONS.UNANALYZABLE] =
     "This video's audio is protected and can't be analyzed. Audio is not filtered on this video.";
 
@@ -108,6 +111,7 @@
   DETAILS[REASONS.WORKER_DEAD] = "The transcription process stopped responding.";
   DETAILS[REASONS.ZERO_WINDOWS] = "Audio arrived but no part of it was analyzed.";
   DETAILS[REASONS.LIVESTREAM] = "Live video can't be analyzed ahead of playback.";
+  DETAILS[REASONS.SHORTS] = "Shorts are too short, and swap too fast, to analyze before they play.";
   DETAILS[REASONS.UNANALYZABLE] = "The audio is encrypted (protected content).";
 
   function messageFor(reason) {
@@ -157,6 +161,7 @@
   //   isWatchPage         false on any non-video page
   //   isPaused            current paused state
   //   isLive              live stream / premiere
+  //   isShorts            a /shorts/ page (see content.js isShortsPage)
   //   unanalyzable        offscreen gave up (DRM/undecodable)
   //   windowsCompleted    analysis windows finished for this video
   //   audioSegments       audio segments intercepted for this video
@@ -187,6 +192,20 @@
     // also judged before anything else so a live stream can never be
     // reported as "broken": zero completed windows is the EXPECTED state
     // there, not a fault.
+    // Shorts, checked first among the limits because a Short can also be a
+    // premiere and the Shorts answer is the more useful one there. See
+    // CENSOR_NOTES.md "Shorts are an explicit state" for why this is gated
+    // rather than supported: analysis cannot outrun a 30-second clip that
+    // restarts on loop and is replaced wholesale by a swipe.
+    if (input.isShorts === true) {
+      return {
+        status: STATUS.UNSUPPORTED,
+        reason: REASONS.SHORTS,
+        message: messageFor(REASONS.SHORTS),
+        detail: detailFor(REASONS.SHORTS),
+        due: true
+      };
+    }
     if (input.isLive === true) {
       return {
         status: STATUS.UNSUPPORTED,
