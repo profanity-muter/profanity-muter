@@ -263,6 +263,95 @@ test("no incentive is promised anywhere in the review or share copy", () => {
   });
 });
 
+// ---- toolbar badge (0.1.33) ---------------------------------------------
+//
+// One badge, two things that might want it, so the priority IS the design.
+
+test("badgeDecision: an unhealthy tab badges, per tab", () => {
+  const d = M.badgeDecision({ healthStatus: "unhealthy", healthReason: "no-audio-intercepted" });
+  assert.strictEqual(d.text, M.BADGE_HEALTH_TEXT);
+  assert.strictEqual(d.color, M.BADGE_HEALTH_COLOR);
+  assert.strictEqual(d.scope, "tab");
+});
+
+test("badgeDecision: health OUTRANKS the review nudge", () => {
+  // A review nudge on top of a broken filter would be useless and insulting.
+  const d = M.badgeDecision({ healthStatus: "unhealthy", reviewEligible: true });
+  assert.strictEqual(d.text, M.BADGE_HEALTH_TEXT);
+  assert.strictEqual(d.scope, "tab");
+});
+
+test("badgeDecision: documented limits never badge", () => {
+  // A permanent mark for "this is a Short" would train users to ignore the
+  // badge, costing exactly the signal the health case depends on.
+  ["unsupported", "pending", "ok", null, undefined].forEach(function (status) {
+    assert.strictEqual(M.badgeDecision({ healthStatus: status }).text, "", String(status));
+  });
+});
+
+test("badgeDecision: the review nudge is global and quiet", () => {
+  const d = M.badgeDecision({ reviewEligible: true });
+  assert.strictEqual(d.text, M.BADGE_REVIEW_TEXT);
+  assert.strictEqual(d.color, M.BADGE_REVIEW_COLOR);
+  assert.strictEqual(d.scope, "global");
+});
+
+test("badgeDecision: nothing to say means an empty badge", () => {
+  assert.strictEqual(M.badgeDecision({}).text, "");
+  assert.strictEqual(M.badgeDecision().text, "");
+  assert.strictEqual(M.badgeDecision({ reviewEligible: false }).text, "");
+});
+
+// ---- milestone pill (0.1.33) --------------------------------------------
+
+test("the milestone fires once, when eligibility is first reached", () => {
+  assert.strictEqual(M.shouldShowMilestone({ eligible: true, showStatus: true }), true);
+});
+
+test("the milestone never fires twice", () => {
+  const latch = M.makeMilestoneRecord(NOW);
+  assert.strictEqual(
+    M.shouldShowMilestone({ eligible: true, showStatus: true, milestoneRecord: latch }),
+    false
+  );
+  assert.strictEqual(M.milestoneAlreadyShown(latch), true);
+  assert.strictEqual(M.milestoneAlreadyShown(undefined), false);
+  assert.strictEqual(M.milestoneAlreadyShown({}), false);
+});
+
+test("the milestone respects the routine-status opt-out", () => {
+  // Unlike the health warning, this IS routine status: pm_showStatus=false
+  // means no.
+  assert.strictEqual(M.shouldShowMilestone({ eligible: true, showStatus: false }), false);
+});
+
+test("the milestone does not fire before the milestone is reached", () => {
+  assert.strictEqual(M.shouldShowMilestone({ eligible: false, showStatus: true }), false);
+  assert.strictEqual(M.shouldShowMilestone({}), false);
+});
+
+test("milestoneText states a count and asks for nothing", () => {
+  assert.strictEqual(M.milestoneText({ videosProtected: 10 }), "10 videos protected");
+  assert.strictEqual(M.milestoneText({ videosProtected: 0 }), "");
+  assert.strictEqual(M.milestoneText({}), "");
+  assert.strictEqual(M.milestoneText(null), "");
+  // Policy-critical: product status, not review copy.
+  assert.ok(!/review|rate|rating|star|store/i.test(M.milestoneText({ videosProtected: 12 })));
+});
+
+test("the milestone reuses the review milestone rather than inventing one", () => {
+  // Two definitions of "enough usage" would be two things to keep in sync.
+  const v = M.reviewPromptEligibility(eligibleInput());
+  assert.strictEqual(M.shouldShowMilestone({ eligible: v.eligible, showStatus: true }), true);
+});
+
+test("acting on the completion ask silences the badge and the pill too", () => {
+  const record = M.completionReviewOutcome(true, NOW);
+  const v = M.reviewPromptEligibility(eligibleInput({ reviewPrompt: record }));
+  assert.strictEqual(M.badgeDecision({ reviewEligible: v.eligible }).text, "");
+  assert.strictEqual(M.shouldShowMilestone({ eligible: v.eligible, showStatus: true }), false);
+});
+
 // ---- completion review module (0.1.33) ----------------------------------
 
 test("clicking Leave a review at completion retires every later ask", () => {

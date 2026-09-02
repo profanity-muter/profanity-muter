@@ -1085,6 +1085,18 @@
     reviewCardEl.classList.remove("pm-hidden");
     reviewCardEl.setAttribute("aria-hidden", "false");
 
+    // Clear the global review badge (0.1.33). Opening the popup while the
+    // nudge is up IS the badge doing its whole job, and markReviewPromptShown
+    // below makes the nudge permanently ineligible anyway; clearing here
+    // means the toolbar stops nagging in the same instant the card appears
+    // rather than on the next storage event.
+    try {
+      chrome.action.setBadgeText({ text: "" });
+    } catch (e) {
+      // chrome.action is unavailable in the harness and in any non-popup
+      // context; the storage stamp still ends the nudge.
+    }
+
     // Record it as shown IMMEDIATELY, not on click. If this waited for a
     // button, a user who simply closed the popup would be asked again on
     // every open - which is exactly the repeated nagging the "at most

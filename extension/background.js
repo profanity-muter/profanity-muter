@@ -10,6 +10,16 @@
 // down and rebuilt freely.
 'use strict';
 
+// shared/moments.js is a plain script attaching globalThis.PMMoments;
+// importScripts is how an MV3 service worker loads one. Used for the badge
+// and milestone decisions so the SW and the popup cannot disagree about
+// what "eligible" means (0.1.33).
+try {
+  importScripts('shared/moments.js');
+} catch (e) {
+  console.warn('[PM-BG] could not load shared/moments.js:', String(e));
+}
+
 var portsByTabId = new Map(); // tabId -> chrome.runtime.Port
 var videoIdByTabId = new Map(); // tabId -> last known videoId (0.1.15: needed to re-push pm-config on offscreen respawn without waiting for a video change)
 var creatingOffscreen = null;
@@ -140,6 +150,103 @@ chrome.runtime.onInstalled.addListener(function (details) {
 ensureOffscreenDocument();
 chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
 
+
+// ---- toolbar badge + milestone (0.1.33) ------------------------------------
+//
+// The only surface this extension owns that a user sees without opening
+// anything, and it needs no permission. See shared/moments.js badgeDecision
+// for the priority rule: health outranks the review nudge always, and
+// documented limits (livestream, Shorts) never badge at all.
+//
+// Health is PER TAB, so it uses setBadgeText's tabId form: a broken filter in
+// one tab must not mark every other tab. The review nudge is global, being a
+// property of the install rather than of any page.
+var unhealthyTabs = new Set();
+var reviewNudgeActive = false;
+
+function moments() {
+  return typeof PMMoments !== 'undefined' ? PMMoments : null;
+}
+
+function applyTabBadge(tabId, healthStatus) {
+  var m = moments();
+  if (!m || tabId == null) return;
+  var decision = m.badgeDecision({ healthStatus: healthStatus });
+  try {
+    chrome.action.setBadgeText({ tabId: tabId, text: decision.text });
+    if (decision.color) {
+      chrome.action.setBadgeBackgroundColor({ tabId: tabId, color: decision.color });
+    }
+  } catch (e) {
+    // A tab closed between the message and this call throws; harmless.
+  }
+}
+
+function applyGlobalBadge() {
+  var m = moments();
+  if (!m) return;
+  var decision = m.badgeDecision({ reviewEligible: reviewNudgeActive });
+  try {
+    chrome.action.setBadgeText({ text: decision.text });
+    if (decision.color) chrome.action.setBadgeBackgroundColor({ color: decision.color });
+  } catch (e) {}
+}
+
+// Read what the review gate needs and decide. Cheap, and only called on a
+// stats/settings change or the daily alarm, never in a loop.
+function refreshReviewNudge(cb) {
+  var m = moments();
+  if (!m) return;
+  chrome.storage.sync.get(
+    ['pm_ackNotPerfect', 'pm_installedAt', 'pm_reviewPrompt', 'pm_milestoneShown'],
+    function (syncItems) {
+      if (chrome.runtime.lastError) return;
+      chrome.storage.local.get(['pm_stats'], function (localItems) {
+        if (chrome.runtime.lastError) return;
+        var stats = (localItems && localItems.pm_stats) || {};
+        var verdict = m.reviewPromptEligibility({
+          stats: stats,
+          installedAt: syncItems && syncItems.pm_installedAt,
+          ack: syncItems && syncItems.pm_ackNotPerfect,
+          reviewPrompt: syncItems && syncItems.pm_reviewPrompt,
+          now: Date.now()
+        });
+        reviewNudgeActive = verdict.eligible;
+        applyGlobalBadge();
+        if (cb) cb(verdict, syncItems || {}, stats);
+      });
+    }
+  );
+}
+
+// Recompute when the inputs actually change rather than polling: pm_stats is
+// written by content.js as it mutes, and the sync keys change when the popup
+// or onboarding writes them.
+chrome.storage.onChanged.addListener(function (changes, area) {
+  if (area === 'local' && changes.pm_stats) refreshReviewNudge();
+  if (area === 'sync' && (changes.pm_reviewPrompt || changes.pm_ackNotPerfect || changes.pm_installedAt)) {
+    refreshReviewNudge();
+  }
+});
+
+// A slow safety net for the one input that changes with no event at all: the
+// 7-day install age. Twice a day is plenty for a gate measured in days.
+try {
+  chrome.alarms.create('pm-review-check', { periodInMinutes: 60 * 12 });
+  chrome.alarms.onAlarm.addListener(function (alarm) {
+    if (alarm && alarm.name === 'pm-review-check') refreshReviewNudge();
+  });
+} catch (e) {
+  // No alarms permission: the storage listener above still covers the common
+  // cases, so this degrades rather than breaks.
+}
+
+chrome.tabs.onRemoved.addListener(function (tabId) {
+  unhealthyTabs.delete(tabId);
+});
+
+refreshReviewNudge();
+
 function sendModelConfig(tabId, videoId) {
   try {
     // pm_multilingual (0.1.25, default true - the wordlist agent owns the
@@ -252,8 +359,44 @@ chrome.tabs.onRemoved.addListener(function (tabId) {
 // Results/logs come back from the offscreen doc via sendMessage (offscreen
 // docs cannot open runtime.connect ports to other extension contexts) and get
 // routed to the right tab's port by tabId.
-chrome.runtime.onMessage.addListener(function (msg) {
+chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (!msg || !msg.type) return;
+  // Health transitions from a tab's content script (0.1.33). Only genuinely
+  // broken statuses reach the badge; badgeDecision enforces that.
+  if (msg.type === 'pm-health') {
+    var healthTabId = sender && sender.tab ? sender.tab.id : null;
+    if (healthTabId != null) {
+      if (msg.status === 'unhealthy') unhealthyTabs.add(healthTabId);
+      else unhealthyTabs.delete(healthTabId);
+      applyTabBadge(healthTabId, msg.status);
+    }
+    return;
+  }
+  // A content script asking whether to show the one-shot milestone pill. The
+  // SW owns the decision because it is the only context that sees both the
+  // stats and the latch without the popup being open.
+  if (msg.type === 'pm-milestone-check') {
+    var m0 = moments();
+    if (!m0) return;
+    refreshReviewNudge(function (verdict, syncItems, stats) {
+      var show = m0.shouldShowMilestone({
+        eligible: verdict.eligible,
+        milestoneRecord: syncItems.pm_milestoneShown,
+        showStatus: msg.showStatus !== false
+      });
+      if (!show) {
+        sendResponse({ show: false });
+        return;
+      }
+      // Stamp the latch as it is handed out, so two tabs asking at once
+      // cannot both show it.
+      chrome.storage.sync.set(
+        { pm_milestoneShown: m0.makeMilestoneRecord(Date.now()) },
+        function () { sendResponse({ show: true, text: m0.milestoneText(stats) }); }
+      );
+    });
+    return true; // async response
+  }
   if (msg.type === 'pm-words-result') {
     var port = portsByTabId.get(msg.tabId);
     if (port) {

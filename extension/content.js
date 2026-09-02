@@ -1328,6 +1328,7 @@
     var api = healthApi();
     if (!api || !session) return;
     if (!isShortsPage()) shortsNoticeShown = false;
+    maybeAskMilestone();
     var nowWall = Date.now();
     if (nowWall - lastHealthCallWall < HEALTH_CALL_INTERVAL_MS) return;
     lastHealthCallWall = nowWall;
@@ -1356,6 +1357,7 @@
     // appeared and then cleared is a materially different story from one
     // that never appeared, and only the log can tell them apart later.
     if (verdict.status === api.STATUS.OK) {
+      sendHealthToBackground(verdict.status); // clears the tab badge
       if (prev && prev.status !== api.STATUS.OK) {
         TLOG(TAG, '[PM-HEALTH] recovered: analysis is progressing again');
         devlog('logHealth', {
@@ -1367,6 +1369,11 @@
       }
       return;
     }
+
+    // Tell the service worker so it can badge THIS tab (0.1.33). Only the
+    // status travels; PMMoments.badgeDecision decides what it means, so the
+    // rule lives in one place rather than being re-implemented here.
+    sendHealthToBackground(verdict.status);
 
     TWARN(
       TAG,
@@ -1397,6 +1404,62 @@
       shortsNoticeShown = true;
       showPlayerNotice(verdict.message, 'neutral');
     }
+  }
+
+  function sendHealthToBackground(status) {
+    try {
+      var p = chrome.runtime.sendMessage({ type: 'pm-health', status: status });
+      if (p && typeof p.catch === 'function') p.catch(function () {});
+    } catch (e) {
+      // Orphaned content script, or the SW asleep mid-send. The badge is a
+      // convenience and is never worth throwing into the pipeline for.
+    }
+  }
+
+  // ---- milestone pill (0.1.33) --------------------------------------------
+  //
+  // A single, bounded, informational moment when the usage milestone is
+  // first reached: "N videos protected". The service worker owns the
+  // decision and the one-shot latch (it is the only context that sees the
+  // stats and the latch without the popup being open); this file asks once
+  // per page and renders the answer.
+  //
+  // It is product status, so pm_showStatus=false suppresses it entirely,
+  // unlike the health warning. Asking is skipped in that case so the latch
+  // is not silently consumed for someone who would never see it.
+  var milestoneText = null;
+  var milestoneUntilWall = 0;
+  var milestoneAsked = false;
+
+  function maybeAskMilestone() {
+    if (milestoneAsked) return;
+    if (!statusSettings.showStatus) return; // routine status opt-out
+    milestoneAsked = true;
+    try {
+      chrome.runtime.sendMessage(
+        { type: 'pm-milestone-check', showStatus: true },
+        function (resp) {
+          if (chrome.runtime && chrome.runtime.lastError) return;
+          if (!resp || !resp.show || !resp.text) return;
+          var m = globalThis.PMMoments;
+          var visibleMs = (m && m.MILESTONE_VISIBLE_MS) || 8000;
+          milestoneText = resp.text;
+          milestoneUntilWall = Date.now() + visibleMs;
+          TLOG(TAG, '[PM-MILESTONE] ' + resp.text);
+        }
+      );
+    } catch (e) {
+      // No SW available: nothing to show, nothing to clean up.
+    }
+  }
+
+  function activeMilestoneText() {
+    if (!milestoneText) return null;
+    if (Date.now() > milestoneUntilWall) {
+      milestoneText = null;
+      return null;
+    }
+    return milestoneText;
   }
 
   function currentHealth() {
@@ -1470,6 +1533,14 @@
       setStatusPillActive(false);
       return;
     }
+    // Health outranks the milestone everywhere, which is why this sits
+    // below the unhealthy branch above rather than before it.
+    var milestone = activeMilestoneText();
+    if (milestone) {
+      setStatusPillActive(true, 'milestone');
+      if (statusPillEl) statusPillEl.textContent = milestone;
+      return;
+    }
     var status = computeStatusState();
     if (!status) {
       setStatusPillActive(false);
@@ -1521,7 +1592,9 @@
         'position:absolute;bottom:8px;right:8px;z-index:2147483646;' +
         (tone === 'warning'
           ? 'background:#8a1f11;color:#fff;font:bold 11px/1.4 sans-serif;'
-          : 'background:rgba(0,0,0,0.55);color:#fff;font:11px/1.4 sans-serif;') +
+          : tone === 'milestone'
+            ? 'background:#1d2f54;color:#f3e6c0;font:11px/1.4 sans-serif;'
+            : 'background:rgba(0,0,0,0.55);color:#fff;font:11px/1.4 sans-serif;') +
         'padding:2px 7px;' +
         'border-radius:3px;pointer-events:none;white-space:nowrap;';
       if (container === document.body) {

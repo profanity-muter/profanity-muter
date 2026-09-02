@@ -72,12 +72,17 @@ const stub = (initialSync, initialLocal, health) => `
     };
   }
   window.__pmTabs = [];
+  window.__pmBadge = [];
   window.__pmClipboard = null;
   window.chrome = {
     runtime: {
       lastError: undefined,
       getManifest: () => ({ version: '${MANIFEST_VERSION}' }),
       getURL: (p) => 'chrome-extension://stub/' + p
+    },
+    action: {
+      setBadgeText: (o) => { window.__pmBadge.push(o); },
+      setBadgeBackgroundColor: () => {}
     },
     tabs: {
       create: (opts) => { window.__pmTabs.push(opts.url); },
@@ -376,6 +381,10 @@ const browser = await chromium.launch();
   // would re-ask on every open.
   const rec = await page.evaluate(() => window.__pmSync.pm_reviewPrompt);
   check('review: pm_reviewPrompt written on render', !!rec && typeof rec.shownAt === 'number' && rec.dismissed === false, rec);
+  // 0.1.33: showing the card is the badge doing its job, so it clears.
+  const badge = await page.evaluate(() => window.__pmBadge);
+  check('review: the toolbar badge is cleared when the card renders',
+    badge.some(b => b.text === '' && b.tabId === undefined), badge);
   await page.close();
 }
 

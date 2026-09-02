@@ -206,6 +206,96 @@
     return value === true;
   }
 
+  // ---- toolbar badge (0.1.33) ---------------------------------------------
+  //
+  // The problem this solves: both things the extension needs to tell a user
+  // about (a broken filter, and the once-ever review ask) live inside the
+  // popup, and most users never open the popup. A badge is the only surface
+  // the extension owns that is visible without being asked for, and it
+  // needs no permission.
+  //
+  // ONE mechanism with a strict priority, because there is one badge and
+  // two things that might want it. Health always wins: "your filter is not
+  // working" is information the user needs, and a review nudge sitting on
+  // top of a broken filter would be both useless and insulting.
+  //
+  // Deliberately NOT badged: livestream and Shorts. Those are documented
+  // limits with their own calm on-player notices, and a permanent mark on
+  // the toolbar for "this is a Short" would train users to ignore the
+  // badge, costing exactly the signal the health case depends on.
+  var BADGE_HEALTH_TEXT = "!";
+  var BADGE_HEALTH_COLOR = "#8a1f11"; // matches the warning pill and banner
+  var BADGE_REVIEW_TEXT = "1";
+  var BADGE_REVIEW_COLOR = "#1d2f54"; // brand navy, deliberately quiet
+
+  // Kept as a literal rather than importing shared/health.js: this module
+  // loads in contexts that do not load that one, and the string is part of
+  // the health module's stable public contract.
+  var STATUS_UNHEALTHY = "unhealthy";
+
+  // badgeDecision(state) -> {text, color, scope}
+  //   scope "tab"    - applies to one tab (health is per tab)
+  //   scope "global" - applies to the whole action
+  //   text ""        - clear it
+  function badgeDecision(state) {
+    state = state || {};
+    // Only genuinely broken states badge. UNSUPPORTED is a limit, not a
+    // fault; PENDING and OK say nothing worth a badge.
+    if (state.healthStatus === STATUS_UNHEALTHY) {
+      return { text: BADGE_HEALTH_TEXT, color: BADGE_HEALTH_COLOR, scope: "tab" };
+    }
+    if (state.reviewEligible === true) {
+      return { text: BADGE_REVIEW_TEXT, color: BADGE_REVIEW_COLOR, scope: "global" };
+    }
+    return { text: "", color: null, scope: "tab" };
+  }
+
+  // ---- milestone pill -----------------------------------------------------
+  //
+  // The badge only reaches users who pinned the toolbar icon, and most
+  // people never do. The on-player status pill reaches everyone, so it gets
+  // ONE informational moment when the usage milestone is first reached:
+  // "N videos protected", shown once, briefly, and never again.
+  //
+  // What this is NOT: review copy. No mention of reviews, ratings or the
+  // store, and it asks for nothing. It is product status that happens to
+  // make the next popup open a little likelier, which keeps it clear of the
+  // promotional-injection problem that putting a real ask on the page would
+  // create.
+  //
+  // Because it IS routine status, pm_showStatus=false suppresses it
+  // entirely, unlike the health warning.
+  //
+  // Storage (chrome.storage.sync): pm_milestoneShown {shownAt} | absent.
+  var MILESTONE_VISIBLE_MS = 8000;
+
+  function makeMilestoneRecord(now) {
+    return { shownAt: typeof now === "number" ? now : Date.now() };
+  }
+
+  function milestoneAlreadyShown(record) {
+    return !!(record && typeof record === "object" && typeof record.shownAt === "number");
+  }
+
+  // The one-shot latch, as a pure predicate. `eligible` is the review
+  // milestone being reached, reused deliberately: the moment worth
+  // mentioning and the moment worth asking about a review are the same
+  // moment, and two definitions of "enough usage" would be two things to
+  // keep in sync.
+  function shouldShowMilestone(state) {
+    state = state || {};
+    if (state.showStatus === false) return false; // routine status opt-out
+    if (milestoneAlreadyShown(state.milestoneRecord)) return false;
+    return state.eligible === true;
+  }
+
+  // The pill's text. Counts only, no adjectives, no ask.
+  function milestoneText(stats) {
+    var videos = Number(stats && stats.videosProtected);
+    if (!isFinite(videos) || videos <= 0) return "";
+    return videos + " videos protected";
+  }
+
   // ---- completion review module (0.1.33) ----------------------------------
   //
   // The completion page is the highest-traffic point in the product:
@@ -286,6 +376,16 @@
     makeReviewPromptRecord: makeReviewPromptRecord,
     isOnboarded: isOnboarded,
     shouldAutoOpenOnboarding: shouldAutoOpenOnboarding,
+    BADGE_HEALTH_TEXT: BADGE_HEALTH_TEXT,
+    BADGE_HEALTH_COLOR: BADGE_HEALTH_COLOR,
+    BADGE_REVIEW_TEXT: BADGE_REVIEW_TEXT,
+    BADGE_REVIEW_COLOR: BADGE_REVIEW_COLOR,
+    badgeDecision: badgeDecision,
+    MILESTONE_VISIBLE_MS: MILESTONE_VISIBLE_MS,
+    makeMilestoneRecord: makeMilestoneRecord,
+    milestoneAlreadyShown: milestoneAlreadyShown,
+    shouldShowMilestone: shouldShowMilestone,
+    milestoneText: milestoneText,
     GROWTH_COUNTERS: GROWTH_COUNTERS,
     bumpGrowthCounter: bumpGrowthCounter,
     completionReviewOutcome: completionReviewOutcome
