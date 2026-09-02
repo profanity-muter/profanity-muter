@@ -107,17 +107,6 @@ body {
   height: 3px;
 }
 
-.ob-dots::after {
-  margin-left: 10px;
-  font-family: Georgia, "Times New Roman", serif;
-  font-size: 12.5px;
-  color: var(--ink-60);
-  letter-spacing: 0.04em;
-}
-.ob-dots[aria-valuenow="1"]::after { content: "i of iv"; }
-.ob-dots[aria-valuenow="2"]::after { content: "ii of iv"; }
-.ob-dots[aria-valuenow="3"]::after { content: "iii of iv"; }
-.ob-dots[aria-valuenow="4"]::after { content: "iv of iv"; }
 
 /* Stale after the first screen: the tagline belongs to the cover only. */
 .ob-header:has(.ob-dots:not([aria-valuenow="1"])) .ob-subtitle {
@@ -436,26 +425,66 @@ input:focus-visible {
 /* Evidence figure on step 1: a waveform with the word taken out. */
 .ob-demo {
   margin: 26px 0 4px;
-  padding: 18px 20px 14px;
+  padding: 20px 24px 16px;
   border: 1px solid var(--hairline);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--paper-raised);
+  position: relative;
 }
 
-.ob-demo svg { display: block; width: 100%; height: 46px; }
-
-.ob-demo figcaption {
-  margin-top: 10px;
-  font-size: 12px;
-  color: var(--ink-60);
+.ob-demo-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  column-gap: 10px;
 }
 
-.ob-demo .ob-demo-word {
-  background: color-mix(in srgb, var(--gold) 30%, transparent);
-  padding: 0 3px;
-  border-radius: 2px;
+/* Shared gold band behind the censored column, tying word to silence. */
+.ob-demo-band {
+  position: absolute;
+  top: 16px;
+  bottom: 34px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 92px;
+  background: color-mix(in srgb, var(--gold) 22%, transparent);
+  border-radius: 6px;
+}
+
+.ob-demo-quote {
+  font-size: 21px;
+  font-weight: 500;
   color: var(--ink);
-  font-weight: 570;
+  letter-spacing: -0.01em;
+}
+
+.ob-demo-side--l { text-align: right; }
+.ob-demo-side--r { text-align: left; }
+
+.ob-demo-word {
+  text-align: center;
+  font-weight: 650;
+  color: var(--ink);
+  padding: 0 10px;
+  letter-spacing: 0.06em;
+}
+
+.ob-demo-wave {
+  margin-top: 8px;
+  height: 30px;
+}
+
+.ob-demo-w {
+  width: 100%;
+  height: 30px;
+  display: block;
+}
+
+.ob-demo-w--l { justify-self: stretch; }
+.ob-demo-w--r { justify-self: stretch; }
+
+.ob-demo-silence {
+  width: 92px;
 }
 
 .ob-nav .pm-button--secondary:disabled {
