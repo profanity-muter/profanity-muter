@@ -34,7 +34,11 @@
   }
   var MAX_WORD_DUR = 1.0; // clamp a single transcribed word's duration (Whisper timestamp smear mitigation)
   var STALL_MS = 15000; // no coverage growth while playing an uncovered region -> watchdog fires
-  var FALLBACK_STALL_MS = 8000; // pause-catchup with zero coverage progress this long -> downgrade to muted playback (see tick())
+  var FALLBACK_STALL_MS = 8000;
+  // A heartbeat arrives every 4s from offscreen while a transcription is
+  // genuinely in progress, so anything fresher than ~1.5 cadences means a
+  // window is in flight right now (0.1.36 addendum).
+  var HEARTBEAT_FRESH_MS = 6000; // pause-catchup with zero coverage progress this long -> downgrade to muted playback (see tick())
   var COVERAGE_EPS = 0.05;
 
   // ---- log ring buffer (for the debug overlay's "Copy logs" button) -------
@@ -324,7 +328,14 @@
       // in that state, and re-issued (with a fresh clock) whenever a window
       // completes, so "no outstanding promise" and "the promise was kept"
       // are the same thing to everything downstream.
-      etaPromise: null
+      etaPromise: null,
+      // 0.1.36 addendum: where the muted-playback fallback started, so the
+      // content it consumed can be replayed audibly once coverage catches
+      // up. Null when no rewind is pending. userSeekedSinceFallback drops
+      // the rewind entirely, because the user's own navigation outranks
+      // recovering audio they chose to skip past.
+      fallbackStartT: null,
+      userSeekedSinceFallback: false
     };
   }
 
@@ -912,8 +923,32 @@
   // auto-resuming once coverage catches up. Never fights the user: any
   // pause/play we didn't ourselves initiate immediately releases our claim.
   var catchupPausedByUs = false;
-  var suppressNextPauseEvent = false;
-  var suppressNextPlayEvent = false;
+  // 0.1.36: self-action markers replace the old one-shot booleans. See
+  // shared/catchup.js for why a timestamped mark is the right shape here:
+  // play() settles asynchronously and can fail without ever firing an
+  // event, and a stale one-shot then swallows the NEXT event, which may be
+  // the genuinely external one this whole mechanism exists to detect.
+  var selfPlayMark = null;
+  var selfPauseMark = null;
+  // When we last released a catch-up pause, for the re-engage debounce.
+  var lastCatchupReleaseWall = null;
+  // Marks our own rewind seek, so the seeking handler does not mistake it
+  // for the user superseding that very rewind.
+  var selfSeekMark = null;
+
+  function catchupApi() {
+    return globalThis.PMCatchup || null;
+  }
+
+  function markSelfPlay() {
+    var api = catchupApi();
+    selfPlayMark = api ? api.markSelfAction(Date.now()) : { wall: Date.now() };
+  }
+
+  function markSelfPause() {
+    var api = catchupApi();
+    selfPauseMark = api ? api.markSelfAction(Date.now()) : { wall: Date.now() };
+  }
   var analyzingOverlayEl = null;
 
   // ---- orphaned-content-script UX: when the extension is reloaded/updated
@@ -1521,6 +1556,9 @@
   // ring buffer that "Copy logs" pastes: the point is that the user's next
   // paste reconstructs the pill's whole history without another round trip.
   var lastTracedPillKind = null;
+  // The label the user actually read, recorded so the trace shows both the
+  // internal decision and its presentation (0.1.36).
+  var lastPresentedLabel = null;
 
   function tracePillState(state) {
     if (!debugSettings.debugOverlay) return;
@@ -1544,8 +1582,10 @@
         ' uncoveredInMargin=' + (d.uncoveredInMargin != null ? d.uncoveredInMargin.toFixed(2) : 'NA') +
         ' growthMs=' + (d.growthMs != null ? Math.round(d.growthMs) : 'NA') +
         ' windows=' + (session ? session.windowsCompleted : 'NA') +
+        ' inFlight=' + (d.inFlight != null ? d.inFlight : 'NA') +
         ' promise=' + (d.promise || 'none') +
-        (state && state.etaS != null ? ' etaS=' + state.etaS : '')
+        (state && state.etaS != null ? ' etaS=' + state.etaS : '') +
+        ' presented="' + (lastPresentedLabel || 'none') + '"'
     );
   }
 
@@ -1596,10 +1636,13 @@
     // windows land) must not read as protected.
     trace.horizonEnd = horizonEnd;
     trace.uncoveredInMargin = uncoveredDurationWithin(session.coveredIntervals, t, horizonEnd);
-    if (trace.uncoveredInMargin <= COVERAGE_EPS) {
-      return withTrace({ kind: 'protected' });
-    }
 
+    // 0.1.36(b): the FULL input vector is computed before any branch reads
+    // or reports it. The 0.1.35 trace had a transition logging
+    // capturedAtPlayhead=NA with bufferedRanges=1 that contained the
+    // playhead, because the protected branch returned before these were
+    // computed. A trace that varies by branch is worse than no trace: it
+    // invites conclusions from fields that were never evaluated.
     var playheadRange = null;
     for (var i = 0; i < session.bufferedRanges.length; i++) {
       var r = session.bufferedRanges[i];
@@ -1618,6 +1661,13 @@
         if (Math.abs(cand.start - t) < Math.abs(nearest.start - t)) nearest = cand;
       }
       trace.nearestCaptured = '[' + nearest.start.toFixed(2) + ',' + nearest.end.toFixed(2) + ')';
+    } else {
+      trace.nearestCaptured = 'none';
+    }
+    trace.inFlight = Date.now() - (session.lastHeartbeatWall || 0) < HEARTBEAT_FRESH_MS;
+
+    if (trace.uncoveredInMargin <= COVERAGE_EPS) {
+      return withTrace({ kind: 'protected' });
     }
 
     if (playheadRange) {
@@ -1628,7 +1678,15 @@
       // uncovered.
       var uncoveredAheadS = uncoveredDurationWithin(session.coveredIntervals, t, Math.min(horizonEnd, playheadRange.end));
       var rtf = session.lastKnownRtf != null ? Math.min(0.85, Math.max(0.1, session.lastKnownRtf)) : 0.3;
-      var etaS = Math.min(30, Math.max(1, Math.ceil(uncoveredAheadS * rtf)));
+      // 0.1.36(a): floored. The trace quoted "~1s" on a cold seek from the
+      // default rtf guess, which is not a plausible time to load a model,
+      // demux and transcribe anything; the countdown then hit zero and the
+      // old model escalated to alarming copy two seconds into a normal cold
+      // start. Until a real rtf has been measured the floor is generous.
+      var pillApi = globalThis.PMPill;
+      var etaS = pillApi
+        ? pillApi.clampEta(uncoveredAheadS * rtf, session.lastKnownRtf != null)
+        : Math.min(30, Math.max(1, Math.ceil(uncoveredAheadS * rtf)));
 
       // The promise ledger (0.1.34) lives in shared/health.js, because the
       // pill and the health monitor both act on the same promise and must
@@ -1678,6 +1736,15 @@
     // that is not supposed to be suppressible. Displaying is gated below;
     // knowing is not.
     var status = settings.enabled ? computeStatusState() : null;
+    // Presentation is computed BEFORE tracing so a trace line reports the
+    // label that this same evaluation produced. Tracing first would log the
+    // PREVIOUS label against the current state, which is precisely the kind
+    // of subtly-wrong diagnostic that cost this round two releases.
+    var pillApi = globalThis.PMPill;
+    var presented = status && pillApi
+      ? pillApi.present(status, { promise: session ? session.etaPromise : null, now: Date.now() })
+      : null;
+    lastPresentedLabel = presented ? presented.label : null;
     // Traced on CHANGE only, so a paste reconstructs the pill's history
     // without a line per tick. See tracePillState.
     tracePillState(status);
@@ -1716,6 +1783,23 @@
     }
     setStatusPillActive(true, 'normal');
     if (!statusPillEl) return;
+    // 0.1.36(1): presentation collapse. The internal states stay, because
+    // the logic and the traces need the distinctions; what the user reads
+    // is one processing state with a live countdown, then Protected. See
+    // shared/pill.js for the reasoning and the countdown's two failure
+    // modes.
+    if (presented) {
+      {
+        var presentedLabel = presented.label;
+        if (status.kind !== 'off' && session && session.language && session.language !== 'en') {
+          presentedLabel += ' · ' + session.language;
+        }
+        var mutedCount = session ? session.mutedCount || 0 : 0;
+        if (mutedCount > 0) presentedLabel += ' · ' + mutedCount + ' muted';
+        setPillContent(presentedLabel);
+        return;
+      }
+    }
     var label;
     if (status.kind === 'off') label = 'Off';
     else if (status.kind === 'shorts') label = 'Shorts not supported';
@@ -1924,12 +2008,26 @@
   }
 
   function pauseForCatchup() {
+    // Re-engage debounce (0.1.36). At a coverage edge the covered/uncovered
+    // answer flickers as the playhead crosses the boundary, and pausing
+    // again milliseconds after releasing produced the stutter the field
+    // trace caught: three engage/clear cycles in four seconds. The next
+    // window is usually seconds away, so the protection given up here is
+    // small and the behaviour removed is one the user reads as the
+    // extension malfunctioning.
+    var debounceApi = catchupApi();
+    if (
+      debounceApi &&
+      !debounceApi.mayEngagePause({ lastReleaseWall: lastCatchupReleaseWall, now: Date.now() })
+    ) {
+      return;
+    }
     var video = getVideo();
     if (!video || catchupPausedByUs) return;
     catchupPausedByUs = true;
     showAnalyzingOverlay(true);
     if (!video.paused) {
-      suppressNextPauseEvent = true;
+      markSelfPause();
       video.pause();
     }
     TLOG(TAG, 'PAUSE-CATCHUP engaged t=' + video.currentTime.toFixed(2));
@@ -1939,9 +2037,10 @@
     if (!catchupPausedByUs) return;
     var video = getVideo();
     catchupPausedByUs = false;
+    lastCatchupReleaseWall = Date.now();
     showAnalyzingOverlay(false);
     if (video && video.paused) {
-      suppressNextPlayEvent = true;
+      markSelfPlay();
       video.play().catch(function () {});
     }
     TLOG(TAG, 'PAUSE-CATCHUP released t=' + (video ? video.currentTime.toFixed(2) : 'NA') + ' reason=' + reason);
@@ -1953,12 +2052,74 @@
   // pause, and hiding the overlay here would look like protection ended
   // when it didn't. Caller (tick()) is responsible for hiding the overlay
   // once coverage actually catches up.
+  // Replay the stretch the muted-playback fallback consumed, once it is
+  // covered. Guarded hard: the user's own seek supersedes (their navigation
+  // outranks recovering audio they chose to skip), and a sub-threshold
+  // rewind is more jarring than the fraction of a second it recovers.
+  function maybeRewindAfterFallback(video, t) {
+    if (!session || session.fallbackStartT == null || !video) return;
+    var api = catchupApi();
+    var startT = session.fallbackStartT;
+    var uncoveredInSpan = uncoveredDurationWithin(session.coveredIntervals, startT, t);
+    var decision = api
+      ? api.rewindDecision({
+          fallbackStartT: startT,
+          playheadT: t,
+          uncoveredInSpanS: uncoveredInSpan,
+          userSeekedSince: session.userSeekedSinceFallback
+        })
+      : { rewind: false, reason: 'no-catchup-module' };
+
+    if (!decision.rewind) {
+      // Only retire the pending rewind for terminal reasons. "not covered
+      // yet" is a wait, not a refusal.
+      if (decision.reason !== 'not-covered-yet') {
+        if (decision.reason !== 'no-pending-fallback') {
+          TLOG(TAG, '[PM-REWIND] skipped rewind to ' + startT.toFixed(2) + ': ' + decision.reason);
+          devlog('logError', '[PM-REWIND] skipped rewind to ' + startT.toFixed(2) + ' (' + decision.reason + ')');
+        }
+        session.fallbackStartT = null;
+        session.userSeekedSinceFallback = false;
+      }
+      return;
+    }
+
+    var recoveredS = t - decision.toT;
+    session.fallbackStartT = null;
+    session.userSeekedSinceFallback = false;
+    releaseMute('fallback-rewind');
+    TLOG(
+      TAG,
+      '[PM-REWIND] replaying ' + recoveredS.toFixed(2) + 's that played muted: seeking ' +
+        t.toFixed(2) + ' -> ' + decision.toT.toFixed(2)
+    );
+    devlog('logHealth', {
+      status: 'recovered',
+      reason: 'fallback-rewind',
+      playbackMs: Math.round(recoveredS * 1000),
+      windowsCompleted: session.windowsCompleted
+    });
+    // Our own seek: mark it so the seeking handler does not read it as the
+    // user superseding the rewind we are performing.
+    selfSeekMark = catchupApi() ? catchupApi().markSelfAction(Date.now()) : { wall: Date.now() };
+    try {
+      video.currentTime = decision.toT;
+    } catch (e) {
+      TWARN(TAG, '[PM-REWIND] seek failed: ' + String(e));
+    }
+    if (video.paused) {
+      markSelfPlay();
+      video.play().catch(function () {});
+    }
+  }
+
   function resumeFromCatchupKeepOverlay() {
     if (!catchupPausedByUs) return;
     var video = getVideo();
     catchupPausedByUs = false;
+    lastCatchupReleaseWall = Date.now();
     if (video && video.paused) {
-      suppressNextPlayEvent = true;
+      markSelfPlay();
       video.play().catch(function () {});
     }
     TLOG(TAG, 'PAUSE-CATCHUP downgraded to muted-playback fallback t=' + (video ? video.currentTime.toFixed(2) : 'NA'));
@@ -1968,8 +2129,15 @@
     'pause',
     function (ev) {
       if (!(ev.target instanceof HTMLVideoElement)) return;
-      if (suppressNextPauseEvent) { suppressNextPauseEvent = false; return; }
-      if (catchupPausedByUs) {
+      var pauseApi = catchupApi();
+      var pauseVerdict = pauseApi
+        ? pauseApi.ownershipOnPlaybackEvent({ owned: catchupPausedByUs, marker: selfPauseMark, now: Date.now() })
+        : { owned: catchupPausedByUs, cleared: false, selfInitiated: false };
+      if (pauseVerdict.selfInitiated) {
+        selfPauseMark = null; // consumed, so a second event cannot claim it
+        return;
+      }
+      if (pauseVerdict.cleared) {
         catchupPausedByUs = false; // user (or something else) paused independently - never fight it
         showAnalyzingOverlay(false);
         TLOG(TAG, 'catchup-pause ownership cleared: external pause observed');
@@ -1981,8 +2149,15 @@
     'play',
     function (ev) {
       if (!(ev.target instanceof HTMLVideoElement)) return;
-      if (suppressNextPlayEvent) { suppressNextPlayEvent = false; return; }
-      if (catchupPausedByUs) {
+      var playApi = catchupApi();
+      var playVerdict = playApi
+        ? playApi.ownershipOnPlaybackEvent({ owned: catchupPausedByUs, marker: selfPlayMark, now: Date.now() })
+        : { owned: catchupPausedByUs, cleared: false, selfInitiated: false };
+      if (playVerdict.selfInitiated) {
+        selfPlayMark = null;
+        return;
+      }
+      if (playVerdict.cleared) {
         catchupPausedByUs = false;
         showAnalyzingOverlay(false);
         TLOG(TAG, 'catchup-pause ownership cleared: external play observed');
@@ -2104,13 +2279,35 @@
             // is what lets capture.js's eviction check see currentTime
             // advance) - keeping the "Analyzing audio…" overlay up so
             // protection still reads as active.
-            if (catchupPausedByUs && Date.now() - session.lastCoverageGrowthWall > FALLBACK_STALL_MS) {
+            // 0.1.36 addendum: the old condition measured COVERAGE growth
+            // alone, and coverage does not move while a window is still
+            // being transcribed, so a slow first window looked exactly like
+            // a dead pipeline. The field trace caught it firing while a
+            // window was actively computing and capture had reached [0,29),
+            // costing the user the first 2.44 seconds of a video: spoken
+            // words played silently and gone. Starvation now has to be true
+            // on every axis at once. See shared/catchup.js.
+            var fbApi = catchupApi();
+            var heartbeatFresh = Date.now() - (session.lastHeartbeatWall || 0) < HEARTBEAT_FRESH_MS;
+            var starved = fbApi
+              ? fbApi.shouldEngageFallback({
+                  windowInFlight: heartbeatFresh,
+                  msSinceCoverageGrowth: Date.now() - session.lastCoverageGrowthWall,
+                  msSinceCaptureGrowth: Date.now() - (session.lastBufferedGrowthWall || 0),
+                  uncoveredAtPlayhead: true, // this branch only runs while uncovered
+                  thresholdMs: FALLBACK_STALL_MS
+                })
+              : Date.now() - session.lastCoverageGrowthWall > FALLBACK_STALL_MS;
+            if (catchupPausedByUs && starved) {
               TWARN(
                 TAG,
-                '[PM-FALLBACK] pause-catchup made no coverage progress for ' + FALLBACK_STALL_MS +
-                  'ms at t=' + t.toFixed(2) + ' - downgrading to muted playback so YouTube resumes buffering/appending'
+                '[PM-FALLBACK] pause-catchup genuinely starved for ' + FALLBACK_STALL_MS +
+                  'ms at t=' + t.toFixed(2) + ' (no window in flight, no capture growth) - downgrading to muted playback so YouTube resumes buffering/appending'
               );
               session.catchupFallbackActive = true;
+              // Remember where the silence starts so it can be replayed.
+              session.fallbackStartT = t;
+              session.userSeekedSinceFallback = false;
               resumeFromCatchupKeepOverlay();
               engageMute('safe-mode-uncovered');
             }
@@ -2119,6 +2316,14 @@
           if (session.catchupFallbackActive) {
             session.catchupFallbackActive = false;
             showAnalyzingOverlay(false);
+            // 0.1.36 addendum: replay what the fallback consumed. Muted
+            // playback is protection paid for with the user's content, and
+            // without this the payment is permanent: the trace's first 2.44
+            // seconds of speech played silently and were gone. Now that
+            // coverage has caught up, that stretch can be heard properly.
+            // This is what makes "pause until ready" mean what it says: you
+            // may wait, but you eventually hear every analyzed second.
+            maybeRewindAfterFallback(video, t);
             // Only release here if there's no word-hit in progress right
             // now - if there is, leave forcedMute alone and let the normal
             // word-interval-ended branch above release it later (its guard
@@ -2277,6 +2482,18 @@
       var video = ev.target;
       if (!(video instanceof HTMLVideoElement) || !session) return;
       TLOG(TAG, 'seek detected -> t=' + video.currentTime.toFixed(2));
+      // 0.1.36 addendum: a seek the USER made supersedes any pending
+      // fallback rewind. Yanking them back to where we wanted them would be
+      // the extension overriding a deliberate choice, which is worse than
+      // the audio it recovers. Our own rewind seek is marked, so it does
+      // not count as the user superseding itself.
+      var seekApi = catchupApi();
+      var ourSeek = seekApi && seekApi.isSelfAction(selfSeekMark, Date.now());
+      if (ourSeek) {
+        selfSeekMark = null;
+      } else if (session && session.fallbackStartT != null) {
+        session.userSeekedSinceFallback = true;
+      }
       // A seek ends the contiguous stretch of unanalyzed playback, if one
       // was open. trackDevlogGap's own jump detection would catch this on
       // the next tick anyway; doing it here keeps the recorded end time at
