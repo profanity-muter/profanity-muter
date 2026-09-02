@@ -479,11 +479,11 @@ const browser = await chromium.launch();
   check('onboarding: reaches the setup step', s.step[0] === 3, s.step);
   check('onboarding: three dots filled', s.dotsDone === 3, s.dotsDone);
 
-  // Catch-up mode is preselected to "mute" and writes through on change.
+  // Catch-up mode is preselected to "play" and writes through on change.
   const preselected = await page.evaluate(() =>
     [...document.getElementsByName('ob-catchup-mode')].find(r => r.checked)?.value
   );
-  check('onboarding: mute preselected', preselected === 'mute', preselected);
+  check('onboarding: play preselected', preselected === 'play', preselected);
   await page.click('#ob-catchup-pause');
   await page.waitForTimeout(80);
   let sync = await page.evaluate(() => window.__pmSync);
