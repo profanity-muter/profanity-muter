@@ -742,6 +742,130 @@ of that file) — it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays honest about the actual
 shipped pack shape.
 
+## FEATURE (2026-09-02, 0.1.31): "Report a problem"
+
+A user-facing path from "it didn't mute the swearing" to something a
+developer can act on, aimed at the people who actually hit this: friends
+and parents, not engineers.
+
+Before this, the only diagnostic route was the popup's "Copy debug log",
+which yields a wall of JSON with no context — no description of what went
+wrong, no video, no version, and no idea what to do with it next. A
+non-technical user was never going to complete that journey.
+
+### Where it lives
+
+A **"Report a problem"** link beside "Copy debug log" in the popup's
+Debugging row, and a second entry point on the onboarding flow's final
+screen. Both open `report/report.html` in a tab. It shares "Copy debug
+log"'s rule exactly: **always available, never lock-gated** — reporting a
+problem changes no setting, and a child who hits one must still be able
+to get the details to whoever can act on them. The browser harness
+asserts it stays enabled in the two states that hide or disable other
+things (settings locked, and not yet acknowledged).
+
+The page reuses `popup.css` plus `onboarding.css`, which is now
+explicitly the shared **full-page shell** for extension pages rather than
+onboarding's private stylesheet (documented in its header; kept under
+that name rather than churning a working file for cosmetics).
+
+### The form
+
+1. **"What happened?"** — freeform, with a hint that plain words beat
+   technical ones ("It didn't mute the swearing about a minute in").
+2. **"Which video?"** — prefilled from the newest `pm_devlog` entry via
+   `latestVideoUrl()`, fully editable and clearable. The prefill only
+   fires for a plausible YouTube id: `content.js` falls back to a
+   *pathname* as `videoId` on non-watch pages, and gluing that into a
+   watch URL would produce a confidently wrong link, so anything that
+   doesn't look like an id yields an empty field instead.
+3. **"Include my debug log (recommended)"** — checked by default, with
+   one honest line about what that actually means: the matched words and
+   their timings, the settings, and which parts of the video were
+   analyzed — *not* transcripts of what was said, unless the user turned
+   on `pm_devlogVerbose` themselves. Below it, a live summary states in
+   numbers what will be attached, **including truncation before it
+   happens** rather than as a surprise inside the report.
+4. **"Copy report & open email"**.
+
+### Why clipboard-and-paste, said out loud
+
+`mailto:` cannot attach files, and its body travels in a URL that
+browsers and mail clients truncate (commonly around a couple of thousand
+characters). A debug log is tens to hundreds of KB. So the report goes on
+the **clipboard** and the mail draft carries only the user's own words,
+the video, the version, and the instruction to paste. That is genuinely
+worse than an attachment, and the only alternative — uploading to a
+server — would mean sending users' data somewhere, which this extension
+does not do.
+
+So the UI **says so plainly** ("Email can't attach the report
+automatically, so this copies it to your clipboard and opens a draft.
+Paste into the email where it says to, then send.") rather than letting a
+user think the near-empty draft is a bug. The confirmation panel also
+shows the support address as plain text and a "Copy the report again"
+link, so a missing mail client is never a dead end. If the clipboard
+itself is unavailable, the panel still appears with the mail link rather
+than failing silently.
+
+The mail draft is opened by clicking the page's own visible
+`<a href="mailto:">` — so when no mail client is configured, nothing
+happens and the fallback link the user can click themselves is already on
+screen.
+
+### Report shape
+
+```
+{ kind: "profanity-muter-problem-report", reportVersion, extensionVersion,
+  userAgent, createdAt, videoUrl, whatHappened,
+  debugLogIncluded, debugLogTruncated, debugLogNote, debugLog }
+```
+
+`debugLog` is `null` rather than omitted when withheld — an explicit "no
+log here" reads unambiguously where an absent key reads like a bug in the
+reporter. `debugLogNote` is **always** populated, including "The user
+chose not to include their debug log", so nobody has to ask the reporter
+why the log is missing and burn a round trip with someone already
+frustrated.
+
+**Size guard**: over ~200KB serialized, the log is cut to the **3 most
+recent** videos (three, not one — the problem video is often not the
+newest by the time someone gets round to reporting), and the truncation
+is disclosed in `debugLogNote` with the real numbers (how many videos, of
+how many, and the original size in KB).
+
+### `SUPPORT_EMAIL`
+
+A single constant beside `STORE_ITEM_ID` in `shared/moments.js`,
+currently the placeholder `support@example.com`. Two tests guard it: one
+asserts it is **still the placeholder** (so listing day fails the suite
+and forces a real address, same forcing function as the store id), and
+one asserts it is a **role address, never a personal mailbox** — it goes
+out in the `mailto:` of every report and ends up in strangers' mail
+clients and address books permanently.
+
+### Tests
+
+`test/report_test.js` (26) covers assembly and the two branches a user
+can't see until it's too late: that **declining the log actually leaves
+it out** (a privacy promise made in the UI, one boolean away from being a
+lie — asserted by checking no log content survives anywhere in the
+serialized report), and that an oversized log is **trimmed to the newest
+3 with the truncation disclosed** rather than producing something nobody
+can paste. Plus mailto shape (canonical unescaped address, versioned
+subject, encoded body, paste instruction verbatim, **no log in the body**,
+and the whole draft under 2000 characters so a mail client won't mangle
+it), junk-input coercion, and the video prefill's refusal to guess.
+
+`verify/popup_check.mjs` grew 103 -> 147: the popup link renders/enabled
+(including while locked and pre-acknowledgment) and opens the page; the
+page's consent default, prefill, empty-log copy, live truncation warning,
+clipboard payload with and without consent, mail draft href shape and
+size, cleared-video handling, "copy again", and the onboarding entry
+point. The harness now injects the **real** manifest version into the
+stubbed `getManifest()`, so version assertions are exact rather than a
+moving target.
+
 ## FEATURE (2026-09-02, 0.1.30): Onboarding, honest limits & growth surfaces
 
 Three surfaces that share one idea, which is why they share one module

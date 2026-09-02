@@ -3,7 +3,13 @@
    every control style (switches, radios, buttons, inputs, hints). This
    file does exactly two things: undo the popup's fixed 320px body width,
    and lay out a full page. Anything that styles a CONTROL belongs in
-   popup.css so both surfaces get it. */
+   popup.css so both surfaces get it.
+
+   Despite the name, this is the shared FULL-PAGE SHELL for every
+   extension page, not just onboarding — report/report.html loads it too
+   and uses the same .ob-page / .ob-field / .ob-ack scaffolding. Kept
+   under this name rather than renamed to avoid churning a working file
+   for cosmetics; if a third page appears, rename it then. */
 
 body {
   /* popup.css pins this to the popup's 320px. */
@@ -155,4 +161,41 @@ body {
   margin-top: 28px;
   padding-top: 20px;
   border-top: 1px solid var(--pm-border);
+}
+
+/* ---- Report a problem page (report/report.html) --------------------------
+   That page reuses this file as the shared extension-page shell (body
+   width, .ob-page, .ob-field, .ob-ack); only what is specific to it lives
+   below. */
+.rp-consent-detail {
+  display: block;
+  margin-top: 4px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--pm-muted);
+}
+
+.rp-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.rp-done {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--pm-border);
+  border-radius: 8px;
+}
+
+.rp-done .pm-hint {
+  margin: 0;
+}
+
+.rp-email {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
 }

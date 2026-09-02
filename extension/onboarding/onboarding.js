@@ -48,6 +48,7 @@
 
   var ackCheckEl = document.getElementById("ob-ack-check");
   var ackDoneEl = document.getElementById("ob-ack-done");
+  var reportProblemEl = document.getElementById("ob-report-problem");
 
   var hasStorage =
     typeof chrome !== "undefined" &&
@@ -364,6 +365,22 @@
   }
 
   // ---- wiring -------------------------------------------------------------
+
+  // Opened in a new tab rather than navigating: someone mid-setup who
+  // hits a problem shouldn't lose the setup flow to reach the report form.
+  reportProblemEl.addEventListener("click", function () {
+    var url;
+    try {
+      url = chrome.runtime.getURL("report/report.html");
+    } catch (e) {
+      return;
+    }
+    try {
+      chrome.tabs.create({ url: url });
+    } catch (e) {
+      window.open(url, "_blank");
+    }
+  });
 
   backEl.addEventListener("click", function () { goTo(step - 1); });
   nextEl.addEventListener("click", function () { goTo(step + 1); });

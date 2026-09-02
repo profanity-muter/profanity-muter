@@ -167,6 +167,7 @@
   var reviewNoEl = document.getElementById("pm-review-no");
   var shareRowEl = document.getElementById("pm-share-row");
   var shareEl = document.getElementById("pm-share");
+  var reportProblemEl = document.getElementById("pm-report-problem");
 
   var hasStorage =
     typeof chrome !== "undefined" &&
@@ -1010,10 +1011,10 @@
     return (typeof window !== "undefined" && window.PMMoments) || null;
   }
 
-  function openOnboarding() {
+  function openExtensionPage(relativePath) {
     var url;
     try {
-      url = chrome.runtime.getURL("onboarding/onboarding.html");
+      url = chrome.runtime.getURL(relativePath);
     } catch (e) {
       return;
     }
@@ -1027,6 +1028,18 @@
       // navigation rather than silently doing nothing.
       window.open(url, "_blank");
     }
+  }
+
+  function openOnboarding() {
+    openExtensionPage("onboarding/onboarding.html");
+  }
+
+  // Always available, and deliberately not lock-gated — same rule as
+  // "Copy debug log", which it sits beside: reporting a problem changes
+  // no setting, and a child who hits a problem must still be able to send
+  // the details to whoever can act on them.
+  function openReportProblem() {
+    openExtensionPage("report/report.html");
   }
 
   // The "Finish setup" banner and the share row are both driven off the
@@ -1257,6 +1270,7 @@
   reviewYesEl.addEventListener("click", onReviewYes);
   reviewNoEl.addEventListener("click", onReviewNo);
   shareEl.addEventListener("click", shareWithFriend);
+  reportProblemEl.addEventListener("click", openReportProblem);
   lockPasswordEl.addEventListener("keydown", function (ev) {
     if (ev.key === "Enter") unlock();
   });

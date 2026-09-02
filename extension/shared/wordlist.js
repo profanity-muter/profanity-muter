@@ -111,6 +111,13 @@
 //                                of the PMWordlist.settings contract:
 //                                nothing in the matching path or the
 //                                content scripts consults any of them.
+//                                Note there is NO storage key for problem
+//                                reports (0.1.31's "Report a problem"):
+//                                a report is assembled in memory, put on
+//                                the clipboard and handed to the user's
+//                                mail client. Nothing about it is
+//                                persisted, and nothing is transmitted by
+//                                the extension itself.
 //   pm_lock           {salt: string, hash: string} | absent — the
 //                                optional PARENTAL LOCK (0.1.29). When
 //                                present, the popup opens with every

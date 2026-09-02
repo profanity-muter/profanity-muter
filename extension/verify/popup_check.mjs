@@ -25,11 +25,18 @@
 // or the word-list resolution.
 import { chromium } from 'playwright';
 import path from 'node:path';
+import fs from 'node:fs';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.resolve(__dirname, '..');
 const URL = pathToFileURL(path.join(EXT, 'popup', 'popup.html')).href;
+// The stubbed chrome.runtime.getManifest() reports the REAL version, so
+// assertions about anything that embeds it (the problem report, the mail
+// subject) can be exact instead of a moving target.
+const MANIFEST_VERSION = JSON.parse(
+  fs.readFileSync(path.join(EXT, 'manifest.json'), 'utf8')
+).version;
 
 let pass = 0, fail = 0;
 function check(name, cond, extra) {
@@ -65,7 +72,7 @@ const stub = (initialSync, initialLocal) => `
   window.chrome = {
     runtime: {
       lastError: undefined,
-      getManifest: () => ({ version: '0.1.30' }),
+      getManifest: () => ({ version: '${MANIFEST_VERSION}' }),
       getURL: (p) => 'chrome-extension://stub/' + p
     },
     tabs: { create: (opts) => { window.__pmTabs.push(opts.url); } },
@@ -85,6 +92,11 @@ const stub = (initialSync, initialLocal) => `
     configurable: true,
     value: { writeText: (t) => { window.__pmClipboard = t; return Promise.resolve(); } }
   });
+  // The report page opens the mail draft by clicking its own <a href="mailto:">.
+  // Let that be observed instead of handed to an external protocol handler,
+  // which headless Chrome can't do anyway.
+  window.__pmMailto = null;
+  HTMLAnchorElement.prototype.click = function () { window.__pmMailto = this.href; };
 `;
 
 async function open(browser, sync, local) {
@@ -117,7 +129,10 @@ const snapshot = () => ({
   reviewHidden: document.getElementById('pm-review-card').classList.contains('pm-hidden'),
   shareHidden: document.getElementById('pm-share-row').classList.contains('pm-hidden'),
   shareDisabled: document.getElementById('pm-share').disabled,
-  setupGuideDisabled: document.getElementById('pm-open-onboarding').disabled
+  setupGuideDisabled: document.getElementById('pm-open-onboarding').disabled,
+  reportDisabled: document.getElementById('pm-report-problem').disabled,
+  reportHidden: !document.getElementById('pm-report-problem').offsetParent &&
+                getComputedStyle(document.getElementById('pm-report-problem')).display === 'none'
 });
 
 // A fully review-eligible sync/local pair: acknowledged, installed 8 days
@@ -552,6 +567,214 @@ const browser = await chromium.launch();
     catchupDisabled: document.getElementById('ob-catchup-play').disabled
   }));
   check('onboarding lock: unlocks with the right password', state.lockedHidden === true && state.catchupDisabled === false);
+  await page.close();
+}
+
+// ===== 0.1.31: Report a problem =====
+
+// ---- 16. the popup link ----
+{
+  const { page, errors } = await open(browser, {});
+  const s = await page.evaluate(snapshot);
+  check('report link: no page errors', errors.length === 0, errors);
+  check('report link: rendered', s.reportHidden === false);
+  check('report link: enabled', s.reportDisabled === false);
+  await page.click('#pm-report-problem');
+  await page.waitForTimeout(50);
+  const tabs = await page.evaluate(() => window.__pmTabs);
+  check('report link: opens the report page', tabs.length === 1 && /report\/report\.html$/.test(tabs[0]), tabs);
+  await page.close();
+}
+
+// ---- 17. the link is available while locked and before acknowledgment ----
+{
+  const { page: p0 } = await open(browser, {});
+  const record = await p0.evaluate(() => window.PMLock.create('hunter2'));
+  await p0.close();
+
+  // Locked AND unacknowledged: the two states that hide or disable other
+  // things. Reporting a problem must survive both.
+  const { page } = await open(browser, { pm_lock: record });
+  const s = await page.evaluate(snapshot);
+  check('report link: enabled while settings are locked', s.reportDisabled === false);
+  check('report link: rendered before acknowledgment', s.reportHidden === false);
+  check('report link: (share row is hidden in this same state)', s.shareHidden === true);
+  await page.close();
+}
+
+// ===== the report page itself =====
+
+const REPORT = pathToFileURL(path.join(EXT, 'report', 'report.html')).href;
+
+async function openReport(sync, local) {
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e)));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.addInitScript(stub(sync || {}, local || {}));
+  await page.goto(REPORT);
+  await page.waitForTimeout(150);
+  return { page, errors };
+}
+
+const rpSnap = () => ({
+  consent: document.getElementById('rp-consent').checked,
+  video: document.getElementById('rp-video').value,
+  logSummary: document.getElementById('rp-log-summary').textContent.trim(),
+  doneHidden: document.getElementById('rp-done').classList.contains('pm-hidden'),
+  mailto: document.getElementById('rp-mailto').getAttribute('href'),
+  email: document.getElementById('rp-email').textContent.trim(),
+  status: document.getElementById('rp-status').textContent.trim()
+});
+
+// A devlog with two videos, newest last (shared/devlog.js ordering).
+const devlogFixture = {
+  version: 1,
+  videos: [
+    { videoId: 'oldvideoid1', title: 'old', windows: [], gaps: [], captions: [], captionCount: 0, errors: [] },
+    { videoId: 'dQw4w9WgXcQ', title: 'the one that broke', windows: [{ t0: 0, t1: 10, transcriptWordCount: 4, matches: [{ word: 'dang', t: 3 }], muteIntervals: [{ start: 2.6, end: 3.5 }] }], gaps: [], captions: [], captionCount: 0, errors: [] }
+  ]
+};
+
+// ---- 18. defaults and prefill ----
+{
+  const { page, errors } = await openReport({}, { pm_devlog: devlogFixture });
+  const s = await page.evaluate(rpSnap);
+  check('report page: no page errors', errors.length === 0, errors);
+  check('report page: consent checked by default', s.consent === true);
+  check('report page: video prefilled from the newest devlog entry', s.video === 'https://www.youtube.com/watch?v=dQw4w9WgXcQ', s.video);
+  check('report page: summary states what will be included', /2 recent video/.test(s.logSummary), s.logSummary);
+  check('report page: confirmation hidden until sent', s.doneHidden === true);
+  await page.close();
+}
+
+// ---- 19. no devlog yet ----
+{
+  const { page } = await openReport({}, {});
+  const s = await page.evaluate(rpSnap);
+  check('report page: empty video field with no log', s.video === '', s.video);
+  check('report page: says a report is still worth sending', /send the report anyway/.test(s.logSummary), s.logSummary);
+  await page.close();
+}
+
+// ---- 20. unchecking consent is honoured, visibly and in the payload ----
+{
+  const { page } = await openReport({}, { pm_devlog: devlogFixture });
+  await page.uncheck('#rp-consent');
+  let s = await page.evaluate(rpSnap);
+  check('report page: unchecking updates the summary', /No debug log will be included/.test(s.logSummary), s.logSummary);
+
+  await page.fill('#rp-what', 'it missed a word near the start');
+  await page.click('#rp-send');
+  await page.waitForTimeout(120);
+  const copied = JSON.parse(await page.evaluate(() => window.__pmClipboard));
+  check('report page: no-consent report omits the log', copied.debugLog === null && copied.debugLogIncluded === false, copied.debugLogNote);
+  check('report page: no-consent report records the choice', /chose not to include/.test(copied.debugLogNote), copied.debugLogNote);
+  check('report page: no video id leaks when the log is withheld', JSON.stringify(copied).indexOf('dQw4w9WgXcQ') === -1 || copied.videoUrl.includes('dQw4w9WgXcQ'), 'log content must not appear');
+  await page.close();
+}
+
+// ---- 21. sending with consent: clipboard + mailto ----
+{
+  const { page } = await openReport({}, { pm_devlog: devlogFixture });
+  await page.fill('#rp-what', 'swearing at 1:20 was not muted');
+  await page.click('#rp-send');
+  await page.waitForTimeout(120);
+
+  const clip = await page.evaluate(() => window.__pmClipboard);
+  const copied = JSON.parse(clip);
+  check('report: clipboard was written', typeof clip === 'string' && clip.length > 0);
+  check('report: kind + version present', copied.kind === 'profanity-muter-problem-report' && copied.reportVersion === 1, copied.kind);
+  check('report: carries the extension version', copied.extensionVersion === MANIFEST_VERSION, copied.extensionVersion);
+  check('report: carries the user agent', /Mozilla/.test(copied.userAgent), copied.userAgent);
+  check('report: carries the freeform text', copied.whatHappened === 'swearing at 1:20 was not muted', copied.whatHappened);
+  check('report: carries the video url', /dQw4w9WgXcQ/.test(copied.videoUrl), copied.videoUrl);
+  check('report: includes the debug log', copied.debugLogIncluded === true && copied.debugLog.videos.length === 2);
+
+  const s = await page.evaluate(rpSnap);
+  const mailto = await page.evaluate(() => window.__pmMailto);
+  check('report: confirmation panel shown', s.doneHidden === false);
+  check('report: status toast', /copied/i.test(s.status), s.status);
+  check('report: mail draft opened', typeof mailto === 'string' && mailto.startsWith('mailto:support@example.com?'), mailto);
+  check('report: fallback link has the same href', s.mailto === mailto, s.mailto);
+  check('report: support address shown as text too', s.email === 'support@example.com', s.email);
+
+  const subject = decodeURIComponent((mailto.split('?subject=')[1] || '').split('&body=')[0]);
+  const body = decodeURIComponent(mailto.split('&body=')[1] || '');
+  check('report: subject is versioned', subject === 'Profanity Muter problem report v' + MANIFEST_VERSION, subject);
+  check('report: body carries the user text', body.includes('swearing at 1:20 was not muted'));
+  check('report: body carries the paste instruction', body.includes('please paste it below this line before sending'));
+  check('report: body does NOT carry the log', !body.includes('dQw4w9WgXcQ') || body.indexOf('muteIntervals') === -1, 'no log in the mail body');
+  check('report: mail draft stays small', mailto.length < 2000, mailto.length);
+  await page.close();
+}
+
+// ---- 22. clearing the video field is respected ----
+{
+  const { page } = await openReport({}, { pm_devlog: devlogFixture });
+  await page.fill('#rp-video', '');
+  await page.fill('#rp-what', 'no idea which video');
+  await page.click('#rp-send');
+  await page.waitForTimeout(120);
+  const copied = JSON.parse(await page.evaluate(() => window.__pmClipboard));
+  const mailto = await page.evaluate(() => window.__pmMailto);
+  check('report: cleared video stays cleared', copied.videoUrl === '', copied.videoUrl);
+  check('report: no Video line in the mail body', !decodeURIComponent(mailto).includes('Video:'));
+  await page.close();
+}
+
+// ---- 23. oversized log is truncated, and says so up front ----
+{
+  const big = { version: 1, videos: [] };
+  for (let i = 0; i < 8; i++) {
+    big.videos.push({
+      videoId: 'video' + i,
+      windows: [{ t0: 0, t1: 10, transcriptWordCount: 2, matches: [], muteIntervals: [], text: 'x'.repeat(40 * 1024) }],
+      gaps: [], captions: [], captionCount: 0, errors: []
+    });
+  }
+  const { page } = await openReport({}, { pm_devlog: big });
+  let s = await page.evaluate(rpSnap);
+  check('report: warns about truncation BEFORE sending', /too large to send in full/.test(s.logSummary), s.logSummary);
+  await page.click('#rp-send');
+  await page.waitForTimeout(200);
+  const copied = JSON.parse(await page.evaluate(() => window.__pmClipboard));
+  check('report: truncated to 3 videos', copied.debugLog.videos.length === 3, copied.debugLog.videos.length);
+  check('report: keeps the most RECENT videos', copied.debugLog.videos.map(v => v.videoId).join(',') === 'video5,video6,video7', copied.debugLog.videos.map(v => v.videoId));
+  check('report: truncation disclosed in the report', copied.debugLogTruncated === true && /TRUNCATED/.test(copied.debugLogNote), copied.debugLogNote);
+  await page.close();
+}
+
+// ---- 24. copy again reproduces the report ----
+{
+  const { page } = await openReport({}, { pm_devlog: devlogFixture });
+  await page.fill('#rp-what', 'first');
+  await page.click('#rp-send');
+  await page.waitForTimeout(120);
+  await page.evaluate(() => { window.__pmClipboard = null; });
+  await page.click('#rp-copy-again');
+  await page.waitForTimeout(120);
+  const again = await page.evaluate(() => window.__pmClipboard);
+  const s = await page.evaluate(rpSnap);
+  check('report: "copy again" re-copies', typeof again === 'string' && JSON.parse(again).whatHappened === 'first');
+  check('report: "copy again" confirms', /copied again/i.test(s.status), s.status);
+  await page.close();
+}
+
+// ---- 25. the onboarding final screen links to it too ----
+{
+  const OB2 = pathToFileURL(path.join(EXT, 'onboarding', 'onboarding.html')).href;
+  const page = await browser.newPage();
+  await page.addInitScript(stub({}, {}));
+  await page.goto(OB2);
+  await page.waitForTimeout(120);
+  await page.click('#ob-next');
+  await page.click('#ob-next');
+  await page.click('#ob-next');
+  await page.click('#ob-report-problem');
+  await page.waitForTimeout(60);
+  const tabs = await page.evaluate(() => window.__pmTabs);
+  check('onboarding: final screen links to the report page', tabs.length === 1 && /report\/report\.html$/.test(tabs[0]), tabs);
   await page.close();
 }
 

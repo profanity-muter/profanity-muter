@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Profanity Muter — Report a problem</title>
+<!-- popup.css supplies the design tokens and every control style;
+     onboarding.css is this project's shared full-page shell (body width,
+     .ob-page, .ob-field, .ob-nav) used by every extension page, not just
+     onboarding. Same reasoning as onboarding.html: a second copy of these
+     styles is a guarantee the surfaces drift apart. -->
+<link rel="stylesheet" href="../popup/popup.css" />
+<link rel="stylesheet" href="../onboarding/onboarding.css" />
+</head>
+<body>
+  <main class="ob-page">
+    <header class="ob-header">
+      <h1 class="ob-title">Report a problem</h1>
+      <p class="ob-subtitle">
+        Tell us what went wrong. It takes a minute, and the details make the
+        difference between a fix and a guess.
+      </p>
+    </header>
+
+    <section class="ob-field">
+      <label class="pm-label" for="rp-what">What happened?</label>
+      <p class="pm-hint">
+        Plain words are perfect. "It didn't mute the swearing about a minute
+        in" is more useful than anything technical.
+      </p>
+      <textarea
+        id="rp-what"
+        class="pm-textarea"
+        rows="5"
+        placeholder="What did you expect, and what happened instead?"
+      ></textarea>
+    </section>
+
+    <section class="ob-field">
+      <label class="pm-label" for="rp-video">Which video?</label>
+      <p class="pm-hint">
+        Filled in from the last video you watched with the extension on.
+        Clear it or paste a different link if that's not the right one.
+      </p>
+      <input type="text" id="rp-video" class="pm-input" placeholder="https://www.youtube.com/watch?v=…" />
+    </section>
+
+    <section class="ob-field">
+      <label class="ob-ack" for="rp-consent">
+        <input type="checkbox" id="rp-consent" checked />
+        <span>
+          <strong>Include my debug log (recommended)</strong>
+          <span class="rp-consent-detail">
+            It holds the words that were matched and when, your settings, and
+            which parts of the video were analyzed — not the transcripts of
+            what was said, unless you turned on verbose logging yourself.
+          </span>
+        </span>
+      </label>
+      <p class="pm-hint" id="rp-log-summary"></p>
+    </section>
+
+    <section class="ob-field">
+      <span class="pm-label">Sending it</span>
+      <!-- Said plainly rather than glossed over: the paste step is a real
+           limitation of mailto: (no attachments, and a body carried in a
+           URL that clients truncate), and a user who isn't told will
+           assume the empty-looking email is a bug. -->
+      <p class="pm-hint">
+        Email can't attach the report automatically, so this copies it to
+        your clipboard and opens a draft. <strong>Paste into the email</strong>
+        where it says to, then send.
+      </p>
+      <div class="rp-actions">
+        <button id="rp-send" class="pm-button" type="button">Copy report &amp; open email</button>
+        <span id="rp-status" class="pm-status" role="status" aria-live="polite"></span>
+      </div>
+
+      <div class="rp-done pm-hidden" id="rp-done" aria-hidden="true">
+        <p class="pm-hint">
+          <strong>Copied.</strong> If your email app didn't open, use the
+          link below — or send the report to
+          <span id="rp-email" class="rp-email"></span> from any email app.
+          Paste it into the message before sending.
+        </p>
+        <a id="rp-mailto" class="pm-link-button" href="#">Open email app</a>
+        <button id="rp-copy-again" class="pm-link-button" type="button">Copy the report again</button>
+      </div>
+    </section>
+  </main>
+
+  <script src="../shared/moments.js"></script>
+  <script src="../shared/report.js"></script>
+  <script src="report.js"></script>
+</body>
+</html>

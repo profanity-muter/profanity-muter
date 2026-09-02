@@ -72,6 +72,16 @@
   var STORE_URL = "https://chromewebstore.google.com/detail/" + STORE_ITEM_ID;
   var REVIEW_URL = STORE_URL + "/reviews";
 
+  // TODO(support): where "Report a problem" sends its mail. Placeholder
+  // until a real support address exists, asserted as such by
+  // test/moments_test.js so the day the listing goes live the test fails
+  // and forces a real address rather than shipping this one.
+  //
+  // This MUST stay a role address the project controls, never a personal
+  // mailbox: it goes out in the mailto: link of every problem report, so
+  // it ends up in strangers' mail clients and address books permanently.
+  var SUPPORT_EMAIL = "support@example.com";
+
   // The share blurb. Plain, first-person, no adjectives doing sales work,
   // no referral code and no tracking parameter on the URL — the whole
   // point is that a parent can paste this into a group chat without
@@ -205,6 +215,7 @@
     STORE_ITEM_ID: STORE_ITEM_ID,
     STORE_URL: STORE_URL,
     REVIEW_URL: REVIEW_URL,
+    SUPPORT_EMAIL: SUPPORT_EMAIL,
     SHARE_TEXT: SHARE_TEXT,
     ACK_VERSION: ACK_VERSION,
     REVIEW_MIN_VIDEOS: REVIEW_MIN_VIDEOS,

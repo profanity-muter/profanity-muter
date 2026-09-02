@@ -265,13 +265,17 @@ body {
   margin-top: 8px;
 }
 
-/* "Copy debug log" sits under the overlay switch in the Debugging row.
-   .pm-switch-label is a flex row, so the button naturally falls onto its
-   own line below it and only needs the vertical rhythm restored — the
-   same link-button treatment "Reset stats" gets in the Stats row. */
-.pm-row--debug .pm-link-button {
-  display: block;
+/* "Copy debug log" and "Report a problem" sit under the overlay switch in
+   the Debugging row, side by side. .pm-switch-label is a flex row, so this
+   group falls onto its own line below it and only needs the vertical
+   rhythm restored — the same link-button treatment "Reset stats" gets in
+   the Stats row. */
+.pm-debug-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
   margin-top: 10px;
+  flex-wrap: wrap;
 }
 
 .pm-row--stats {

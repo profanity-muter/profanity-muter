@@ -214,7 +214,13 @@
         <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
       </span>
     </label>
-    <button id="pm-copy-devlog" class="pm-link-button" type="button">Copy debug log</button>
+    <!-- "Report a problem" sits with "Copy debug log" and shares its rule:
+         always available, never lock-gated. Someone hitting a problem must
+         always be able to report it, and neither changes a setting. -->
+    <div class="pm-debug-actions">
+      <button id="pm-copy-devlog" class="pm-link-button" type="button">Copy debug log</button>
+      <button id="pm-report-problem" class="pm-link-button" type="button">Report a problem</button>
+    </div>
   </section>
 
   <!-- Share. Shown only after acknowledgment (nobody should be recommending
