@@ -51,7 +51,20 @@
   // install is caught within the first video rather than the tenth.
   var DEFAULTS = {
     firstEvalMs: 20000, // accumulated playback before the first verdict
-    reEvalMs: 15000 // re-evaluate this often afterwards
+    reEvalMs: 15000, // re-evaluate this often afterwards
+    // 0.1.34 broken-promise check. When the pill says "Analyzing, safe to
+    // pause (~Ns)" it has made a specific promise, and the field test found
+    // the case where that promise is silently broken forever: a user pauses
+    // BECAUSE we said it was safe to, the decode pipeline is wedged, and
+    // the playback-only clock means health never evaluates at all. They
+    // wait indefinitely, told a filter is coming that is never coming.
+    //
+    // So a promise gets a WALL clock, and it is generous: three times the
+    // ETA we quoted, and never less than the floor below. Slow is still not
+    // broken, and a machine that takes four times its own estimate is still
+    // working. What is being caught is not slowness, it is silence.
+    promiseFactor: 3,
+    promiseFloorMs: 30000
   };
 
   // ---- reason codes ------------------------------------------------------
@@ -64,6 +77,7 @@
     ZERO_WINDOWS: "zero-windows-completed",
     LIVESTREAM: "livestream-unsupported",
     SHORTS: "shorts-unsupported",
+    STALLED: "stalled-analysis",
     UNANALYZABLE: "content-unanalyzable"
   };
 
@@ -97,6 +111,8 @@
     "Profanity Muter isn't working on this video. Audio is NOT being filtered.";
   MESSAGES[REASONS.LIVESTREAM] =
     "Livestreams aren't supported. Audio is not filtered on this video.";
+  MESSAGES[REASONS.STALLED] =
+    "Profanity Muter has stopped analyzing this video. Audio is NOT being filtered.";
   MESSAGES[REASONS.SHORTS] =
     "Shorts aren't supported yet. Audio is not filtered here.";
   MESSAGES[REASONS.UNANALYZABLE] =
@@ -111,6 +127,7 @@
   DETAILS[REASONS.WORKER_DEAD] = "The transcription process stopped responding.";
   DETAILS[REASONS.ZERO_WINDOWS] = "Audio arrived but no part of it was analyzed.";
   DETAILS[REASONS.LIVESTREAM] = "Live video can't be analyzed ahead of playback.";
+  DETAILS[REASONS.STALLED] = "Analysis was expected to finish and did not.";
   DETAILS[REASONS.SHORTS] = "Shorts are too short, and swap too fast, to analyze before they play.";
   DETAILS[REASONS.UNANALYZABLE] = "The audio is encrypted (protected content).";
 
@@ -153,6 +170,62 @@
     return null;
   }
 
+  // ---- the promise ledger (0.1.34) ---------------------------------------
+  //
+  // "Analyzing, safe to pause (~3s)" is a specific claim, and the field test
+  // caught it frozen for 30+ seconds against a wedged decoder. An estimate
+  // that is never checked against what actually happened is not an estimate,
+  // it is a slogan.
+  //
+  // The ledger lives here rather than in the pill code because TWO surfaces
+  // depend on the same fact and must not disagree about it: the pill
+  // escalates its own label at 2x the quoted time, and the health monitor
+  // escalates to a real warning at 3x (floored at 30s). One definition, two
+  // consumers, both testable without a browser.
+  //
+  // A promise is {issuedWall, etaS, windowsAtIssue}. The key property is
+  // that it holds its ORIGINAL clock and its ORIGINAL quote until a window
+  // completes: re-quoting a fresh "~3s" on every render is exactly how the
+  // pill stayed plausible forever while nothing progressed.
+  var PILL_ESCALATE_FACTOR = 2;
+
+  // Open a promise, or keep the existing one. Completing a window changes
+  // windowsCompleted, which retires the old promise and starts a new clock,
+  // so "no outstanding promise" and "the promise was kept" are the same
+  // thing to every consumer.
+  function openOrKeepPromise(prev, input) {
+    input = input || {};
+    var now = typeof input.now === "number" ? input.now : Date.now();
+    var windowsCompleted = input.windowsCompleted || 0;
+    var etaS = typeof input.etaS === "number" ? input.etaS : null;
+    if (prev && prev.windowsAtIssue === windowsCompleted) {
+      // Keep the original clock and quote. Fill the quote in if this is the
+      // first render that had enough information to compute one.
+      if (prev.etaS == null && etaS != null) prev.etaS = etaS;
+      return prev;
+    }
+    return { issuedWall: now, etaS: etaS, windowsAtIssue: windowsCompleted };
+  }
+
+  function promiseAgeMs(promise, now) {
+    if (!promise || typeof promise.issuedWall !== "number") return null;
+    var t = typeof now === "number" ? now : Date.now();
+    return Math.max(0, t - promise.issuedWall);
+  }
+
+  // Has the pill's own softer threshold been passed? At 2x the quoted time
+  // with nothing completed, stop repeating a number already proven wrong.
+  // Deliberately gentler than the health verdict: "taking longer than
+  // expected" is true and might still resolve, and the health monitor's
+  // slower check is what escalates to "not filtering" if it never does.
+  function promiseEscalated(promise, now, factor) {
+    if (!promise || promise.etaS == null) return false;
+    var age = promiseAgeMs(promise, now);
+    if (age == null) return false;
+    var f = typeof factor === "number" ? factor : PILL_ESCALATE_FACTOR;
+    return age > promise.etaS * f * 1000;
+  }
+
   // ---- the verdict -------------------------------------------------------
   //
   // input:
@@ -162,6 +235,12 @@
   //   isPaused            current paused state
   //   isLive              live stream / premiere
   //   isShorts            a /shorts/ page (see content.js isShortsPage)
+  //   promiseAgeMs        wall ms since the pill last promised a completion
+  //                       that has not been fulfilled, or null when no
+  //                       promise is outstanding. The caller clears this on
+  //                       any completed window, which is what keeps this
+  //                       from firing on a pipeline that is merely slow.
+  //   promiseEtaMs        the ETA that was quoted, in ms
   //   unanalyzable        offscreen gave up (DRM/undecodable)
   //   windowsCompleted    analysis windows finished for this video
   //   audioSegments       audio segments intercepted for this video
@@ -223,6 +302,40 @@
         detail: detailFor(REASONS.UNANALYZABLE),
         due: true
       };
+    }
+
+    // A BROKEN PROMISE outranks evidence of past work, and is checked before
+    // the playback clock so it fires while PAUSED. Both orderings matter and
+    // both come straight from the field test:
+    //
+    //   - before windowsCompleted, because the wedged session had already
+    //     completed four windows earlier in the video. Past success does not
+    //     make a currently-dead pipeline healthy.
+    //   - before the playback gate, because the user was paused. Pausing is
+    //     not evidence of a fault (see the clock discussion above), but it
+    //     also must not be a reason we never check a promise we made.
+    //
+    // This is the one place the playback-only clock is deliberately bypassed,
+    // and it is safe precisely because it needs an outstanding promise: we
+    // only warn when we told the user something specific and it did not
+    // come true.
+    var promiseAgeMs = input.promiseAgeMs;
+    if (typeof promiseAgeMs === "number" && isFinite(promiseAgeMs)) {
+      var etaMs = typeof input.promiseEtaMs === "number" && isFinite(input.promiseEtaMs)
+        ? input.promiseEtaMs
+        : 0;
+      var promiseFactor = typeof th.promiseFactor === "number" ? th.promiseFactor : DEFAULTS.promiseFactor;
+      var promiseFloorMs = typeof th.promiseFloorMs === "number" ? th.promiseFloorMs : DEFAULTS.promiseFloorMs;
+      var allowedMs = Math.max(etaMs * promiseFactor, promiseFloorMs);
+      if (promiseAgeMs > allowedMs) {
+        return {
+          status: STATUS.UNHEALTHY,
+          reason: REASONS.STALLED,
+          message: messageFor(REASONS.STALLED),
+          detail: detailFor(REASONS.STALLED),
+          due: true
+        };
+      }
     }
 
     // Evidence of work beats everything below. Checked before the playback
@@ -291,6 +404,10 @@
 
   var PMHealthCore = {
     DEFAULTS: DEFAULTS,
+    PILL_ESCALATE_FACTOR: PILL_ESCALATE_FACTOR,
+    openOrKeepPromise: openOrKeepPromise,
+    promiseAgeMs: promiseAgeMs,
+    promiseEscalated: promiseEscalated,
     REASONS: REASONS,
     STATUS: STATUS,
     MESSAGES: MESSAGES,

@@ -313,6 +313,163 @@ test("a pending result never overwrites a real verdict", () => {
   assert.strictEqual(H.isTransition(broken, pending), false);
 });
 
+// ---- the promise ledger (0.1.34) ----------------------------------------
+//
+// The field test found the pill promising "safe to pause (~3s)" and then
+// sitting frozen on it for 30+ seconds against a wedged decoder, while the
+// health monitor stayed silent because its clock only counts PLAYBACK and
+// the user had done exactly what the pill told them to do: pause. Someone
+// who pauses BECAUSE we said it was safe is the person least able to notice
+// that nothing is happening. These tests pin both halves of the fix.
+
+test("a promise holds its ORIGINAL clock and quote until a window completes", () => {
+  // Re-quoting a fresh estimate on every render is precisely how the pill
+  // stayed plausible forever: every frame it said "~3s" and every frame
+  // that was a brand new, equally untested claim.
+  let p = H.openOrKeepPromise(null, { now: 1000, windowsCompleted: 2, etaS: 3 });
+  assert.deepStrictEqual(p, { issuedWall: 1000, etaS: 3, windowsAtIssue: 2 });
+  p = H.openOrKeepPromise(p, { now: 9000, windowsCompleted: 2, etaS: 9 });
+  assert.strictEqual(p.issuedWall, 1000, "clock is not restarted");
+  assert.strictEqual(p.etaS, 3, "quote is not revised upward to stay plausible");
+});
+
+test("completing a window retires the promise and starts a fresh clock", () => {
+  // Which is what makes "no outstanding promise" and "the promise was kept"
+  // the same thing to every consumer.
+  const first = H.openOrKeepPromise(null, { now: 1000, windowsCompleted: 2, etaS: 3 });
+  const next = H.openOrKeepPromise(first, { now: 9000, windowsCompleted: 3, etaS: 4 });
+  assert.strictEqual(next.issuedWall, 9000);
+  assert.strictEqual(next.etaS, 4);
+  assert.strictEqual(next.windowsAtIssue, 3);
+});
+
+test("a promise opened before an ETA could be computed accepts the first one", () => {
+  let p = H.openOrKeepPromise(null, { now: 1000, windowsCompleted: 0, etaS: null });
+  assert.strictEqual(p.etaS, null);
+  p = H.openOrKeepPromise(p, { now: 1200, windowsCompleted: 0, etaS: 5 });
+  assert.strictEqual(p.etaS, 5);
+  assert.strictEqual(p.issuedWall, 1000, "and still does not restart the clock");
+});
+
+test("promiseAgeMs measures wall time, and never goes negative", () => {
+  const p = { issuedWall: 5000, etaS: 3, windowsAtIssue: 0 };
+  assert.strictEqual(H.promiseAgeMs(p, 8000), 3000);
+  assert.strictEqual(H.promiseAgeMs(p, 4000), 0, "a clock that moved backwards is not a promise kept");
+  assert.strictEqual(H.promiseAgeMs(null, 8000), null);
+  assert.strictEqual(H.promiseAgeMs({}, 8000), null);
+});
+
+test("the pill escalates at 2x the quoted time, not before", () => {
+  const p = { issuedWall: 0, etaS: 3, windowsAtIssue: 0 };
+  assert.strictEqual(H.promiseEscalated(p, 5999), false);
+  assert.strictEqual(H.promiseEscalated(p, 6001), true);
+});
+
+test("a promise with no quote yet cannot be escalated", () => {
+  assert.strictEqual(H.promiseEscalated({ issuedWall: 0, etaS: null }, 999999), false);
+  assert.strictEqual(H.promiseEscalated(null, 999999), false);
+});
+
+// ---- health: the broken-promise verdict ---------------------------------
+
+test("a broken promise is unhealthy, with its own reason code", () => {
+  const v = evaluate({ promiseAgeMs: 31000, promiseEtaMs: 3000, windowsCompleted: 4 });
+  assert.strictEqual(v.status, S.UNHEALTHY);
+  assert.strictEqual(v.reason, R.STALLED);
+  assert.ok(/stopped analyzing/.test(v.message), v.message);
+  assert.ok(/NOT being filtered/.test(v.message), v.message);
+});
+
+test("the broken-promise check fires WHILE PAUSED", () => {
+  // The whole point. The playback-only clock is right that pausing is not a
+  // fault, but it must not mean we never check a promise we made, or the
+  // person who paused because we told them to is the one person we never
+  // warn.
+  const v = evaluate({
+    isPaused: true,
+    playbackMs: 1000, // nowhere near the playback threshold
+    promiseAgeMs: 31000,
+    promiseEtaMs: 3000
+  });
+  assert.strictEqual(v.status, S.UNHEALTHY);
+  assert.strictEqual(v.reason, R.STALLED);
+});
+
+test("a broken promise outranks past success", () => {
+  // The wedged session in the field log had already completed four windows
+  // earlier in the video. Past success does not make a currently dead
+  // pipeline healthy.
+  const v = evaluate({ windowsCompleted: 4, promiseAgeMs: 31000, promiseEtaMs: 3000 });
+  assert.strictEqual(v.status, S.UNHEALTHY);
+  assert.strictEqual(v.reason, R.STALLED);
+});
+
+test("the allowance is 3x the quote, floored at 30s", () => {
+  // Slow is still not broken. A machine taking three times its own estimate
+  // is working; what is being caught is silence, not slowness.
+  assert.strictEqual(evaluate({ promiseAgeMs: 29000, promiseEtaMs: 3000 }).status, S.OK,
+    "under the 30s floor, even though 29s is way past 3x3s");
+  assert.strictEqual(evaluate({ promiseAgeMs: 31000, promiseEtaMs: 3000 }).reason, R.STALLED);
+  // A big quote raises the bar above the floor.
+  assert.strictEqual(evaluate({ promiseAgeMs: 45000, promiseEtaMs: 20000 }).status, S.OK,
+    "45s is under 3x20s");
+  assert.strictEqual(evaluate({ promiseAgeMs: 61000, promiseEtaMs: 20000 }).reason, R.STALLED);
+});
+
+test("no outstanding promise means no broken-promise verdict", () => {
+  // The discipline that keeps this from ever crying wolf: it can only fire
+  // where we made a specific claim and did not keep it.
+  assert.strictEqual(evaluate({ promiseAgeMs: null, windowsCompleted: 3 }).status, S.OK);
+  assert.strictEqual(evaluate({ windowsCompleted: 3 }).status, S.OK);
+  assert.strictEqual(evaluate({ promiseAgeMs: "ages", windowsCompleted: 3 }).status, S.OK);
+});
+
+test("a completed window clears the warning immediately", () => {
+  // The caller retires the promise on any completion, so recovery needs no
+  // separate path and no waiting for the re-evaluation throttle.
+  const broken = evaluate({ promiseAgeMs: 31000, promiseEtaMs: 3000, windowsCompleted: 4 });
+  const recovered = evaluate({ promiseAgeMs: null, windowsCompleted: 5, lastEvalAt: NOW });
+  assert.strictEqual(broken.status, S.UNHEALTHY);
+  assert.strictEqual(recovered.status, S.OK);
+  assert.strictEqual(H.isTransition(broken, recovered), true);
+});
+
+test("the re-evaluation throttle never delays a broken-promise verdict", () => {
+  const v = evaluate({ promiseAgeMs: 31000, promiseEtaMs: 3000, lastEvalAt: NOW });
+  assert.strictEqual(v.status, S.UNHEALTHY);
+  assert.strictEqual(v.due, true);
+});
+
+test("a promise with no quote at all still gets the 30s floor", () => {
+  assert.strictEqual(evaluate({ promiseAgeMs: 31000, promiseEtaMs: null }).reason, R.STALLED);
+  assert.strictEqual(evaluate({ promiseAgeMs: 29000, promiseEtaMs: null }).status, S.OK);
+});
+
+test("documented limits still outrank a broken promise", () => {
+  // A Short or a livestream that never analyzes anything has not broken a
+  // promise, it was never going to be analyzed, and the calm copy is the
+  // truthful one.
+  assert.strictEqual(evaluate({ isShorts: true, promiseAgeMs: 99000, promiseEtaMs: 3000 }).reason, R.SHORTS);
+  assert.strictEqual(evaluate({ isLive: true, promiseAgeMs: 99000, promiseEtaMs: 3000 }).reason, R.LIVESTREAM);
+  assert.strictEqual(evaluate({ unanalyzable: true, promiseAgeMs: 99000, promiseEtaMs: 3000 }).reason, R.UNANALYZABLE);
+});
+
+test("custom promise thresholds are honoured", () => {
+  const v = H.evaluate(
+    Object.assign(input({ promiseAgeMs: 5000, promiseEtaMs: 1000 }), {
+      thresholds: { promiseFactor: 2, promiseFloorMs: 1000 }
+    })
+  );
+  assert.strictEqual(v.reason, R.STALLED);
+});
+
+test("the stalled message names the consequence, and stays jargon-free", () => {
+  const m = H.messageFor(R.STALLED);
+  assert.ok(/NOT being filtered/.test(m), m);
+  assert.ok(!/offscreen|worker|decode|sink|promise/i.test(m), m);
+  assert.ok(H.detailFor(R.STALLED).length > 0);
+});
+
 // ---- diagnostic classification -------------------------------------------
 
 test("classifyDiag recognizes a model load failure", () => {

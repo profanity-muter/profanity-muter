@@ -311,7 +311,13 @@
       fatalReasons: [], // reason codes classified out of the diag stream
       health: null, // last non-pending verdict from PMHealth.evaluate
       healthEvalAt: 0, // when that verdict was reached (re-eval throttle)
-      liveNoticeShown: false // the calm livestream notice is shown once per video
+      liveNoticeShown: false, // the calm livestream notice is shown once per video
+      // 0.1.34: the outstanding "safe to pause (~Ns)" promise, or null.
+      // {issuedWall, etaS, windowsAtIssue}. Cleared whenever the pill is not
+      // in that state, and re-issued (with a fresh clock) whenever a window
+      // completes, so "no outstanding promise" and "the promise was kept"
+      // are the same thing to everything downstream.
+      etaPromise: null
     };
   }
 
@@ -542,6 +548,14 @@
     // can throw, and counted even for a window that matched nothing: zero
     // matches is a result, not a failure.
     session.windowsCompleted++;
+    // 0.1.34: a completed window is the single biggest change to what the
+    // pill should say ("Analyzing" becoming "Protected"), and waiting up to
+    // half a second to say so was measured in the field as much worse than
+    // that, because the coverage that makes it Protected can arrive in the
+    // same instant. Refresh now rather than on the next poll. This also
+    // discharges any outstanding ETA promise, since the promise is keyed on
+    // windowsCompleted.
+    refreshPillSoon();
 
     // Status-pill ETA input (0.1.18): last measured compute-only rtf, same
     // basis offscreen uses for its own rtf-aware cold-window sizing.
@@ -1339,6 +1353,15 @@
       isPaused: !video || video.paused,
       isLive: !!(video && isLiveStream(video)),
       isShorts: isShortsPage(),
+      // 0.1.34: the broken-promise inputs. Null unless the pill currently
+      // has an unfulfilled "safe to pause (~Ns)" claim outstanding, which is
+      // what lets the health check bypass the playback-only clock without
+      // giving up any of its false-positive discipline: it can only fire
+      // where we made a specific promise and did not keep it.
+      promiseAgeMs: api.promiseAgeMs(session.etaPromise, Date.now()),
+      promiseEtaMs: session.etaPromise && session.etaPromise.etaS != null
+        ? session.etaPromise.etaS * 1000
+        : null,
       unanalyzable: !!session.unanalyzable,
       windowsCompleted: session.windowsCompleted,
       audioSegments: session.audioSegments,
@@ -1474,6 +1497,7 @@
 
   function computeStatusState() {
     if (!session) return null;
+
     if (session.unanalyzable) return { kind: 'off' };
     var video = getVideo();
     if (!video) return null;
@@ -1506,17 +1530,60 @@
       var uncoveredAheadS = uncoveredDurationWithin(session.coveredIntervals, t, Math.min(horizonEnd, playheadRange.end));
       var rtf = session.lastKnownRtf != null ? Math.min(0.85, Math.max(0.1, session.lastKnownRtf)) : 0.3;
       var etaS = Math.min(30, Math.max(1, Math.ceil(uncoveredAheadS * rtf)));
-      return { kind: 'analyzing-safe', etaS: etaS };
+
+      // The promise ledger (0.1.34) lives in shared/health.js, because the
+      // pill and the health monitor both act on the same promise and must
+      // not disagree about it. The promise holds its ORIGINAL clock and
+      // quote until a window completes; re-quoting a fresh "~3s" on every
+      // render is exactly how the pill stayed plausible for 30+ seconds
+      // while nothing at all progressed.
+      var api = healthApi();
+      if (!api) return { kind: 'analyzing-safe', etaS: etaS };
+      session.etaPromise = api.openOrKeepPromise(session.etaPromise, {
+        now: Date.now(),
+        windowsCompleted: session.windowsCompleted,
+        etaS: etaS
+      });
+      // Past twice the quoted time with nothing completed, stop repeating a
+      // number already proven wrong and say so plainly. Deliberately softer
+      // than the health warning: at 2x this is "taking longer than
+      // expected", which is true and might still resolve; the monitor's own
+      // slower check is what escalates to "not filtering" if it never does.
+      if (api.promiseEscalated(session.etaPromise, Date.now())) {
+        return { kind: 'analyzing-slow' };
+      }
+      return { kind: 'analyzing-safe', etaS: session.etaPromise.etaS };
     }
 
     var sinceGrowthMs = Date.now() - (session.lastBufferedGrowthWall || 0);
     if (sinceGrowthMs < STATUS_GROWTH_RECENT_MS) return { kind: 'buffering' };
-    if (sinceGrowthMs >= STATUS_GROWTH_STALLED_MS) return { kind: 'needs-play' };
+    // 0.1.34: "Press play to load audio" told the user to do something they
+    // were already doing. The field test showed it while the video was
+    // PLAYING, because capture growth stopping is not the same fact as
+    // playback stopping: once YouTube has buffered far enough ahead it stops
+    // appending for a while, and playback carries on regardless. The advice
+    // is only true if the video is actually paused, so it now says so only
+    // then. A playing video with no growth is simply waiting on the
+    // pipeline, which is what "analyzing" means.
+    if (sinceGrowthMs >= STATUS_GROWTH_STALLED_MS && video.paused) return { kind: 'needs-play' };
     return { kind: 'buffering' }; // brief in-between window (recent < x < stalled) - still assume progress, avoid label flicker
   }
 
   function renderStatusPill() {
     var settings = currentSettings();
+    // Compute the state FIRST, before any early return (0.1.34). The pill's
+    // state machine is also the ETA promise ledger, and the health monitor's
+    // broken-promise check reads that ledger. If this only ran when the pill
+    // was on screen, then anyone who had turned pm_showStatus off could
+    // never get the stalled-analysis warning, which is precisely the warning
+    // that is not supposed to be suppressible. Displaying is gated below;
+    // knowing is not.
+    var status = settings.enabled ? computeStatusState() : null;
+    // Leaving the analyzing states retires any outstanding promise, so a
+    // later re-entry starts a fresh clock rather than inheriting a stale one.
+    if (session && (!status || (status.kind !== 'analyzing-safe' && status.kind !== 'analyzing-slow'))) {
+      session.etaPromise = null;
+    }
     // A failure warning is NOT routine status, so pm_showStatus does not
     // suppress it (0.1.32). Turning off the pill means "stop telling me
     // things are fine"; it cannot reasonably be read as "don't tell me
@@ -1541,7 +1608,6 @@
       if (statusPillEl) setPillContent(milestone);
       return;
     }
-    var status = computeStatusState();
     if (!status) {
       setStatusPillActive(false);
       return;
@@ -1555,6 +1621,7 @@
     else if (status.kind === 'protected') label = 'Protected';
     else if (status.kind === 'analyzing-safe') label = 'Analyzing - safe to pause (~' + status.etaS + 's)';
     else if (status.kind === 'buffering') label = 'Buffering + analyzing…';
+    else if (status.kind === 'analyzing-slow') label = 'Analyzing - taking longer than expected';
     else if (status.kind === 'needs-play') label = 'Press play to load audio';
     else label = 'Analyzing…';
     // Multilingual support (0.1.25): show the detected language once known,
@@ -1628,7 +1695,31 @@
       statusPillTone = null;
     }
   }
-  setInterval(renderStatusPill, 500); // ~2Hz per spec
+  // Polling stays as the backstop, but the pill is now also refreshed at the
+  // exact moments its answer changes (0.1.34). The field test showed the
+  // pill lagging reality by many seconds, which for a status indicator is
+  // the same as lying: a user who pauses on "safe to pause" is acting on
+  // what it said a moment ago, not on what is true now.
+  setInterval(renderStatusPill, 500); // ~2Hz backstop
+  function refreshPillSoon() {
+    // A microtask hop, so a burst of events (play + seeking + a window
+    // landing together) coalesces into one render rather than three.
+    if (refreshPillSoon._q) return;
+    refreshPillSoon._q = true;
+    Promise.resolve().then(function () {
+      refreshPillSoon._q = false;
+      try {
+        renderStatusPill();
+      } catch (e) {
+        /* the pill is never worth throwing into the pipeline for */
+      }
+    });
+  }
+  ['play', 'pause', 'seeking', 'seeked', 'ratechange', 'ended'].forEach(function (evt) {
+    document.addEventListener(evt, function (ev) {
+      if (ev.target instanceof HTMLVideoElement) refreshPillSoon();
+    }, true);
+  });
 
   // pm_enabled=false must turn the ENTIRE extension off, not just stop
   // future muting decisions (0.1.13). Called synchronously from the
