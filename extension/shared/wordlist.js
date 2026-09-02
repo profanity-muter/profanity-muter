@@ -218,7 +218,7 @@
     "asshead", "asshole", "asswipe", "ballsack", "bastard", "biatch",
     "bitch", "bloody", "blowjob", "bollocks", "boob", "boobs", "bugger",
     "bullshit", "camwhore", "chickenshit", "chink", "clusterfuck", "cock",
-    "cocksucker", "crap", "crappy", "cum", "cumming", "cunnilingus", "cunt",
+    "cocksucker", "crap", "crappy", "cum", "cumming", "cumshot", "cunnilingus", "cunt",
     "dammit", "damn", "dang", "deepthroat", "dick", "dickhead", "dickwad",
     "dickweed", "dildo", "dipshit", "douche", "douchebag", "dumbass",
     "dumbfuck", "dyke", "effing", "fag", "faggot", "fellatio", "flippin",
@@ -227,12 +227,12 @@
     "fuckhead", "fucking", "fuckwit", "gangbang", "god damn", "goddam",
     "goddamn", "goddamnit", "gook", "gosh", "handjob", "heck", "hell",
     "holy shit", "horseshit", "jackass", "jackoff", "jerkoff",
-    "jesus christ", "jizz", "kike", "motherfucker", "nigga", "nigger",
+    "gism", "jesus christ", "jism", "jiz", "jizz", "kike", "motherfucker", "nigga", "nigger",
     "nutsack", "oh god", "oh my god", "oh my gosh", "orgy", "piece of shit",
     "piss", "porn", "pornography", "prick", "pussy", "retard", "rimjob",
     "screw", "shit", "shitbag", "shite", "shitface", "shithead", "shitstain",
     "shitty", "shut the fuck up", "slut", "slutty", "son of a bitch", "spaz",
-    "spic", "threesome", "tit", "tits", "titty", "tranny", "twat",
+    "smegma", "spic", "splooge", "spooge", "threesome", "tit", "tits", "titty", "tranny", "twat",
     "twatwaffle", "vibrator", "wank", "wanker", "wetback", "what the fuck",
     "whore"
   ];
