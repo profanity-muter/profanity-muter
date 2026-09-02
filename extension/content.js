@@ -57,6 +57,7 @@
       .join(' ');
     logRing.push({ wallTime: Date.now(), line: line });
     if (logRing.length > LOG_RING_MAX) logRing.shift();
+    return line;
   }
   function TLOG() {
     ringAppend(arguments);
@@ -67,8 +68,74 @@
     console.warn.apply(console, arguments);
   }
   function TERROR() {
-    ringAppend(arguments);
+    // Every error also lands in the PERSISTENT dev log (shared/devlog.js),
+    // not just this tab-lifetime ring buffer — an error is exactly the kind
+    // of evidence that is worthless if it dies with the tab before anyone
+    // thinks to ask about it.
+    devlog('logError', ringAppend(arguments));
     console.error.apply(console, arguments);
+  }
+
+  // ---- persistent dev log (shared/devlog.js) -------------------------------
+  // Loaded immediately before this file in the SAME content_scripts `js`
+  // array (manifest.json), so globalThis.PMDevlog is always present by the
+  // time any of this runs — the same guarantee this file already relies on
+  // for PMWordlist. Every call still goes through this guard anyway: the
+  // dev log is diagnostic scaffolding, and it must never be able to break
+  // muting. See shared/devlog.js's header for the pm_devlog schema and the
+  // reasoning behind what it does and doesn't store.
+  function devlog(method, a, b) {
+    var d = globalThis.PMDevlog;
+    if (!d || typeof d[method] !== 'function') return;
+    try {
+      d[method](a, b);
+    } catch (e) {
+      /* diagnostics must never throw into the pipeline */
+    }
+  }
+
+  // Relayed offscreen 'diag' messages that are routine progress notices,
+  // not problems — kept out of the dev log's `errors` list so the capped
+  // list stays a list of things that actually went wrong. Deliberately a
+  // deny-list: anything not matched here is recorded.
+  // ([PM-STAGE] per-stage progress, [PM-MODEL]/[PM-WARM] model selection
+  // and warm-up, [PM-LANG] detection result, [PM-FIRST-COVERAGE] a
+  // success milestone.) Everything else offscreen relays — [PM-SKIP],
+  // [PM-HANG], [PM-STALL], [PM-ERROR], [PM-DEMUX-ERR],
+  // [PM-UNANALYZABLE], [PM-NO-WINDOW], [PM-IDLE-GATE] — is kept: each of
+  // those describes a reason coverage may not arrive.
+  var DEVLOG_DIAG_NOISE_RE = /^\s*\[PM-(STAGE|MODEL|WARM|LANG|FIRST-COVERAGE)\]/;
+
+  function extensionVersion() {
+    try {
+      return chrome.runtime.getManifest().version;
+    } catch (e) {
+      return 'unknown';
+    }
+  }
+
+  // Resolved settings snapshot for a dev-log entry: what the extension was
+  // ACTUALLY configured to do at the moment this video started, which is
+  // the first thing "why did word X get through" has to rule out. Records
+  // the active word list's SOURCE and SIZE, never its contents (a custom
+  // list can be thousands of entries — see devlog.js's header).
+  function devlogSettingsSnapshot() {
+    var pm = globalThis.PMWordlist;
+    var s = (pm && pm.settings) || {};
+    var lang = (pm && pm.activeLanguage) || 'en';
+    var count = (pm && pm._state && pm._state.wordlist && pm._state.wordlist.length) || 0;
+    var source = lang === 'en' ? 'strictness:' + (s.strictness || 'strict') : 'pack:' + lang;
+    if (pm && pm.packAvailable === false) source += ' (pack unavailable)';
+    return {
+      enabled: s.enabled !== false,
+      strictness: s.strictness || 'strict',
+      wordlistSource: source,
+      wordCount: count,
+      catchupMode: s.catchupMode || 'mute',
+      muteAudio: s.muteAudio !== false,
+      censorCaptions: s.censorCaptions !== false,
+      padding: s.padding || 'normal'
+    };
   }
 
   // ---- word matching (delegates entirely to shared/wordlist.js) -----------
@@ -220,16 +287,30 @@
       bufferedRanges: [], // merged [{start,end}] — same interval-set concept as offscreen's s.bufferedRanges, built the same way from growthAbsStart/growthAbsEnd
       lastBufferedGrowthWall: Date.now(), // last time bufferedRanges actually grew — "is capture still making progress" signal
       lastKnownRtf: null, // last computeMs-based rtf, for a rough ETA estimate
+      // 0.1.28 — the currently-open catch-up gap for the persistent dev
+      // log ({start, end, mode}), or null. See trackDevlogGap() below.
+      devlogGap: null,
       language: null // 0.1.25 — detected language ('en', a real code, or null before/without detection); see handleLanguage()/addWords()
     };
   }
 
   function resetSession(videoId) {
     TLOG(TAG, 'session reset (video changed), videoId=' + videoId);
+    closeDevlogGap(); // must land in the OUTGOING video's entry, before startVideo
     releaseMute('video-changed');
     clearArmedTimers();
     session = newSession(videoId);
     unanalyzableNoticeShown = false; // a new video gets its own fresh chance (and notice) — see the 'unanalyzable' handler
+    // Open this video's persistent dev-log entry. document.title is often
+    // still the PREVIOUS page's title at this point on a YouTube SPA
+    // navigation, and PMWordlist may not have finished its first async
+    // settings refresh — both are corrected by the updateMeta call in
+    // logVideoInfoOnce below, which waits for the player to resolve.
+    devlog('startVideo', videoId, {
+      title: document.title,
+      version: extensionVersion(),
+      settings: devlogSettingsSnapshot()
+    });
     safePortPost({ type: 'reset', videoId: videoId });
     logVideoInfoOnce(videoId);
   }
@@ -258,6 +339,14 @@
       setTimeout(function () { logVideoInfoOnce(videoId, attempt + 1); }, 300);
       return;
     }
+    // Same moment, same reason: the player has resolved, so document.title
+    // is now this video's real title and the settings snapshot is the
+    // settled one. Refines the entry opened in resetSession().
+    devlog('updateMeta', {
+      title: document.title,
+      version: extensionVersion(),
+      settings: devlogSettingsSnapshot()
+    });
     TLOG(
       TAG,
       '[PM-SESSION] videoId=' + videoId +
@@ -290,6 +379,50 @@
     return false;
   }
 
+  // ---- catch-up gap tracking (persistent dev log) --------------------------
+  // A "gap" is a stretch of media time that PLAYED while the playhead was
+  // not inside any analyzed (covered) region — audio that reached the
+  // <video> element without ever having been checked against the word list.
+  //
+  // In catch-up mode "play" that audio is genuinely audible and this is the
+  // leak. In "mute"/"pause" the very same stretch is covered by a blanket
+  // mute (or never plays at all), so nothing leaks — but it is still
+  // exactly the region that WOULD have leaked. Gaps are therefore recorded
+  // in EVERY mode, with `mode` naming the one in force, so one record
+  // answers both "what did play mode let through" and "what would play mode
+  // have let through if I switched to it".
+  //
+  // A gap is held open across ticks and closed (written to the dev log)
+  // when the playhead becomes covered, playback stops, the catch-up mode
+  // changes, the playhead jumps (a seek ends the contiguous stretch; the
+  // landing position opens its own gap if it is also uncovered), or the
+  // session/page ends.
+  var GAP_JUMP_S = 1.0; // playhead delta beyond this is a jump, not playback
+
+  function closeDevlogGap() {
+    if (!session || !session.devlogGap) return;
+    var g = session.devlogGap;
+    session.devlogGap = null;
+    // devlog.js drops zero/negative-length gaps itself, so a gap that
+    // opened and closed inside a single tick costs nothing here.
+    devlog('logGap', g);
+  }
+
+  function trackDevlogGap(t, playing, uncovered, mode) {
+    if (!session) return;
+    var g = session.devlogGap;
+    if (g && (g.mode !== mode || t < g.end - COVERAGE_EPS || t > g.end + GAP_JUMP_S)) {
+      closeDevlogGap();
+      g = null;
+    }
+    if (playing && uncovered) {
+      if (!g) session.devlogGap = { start: t, end: t, mode: mode };
+      else g.end = t;
+    } else if (g) {
+      closeDevlogGap();
+    }
+  }
+
   // ---- mute scheduling ------------------------------------------------------
   // Clamp per-word duration before padding (transformers.js word-timestamp
   // smear mitigation — live testing showed some "words" reported as 5-15s
@@ -315,6 +448,13 @@
     var pad = currentPadding();
 
     var newIntervals = [];
+    // matched[] is the dev log's view of the same loop: the matched word/
+    // phrase and the UNPADDED media time it actually starts at. Kept
+    // separate from newIntervals because those get padded, then merged
+    // (mergeIntervals concatenates the `word` labels of overlapping
+    // intervals with '+'), so by the time they reach the session they no
+    // longer say which individual word was found where.
+    var matched = [];
     for (i = 0; i < matches.length; i++) {
       var m = matches[i];
       var i0 = m.index, i1 = m.index + (m.length || 1) - 1;
@@ -323,9 +463,10 @@
       var ivEnd = tokens[i1].end + pad.trail;
       var label = wordStrings.slice(i0, i1 + 1).join(' ');
       newIntervals.push({ start: ivStart, end: ivEnd, word: label });
+      matched.push({ word: label, t: tokens[i0].start });
       for (var k = i0; k <= i1; k++) tokens[k].matched = true;
     }
-    return { intervals: newIntervals, tokens: tokens };
+    return { intervals: newIntervals, tokens: tokens, matched: matched };
   }
 
   // Record raw tokens for the debug overlay (word strip near the playhead) —
@@ -397,6 +538,23 @@
     }
 
     armSchedule();
+
+    // Persistent per-window record (shared/devlog.js). This is the core of
+    // "why did word X get through on video Y": it says whether the window
+    // covering X was ever analyzed at all, how many words the transcript
+    // held, what matched in it, and which padded intervals those matches
+    // produced. The transcript TEXT itself is only stored when
+    // pm_devlogVerbose is on — devlog.js decides that, not this file.
+    devlog('logWindow', {
+      t0: windowStartS,
+      t1: windowEndS,
+      transcriptWordCount: rawWords.length,
+      matches: result.matched,
+      muteIntervals: newIntervals,
+      text: rawWords
+        .map(function (w) { return w.word; })
+        .join(' ')
+    });
 
     // Log the raw transcript text too, not just counts: background.js/
     // offscreen's own "[PM] window ... text=[...]" log lives in the service
@@ -518,6 +676,16 @@
   }
   document.addEventListener('yt-navigate-finish', function () { cachedVideoEl = null; }, true);
 
+  // Hand the dev log a media-clock source. It timestamps caption censor
+  // events (logged from captions.js, which has no <video> of its own) and
+  // errors, and picking the right <video> on a YouTube page is a solved
+  // problem here — see resolveRealVideo above — not one worth solving a
+  // second time in another file.
+  devlog('setTimeSource', function () {
+    var v = getVideo();
+    return v ? v.currentTime : null;
+  });
+
   // ---- engage/release: every call is logged with an explicit reason so
   // there is never a silent "why is this muted" state. -----------------------
   function engageMute(reason, intervalInfo) {
@@ -603,6 +771,13 @@
       statsFlushTimer = null;
     }
     flushStats();
+    // Same deal for the dev log: close whatever gap was still open at the
+    // moment the page went away and force its final write. devlog.js has
+    // its own pagehide listener, but it was registered when devlog.js
+    // loaded — i.e. BEFORE this one — so it would otherwise flush a state
+    // that is missing the last (and often longest) gap.
+    closeDevlogGap();
+    devlog('flushNow');
   });
 
   // ---- proactive scheduling: arm setTimeouts against the interval list so
@@ -1471,6 +1646,14 @@
       // capture itself (normal, not a pipeline stall) rather than only when
       // audio exists and transcription genuinely isn't happening.
       var playheadUncovered = !isCovered(t) && !session.unanalyzable;
+
+      // Persistent record of unanalyzed playback (0.1.28) — see
+      // trackDevlogGap above. Uses playheadUncovered, NOT the `uncovered`
+      // var earlier in this function, which folds in settings.safeMode and
+      // so is always false in "play" mode: the mode whose leak this exists
+      // to measure.
+      trackDevlogGap(t, !video.paused, playheadUncovered, settings.catchupMode);
+
       var playheadHasCapturedAudio = false;
       for (var pbi = 0; pbi < session.bufferedRanges.length; pbi++) {
         var pbr = session.bufferedRanges[pbi];
@@ -1497,6 +1680,11 @@
       } else {
         session.lastStallRequestWall = 0;
       }
+    } else {
+      // No video, no session, or the extension is off: nothing is playing
+      // unanalyzed on our watch, so any open gap ends here rather than
+      // silently absorbing however long the disabled/idle period lasts.
+      closeDevlogGap();
     }
   }
 
@@ -1535,6 +1723,11 @@
       var video = ev.target;
       if (!(video instanceof HTMLVideoElement) || !session) return;
       TLOG(TAG, 'seek detected -> t=' + video.currentTime.toFixed(2));
+      // A seek ends the contiguous stretch of unanalyzed playback, if one
+      // was open. trackDevlogGap's own jump detection would catch this on
+      // the next tick anyway; doing it here keeps the recorded end time at
+      // the pre-seek position instead of wherever the playhead landed.
+      closeDevlogGap();
       // Proactively react synchronously here (don't wait for the next rAF
       // tick or an armed timer) so there is no gap between "seek lands" and
       // "safe mode notices the new position is uncovered".
@@ -1644,10 +1837,27 @@
         // indefinitely must be visible here, not just in the offscreen
         // document's own (user-inaccessible) console.
         TWARN(TAG, '[from offscreen]', msg.text);
+        // Pipeline problems (skipped windows, demux failures, stall
+        // notices) arrive here as a relayed message rather than a thrown
+        // exception, so TERROR's own dev-log hook never sees them — and
+        // they are among the most direct answers there are to "why was
+        // that stretch never analyzed". Record them explicitly, minus the
+        // routine progress chatter this same channel also carries (see
+        // DEVLOG_DIAG_NOISE_RE): a live 0.1.28 verification run put 17
+        // entries in one video's `errors`, all of them [PM-STAGE]/
+        // [PM-MODEL]/[PM-WARM] progress notices, which would eventually
+        // push real failures out of the capped list. The filter is an
+        // explicit deny-list of known-informational prefixes, never an
+        // allow-list of known-bad ones — an unrecognized message is kept,
+        // so the worst case is noise rather than blindness.
+        if (!DEVLOG_DIAG_NOISE_RE.test(msg.text)) {
+          devlog('logError', '[offscreen] ' + msg.text);
+        }
       } else if (msg.type === 'unanalyzable') {
         if (session && session.videoId === msg.videoId && !session.unanalyzable) {
           session.unanalyzable = true;
           TWARN(TAG, '[PM-UNANALYZABLE] offscreen gave up transcribing this video (likely DRM/protected content) — releasing safe-mode protection');
+          devlog('logError', '[PM-UNANALYZABLE] offscreen gave up transcribing this video (likely DRM/protected content) — safe-mode protection released for the rest of it');
           clearArmedTimers();
           releaseMute('unanalyzable');
           if (catchupPausedByUs) resumeFromCatchup('unanalyzable');

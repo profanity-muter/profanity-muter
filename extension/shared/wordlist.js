@@ -60,6 +60,23 @@
 //                                pre-strictness-feature behavior); no
 //                                saved list at all resolves to "strict".
 //                                See resolveSettingsFromStorage.
+//   pm_devlogVerbose  boolean  default false — when true, the persistent
+//                                dev log (shared/devlog.js, key pm_devlog
+//                                in chrome.storage.LOCAL) also stores each
+//                                analyzed window's FULL transcript text,
+//                                not just its matched words. Off by
+//                                default for privacy (a verbatim
+//                                transcript of everything watched) and
+//                                size (transcripts dominate the log's
+//                                256KB budget). Owned entirely by
+//                                shared/devlog.js, which reads it
+//                                directly — it is deliberately NOT in
+//                                this file's STORAGE_KEYS and NOT part of
+//                                the PMWordlist.settings contract: it is
+//                                a debugging escape hatch with no popup
+//                                UI, set from the extension console with
+//                                chrome.storage.sync.set({pm_devlogVerbose:
+//                                true}), not a user-facing setting.
 //   pm_padding        "tight" | "normal" | "wide"  default "normal" —
 //                                how much surrounding audio the mute
 //                                interval pads around a matched word.
@@ -72,6 +89,20 @@
 //   pm_stats   {totalMuted: number, videosProtected: number}  written by
 //              the audio pipeline; may be absent (popup shows zeros).
 //              Not read or written by this file.
+//   pm_activeLanguage {lang, quality, available}  written by this file's
+//              setLanguage(); read by the popup to show the active
+//              non-English pack.
+//   pm_devlog  {version: 1, videos: Entry[]}  the persistent dev log —
+//              a ring buffer of the last 10 videos watched (analyzed
+//              windows + their matched words, padded mute intervals,
+//              unanalyzed-playback gaps, caption censor events, errors),
+//              capped at ~256KB serialized. Written by shared/devlog.js
+//              from content.js/captions.js; read by the popup's "Copy
+//              debug log" button. Not read or written by this file — see
+//              shared/devlog.js's header for the full Entry schema and
+//              the reasoning behind what it does and doesn't store (it
+//              never stores the word list, and only stores transcripts
+//              when pm_devlogVerbose is on).
 //
 // This file is written so the pure matching logic works with zero
 // dependency on chrome.* — see PMWordlistCore below — so it can be

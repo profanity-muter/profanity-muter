@@ -117,6 +117,7 @@
   var statusEl = document.getElementById("pm-status");
   var statsLineEl = document.getElementById("pm-stats-line");
   var resetStatsEl = document.getElementById("pm-reset-stats");
+  var copyDevlogEl = document.getElementById("pm-copy-devlog");
 
   var hasStorage =
     typeof chrome !== "undefined" &&
@@ -754,6 +755,54 @@
     });
   }
 
+  // ---- Copy debug log ---------------------------------------------------
+  // Hands over the whole `pm_devlog` ring (last 10 videos: analyzed
+  // windows, matched words, mute intervals, unanalyzed-playback gaps,
+  // caption censor events, errors) as JSON, so "why did word X get
+  // through on video Y" can be answered from evidence after the fact
+  // instead of from memory. Written by the content scripts via
+  // shared/devlog.js — see that file's header for the schema. Read-only
+  // here; the popup never edits or clears it.
+  function copyDevlog() {
+    if (!hasLocalStorage) {
+      setStatus("Storage unavailable");
+      return;
+    }
+    chrome.storage.local.get(["pm_devlog"], function (items) {
+      if (chrome.runtime && chrome.runtime.lastError) {
+        setStatus("Copy failed");
+        return;
+      }
+      var log = items && items.pm_devlog;
+      // An absent key is the ordinary "nothing watched yet" case, not a
+      // failure — say so plainly rather than copying "undefined" to the
+      // clipboard and letting it look like the log is broken.
+      if (!log || !log.videos || !log.videos.length) {
+        setStatus("No debug log yet");
+        return;
+      }
+      var text;
+      try {
+        text = JSON.stringify(log);
+      } catch (e) {
+        setStatus("Copy failed");
+        return;
+      }
+      if (!navigator.clipboard || !navigator.clipboard.writeText) {
+        setStatus("Clipboard unavailable");
+        return;
+      }
+      navigator.clipboard.writeText(text).then(
+        function () {
+          setStatus("Debug log copied (" + log.videos.length + " videos)");
+        },
+        function () {
+          setStatus("Copy failed");
+        }
+      );
+    });
+  }
+
   // Live-update the stats line as the audio pipeline writes new totals
   // while the popup happens to be open, without polling.
   if (hasLocalStorage && chrome.storage.onChanged) {
@@ -798,6 +847,7 @@
   restoreEl.addEventListener("click", restoreDefaults);
   saveEl.addEventListener("click", save);
   resetStatsEl.addEventListener("click", resetStats);
+  copyDevlogEl.addEventListener("click", copyDevlog);
 
   load();
   renderStats(null); // synchronous zeros first, same correct-by-default pattern as settings

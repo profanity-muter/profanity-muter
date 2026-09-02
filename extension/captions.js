@@ -1,8 +1,9 @@
 // captions.js
 // Isolated-world content script, document_start. Loaded AFTER
-// shared/wordlist.js (per manifest content_scripts order, owned by the
-// other agent), so globalThis.PMWordlist is expected to exist by the
-// time this runs. Everything is still guarded in case it doesn't.
+// shared/wordlist.js and shared/devlog.js (per manifest content_scripts
+// order, owned by the other agent), so globalThis.PMWordlist and
+// globalThis.PMDevlog are expected to exist by the time this runs.
+// Everything is still guarded in case they don't.
 //
 // Responsibility: censor profanity in YouTube's caption DOM.
 //   - Player captions:      .ytp-caption-segment (and its text nodes)
@@ -69,6 +70,28 @@
 
     lastWrittenText.set(el, censored);
     el.textContent = censored;
+    logCensorEvent(current, censored);
+  }
+
+  // Persistent dev log (shared/devlog.js, loaded before this file per the
+  // manifest's content_scripts order — still guarded, since a broken
+  // diagnostic must never stop captions being censored). Only reached on a
+  // write that actually changed something, so the log records real censor
+  // events rather than every no-op observer pass.
+  //
+  // The BEFORE and AFTER text are handed over whole; devlog.js reduces
+  // them to just the words that changed (PMDevlogCore.diffCensored) and
+  // stores nothing else — persisting whole caption segments would amount
+  // to keeping a transcript of every video watched, which is exactly what
+  // the pm_devlogVerbose flag exists to gate for the audio side.
+  function logCensorEvent(original, censored) {
+    var d = (typeof globalThis !== "undefined" && globalThis.PMDevlog) || null;
+    if (!d || typeof d.logCaptionCensor !== "function") return;
+    try {
+      d.logCaptionCensor(original, censored);
+    } catch (e) {
+      // ignore — diagnostics must never break caption censoring
+    }
   }
 
   function censorPlayerCaptions(root) {

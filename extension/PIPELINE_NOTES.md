@@ -2855,3 +2855,113 @@ called once the wordlist agent's method exists.
 - No explicit test of `SourceBuffer.changeType` firing mid-session (quality
   switch) — the reset-on-changeType behavior is implemented but unverified
   live.
+
+## 0.1.28: persistent dev log (`pm_devlog`) — evidence that outlives the tab
+
+The recurring question "why did word X get through on video Y?" was
+unanswerable after the fact. Everything needed to answer it existed at
+the time — the analyzed windows, the matches in each, the padded mute
+intervals, which regions played uncovered — but it lived only in this
+file's tab-lifetime console ring buffer, recoverable only if the user
+clicked "Copy logs" *before* navigating away. By the time anyone asks,
+the evidence is gone.
+
+New module `shared/devlog.js` (owned jointly with the censor side; the
+schema, size guard, batching design, privacy posture and the popup's
+"Copy debug log" export are documented in full in CENSOR_NOTES.md's
+"FEATURE: persistent dev log" section and in `devlog.js`'s own header).
+It is loaded in the isolated-world `content_scripts` entry between
+`shared/wordlist.js` and `content.js`, so `globalThis.PMDevlog` is
+present for the same reason `PMWordlist` is. Pipeline-side notes only,
+here:
+
+- **Every call goes through this file's local `devlog(method, a, b)`
+  guard**, which swallows anything thrown. The dev log is diagnostic
+  scaffolding and must never be able to break muting — the same posture
+  as the `PMWordlist.setLanguage` call in `applyDetectedLanguage`.
+- **`TERROR()` itself is the error hook.** `ringAppend` now returns the
+  formatted line, and `TERROR` hands that line to `devlog('logError')`,
+  so every error this file already logged is persisted with no new call
+  sites to keep in sync. Two error classes arrive as *messages* rather
+  than thrown exceptions and so are logged explicitly at their handlers:
+  the relayed offscreen `diag` text (skipped windows, demux failures,
+  stall notices) and the `unanalyzable` verdict. The `diag` channel also
+  carries routine progress chatter, so `DEVLOG_DIAG_NOISE_RE` filters out
+  `[PM-STAGE]`/`[PM-MODEL]`/`[PM-WARM]`/`[PM-LANG]`/`[PM-FIRST-COVERAGE]`
+  — the first live 0.1.28 run put 17 entries in one video's `errors`, all
+  of them progress notices, which would eventually push real failures out
+  of the capped list. It is a deny-list of known-informational prefixes,
+  not an allow-list of known-bad ones: `[PM-SKIP]`, `[PM-HANG]`,
+  `[PM-STALL]`, `[PM-ERROR]`, `[PM-DEMUX-ERR]`, `[PM-NO-WINDOW]`,
+  `[PM-IDLE-GATE]` and anything unrecognized are all kept, so the worst
+  case is noise rather than blindness.
+- **Errors logged before the first session exists are not lost.**
+  `connectPort()` can `TERROR` during startup, *before* the first
+  `resetSession()` — the failure of the pipeline to come up at all being
+  the single most diagnostic error class there is. `devlog.js` buffers
+  up to 20 pre-session errors and attaches them to the first entry.
+- **`applyWordsToIntervals` now also returns `matched[]`** — `{word, t}`
+  with the *unpadded* start time. It could not be recovered downstream:
+  the intervals it already returned get padded, then `mergeIntervals`
+  concatenates overlapping intervals' `word` labels with `'+'`, so by
+  the time they reach `session.intervals` they no longer say which
+  individual word was found where.
+- **Catch-up gaps** (`trackDevlogGap`, called from `runTickLogic`) record
+  stretches of media time that PLAYED while the playhead was uncovered.
+  Judged against `playheadUncovered`, **not** the `uncovered` variable
+  earlier in that function: `uncovered` folds in `settings.safeMode`
+  (derived as `catchupMode !== 'play'`), so it is *always false in
+  `"play"` mode* — the exact mode whose leak this measures. Same class of
+  trap as 0.1.20 bug #3, where the stall watchdog could never fire in
+  play mode for this same reason. Gaps are recorded in every mode with
+  `mode` named, so the record answers both "what did play mode let
+  through" and "what would it have let through if I switched to it". A
+  gap closes on coverage arriving, playback stopping, a catch-up mode
+  change, a playhead jump (>1s delta, or backwards — a seek ends the
+  contiguous stretch, and the `seeking` handler closes it explicitly so
+  the recorded end is the pre-seek position), session reset, or
+  `pagehide`.
+- **`pagehide` ordering matters.** `devlog.js` registers its own
+  `pagehide` flush at load time, i.e. *before* this file's — so this
+  file's handler closes the open gap and calls `devlog('flushNow')`
+  itself, otherwise the last (and often longest) gap would be missing
+  from the final write.
+- **Write cost**: at most one `chrome.storage.local` read-modify-write
+  per 5s per tab, plus one on video change and one on `pagehide`. The
+  in-memory state is one video's entry, never the whole ring.
+
+### 0.1.28 live verification (real Chrome, `npm run verify` profile)
+
+The Playwright harness itself did not reach its own ANALYSIS phase this
+run — scenario 1 hit the documented `sink.buffers` decode hang
+(`[PM-SKIP]` x6 -> `[PM-UNANALYZABLE]` on window `[51.85,59.60)`), which
+wedges the shared cross-tab transcribe lane, and scenario 2 then made no
+transcription progress at all. That is the known unfixed failure mode
+already recorded at the end of the 0.1.21 notes ("0.1.21's stage-timeout
+guard intentionally does NOT cover the worker-side `transcribeInWorker()`
+call") and is unrelated to this release: nothing in 0.1.28 touches
+`capture.js`, `background.js`, `offscreen*` or `dist/*`.
+
+The dev log itself was verified directly against that run's profile
+(`Local Extension Settings/<extid>/000003.log`), which is arguably a
+better check than the harness's own assertions — it is the real
+`chrome.storage.local` value written by real Chrome:
+
+- Both videos present in the ring, correct ids and resolved titles
+  ("Steve Jobs' 2005 Stanford Commencement Address - YouTube"), i.e. the
+  `logVideoInfoOnce` title refinement works — at `startVideo` time the
+  title was still the pre-navigation one.
+- Settings snapshot recorded the harness's seeded state honestly:
+  `{"strictness":"custom","wordlistSource":"strictness:custom","wordCount":3,...}`
+  — source and count, no word list.
+- 4 windows on the Stanford video, the 4th carrying
+  `matches: [{word:"college.", t:39.89}, {word:"college", t:44.45}]` and
+  `muteIntervals: [{39.54,41.1},{44.1,45.2}]` — the 0.35s lead pad is
+  visible in the arithmetic, and both intervals match the `MUTE engaged`
+  lines in the same run's console output.
+- One catch-up gap: `{start: 0, end: 19.58, mode: "mute"}` — the opening
+  stretch that played before coverage caught up, which is exactly what
+  `"play"` mode would have let through unchecked.
+- Whole log: **4432 bytes** for two videos, i.e. ~1.7% of the 256KB cap.
+- `pm_devlog` was written 15 times across ~10 minutes of playback across
+  two tabs — consistent with the 5s batching, not per-event writes.

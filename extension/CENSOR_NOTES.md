@@ -742,6 +742,142 @@ of that file) — it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays honest about the actual
 shipped pack shape.
 
+## FEATURE (2026-09-02, 0.1.28): persistent dev log (`pm_devlog`)
+
+The question that kept coming up and could not be answered after the
+fact was **"why did word X get through on video Y?"**. Everything needed
+to answer it existed in memory at the time — the analyzed windows, the
+matches found in each, the padded mute intervals, which regions played
+while still unanalyzed — but all of it lived only in `content.js`'s
+tab-lifetime console ring buffer, which dies with the tab and is only
+recoverable if the user happened to click "Copy logs" *before*
+navigating away. By the time anyone asks the question, the evidence is
+gone. There was no persisted evidence at all.
+
+New module **`shared/devlog.js`** (plain script, isolated-world safe,
+Node-loadable pure core — same shape as `shared/wordlist.js`), loaded in
+`manifest.json`'s isolated-world `content_scripts` entry as
+`shared/wordlist.js` -> **`shared/devlog.js`** -> `content.js` ->
+`captions.js`, i.e. before both files that use it. It attaches
+`globalThis.PMDevlog` and keeps a **ring buffer of the last 10 videos**
+in `chrome.storage.local` under `pm_devlog`.
+
+**What one entry records** (full schema in `shared/devlog.js`'s header
+comment, which is the source of truth):
+
+- `videoId`, `title`, `startedAt`, extension `version`
+- `settings` — the **resolved** snapshot at video start: `enabled`,
+  `strictness`, `wordlistSource`, `wordCount`, `catchupMode`,
+  `muteAudio`, `censorCaptions`, `padding`. Deliberately the word list's
+  **source and size, never its contents** — a custom list can be
+  thousands of entries and is the single biggest size risk in the whole
+  record, while source + count is what actually answers "was the word
+  even in the active list".
+- `windows[]` — one per analyzed audio window:
+  `{t0, t1, transcriptWordCount, matches: [{word, t}], muteIntervals:
+  [{start, end}]}`. The matched words and their unpadded timestamps are
+  kept; the **transcript text is not**, unless `pm_devlogVerbose` is on.
+- `gaps[]` — `{start, end, mode}`: stretches of media time that **played
+  while unanalyzed**, i.e. exactly the audio catch-up mode `"play"` lets
+  through unchecked. Recorded in *every* catch-up mode, with `mode`
+  naming the one in force, so one record answers both "what did play
+  mode let through" and "what would play mode have let through if I
+  switched to it".
+- `captions[]` + `captionCount` — caption censor events as
+  `{t, original, censored}`, **per word, not per segment**. Derived by
+  aligning the before/after text token by token
+  (`PMDevlogCore.diffCensored`), which is sound because `censorTextCore`
+  preserves whitespace-separated token count on both its phrase path
+  (`censorPhrase` maps word-by-word) and its single-token path. The one
+  path that doesn't is `substringMode`; that case is detected by the
+  length mismatch and recorded as a count with no per-word attribution
+  rather than a guess. `captionCount` counts *all* events including ones
+  later dropped by the size guard, so a short list never reads as
+  "captions weren't censoring".
+- `errors[]` — `{t, wall, text}`: every `TERROR` from `content.js` (the
+  hook lives inside `TERROR` itself), plus the relayed offscreen `diag`
+  messages and the `unanalyzable` verdict, which arrive as messages
+  rather than thrown exceptions and would otherwise never reach it. The
+  `diag` channel also carries routine progress chatter, so a small
+  deny-list (`[PM-STAGE]`/`[PM-MODEL]`/`[PM-WARM]`/`[PM-LANG]`/
+  `[PM-FIRST-COVERAGE]`) is filtered out — a live verification run put
+  17 entries in one video's `errors`, every one of them a progress
+  notice, which would eventually push real failures out of the capped
+  list. Deliberately a deny-list of known-informational prefixes, never
+  an allow-list of known-bad ones: an unrecognized message is kept, so
+  the worst case is noise rather than blindness.
+- `truncated` — stamped `true` if the size guard dropped anything from
+  this entry, so a reader can never mistake a trimmed entry for a
+  complete one.
+
+**Privacy + size posture.** Transcripts are the one field gated behind a
+flag, `pm_devlogVerbose` (`chrome.storage.sync`, default `false`), for
+two reasons in this order: (1) a verbatim transcript of everything
+watched sitting in storage is a very different thing to keep than a list
+of matched profanity, and (2) transcripts dominate the 256KB budget and
+would evict the structural evidence that actually answers the question.
+There is **no popup UI** for the flag on purpose — it's a debugging
+escape hatch, set deliberately with
+`chrome.storage.sync.set({pm_devlogVerbose: true})` from the extension
+console. It is read directly by `devlog.js` and is **not** in
+`shared/wordlist.js`'s `STORAGE_KEYS` or the `PMWordlist.settings`
+contract, because it is not a user-facing setting and nothing else needs
+to see it.
+
+**Size guard.** `pm_devlog` is capped at ~256KB serialized. Drop order,
+in phases: oldest **videos** first, down to a single entry — the newest
+entry is the video being watched right now, i.e. the one almost
+certainly being asked about, so it is never dropped whole — then oldest
+**windows** within the oldest surviving entry (windows are by far the
+largest field, especially verbose), then captions, gaps, errors. Routine
+per-entry ceilings (600 windows / 400 captions / 300 gaps / 100 errors)
+keep the byte cap a backstop rather than the everyday mechanism.
+
+**Write batching.** `chrome.storage.local` has a write budget, and this
+module is fed from an rAF-cadence tick loop and a per-window
+transcription callback. Every event mutates an **in-memory** entry only;
+storage sees at most one read-modify-write every 5s, plus a forced flush
+on `pagehide` and on a video change (so the video just left is durable
+before its in-memory copy is dropped). Only the *current* video's entry
+is held in memory — the ring itself lives in storage and is only ever
+touched through that read-modify-write, which means two tabs watching
+two videos both end up in the ring instead of one clobbering the other,
+and memory stays O(one video) however long the browser session runs.
+
+**Export.** New "Copy debug log" button in the popup's Debugging row
+(`#pm-copy-devlog`, `popup.html` + `popup.js`), styled as a
+`pm-link-button` alongside "Reset stats". It copies
+`JSON.stringify(pm_devlog)` to the clipboard and reports through the
+existing `setStatus` feedback: "Debug log copied (N videos)", "No debug
+log yet" for the ordinary nothing-watched-yet case (rather than copying
+`undefined` and looking broken), or "Copy failed" / "Clipboard
+unavailable". Read-only — the popup never edits or clears the log.
+
+**Instrumentation points** (`content.js`, `captions.js`): `resetSession`
+opens the entry and `logVideoInfoOnce` refines its title/settings once
+the player has resolved (at `document_start`, `document.title` is
+routinely still the previous page's on a YouTube SPA navigation);
+`applyWordsToIntervals` now also returns `matched[]` (word + unpadded
+start) because the interval list it already returned gets padded and
+then merged, and `mergeIntervals` concatenates overlapping intervals'
+`word` labels with `+`, so by the time intervals reach the session they
+no longer say which individual word was found where; `addWords` logs the
+window; `runTickLogic` tracks catch-up gaps via `trackDevlogGap` against
+`playheadUncovered` (**not** the `uncovered` variable, which folds in
+`settings.safeMode` and is therefore always false in `"play"` mode — the
+very mode whose leak this exists to measure); `censorElement` in
+`captions.js` logs a censor event on any write that actually changed
+something.
+
+**Tests** (`extension/test/`, run with `npm test` from `extension/`):
+`devlog_test.js` covers the pure core (ring eviction, upsert-on-rewatch,
+size guard phases, entry/window shape, timestamp rounding, the caption
+diff) — 24/24. `devlog_integration_test.js` stubs `chrome.storage` and
+covers the browser wiring (write batching, flush-on-video-change,
+verbose gating via `onChanged`, pre-session error buffering, corrupted
+stored value, storage failures never throwing into the pipeline) —
+14/14.
+
 ## What's built
 
 ### `shared/wordlist.js`
@@ -888,6 +1024,7 @@ Avoiding self-triggered observer loops:
 | `pm_padding`        | `"tight"\|"normal"\|"wide"` | `"normal"` — how much surrounding audio the mute interval pads around a matched word; consumed entirely by the audio pipeline's `content.js` for its interval math |
 | `pm_multilingual`   | `boolean`                 | `true` — "Filter other languages (auto-detect)"; stored/exposed here only — the audio pipeline's language detection reads it to decide whether to call `PMWordlist.setLanguage(lang)`; see "FEATURE: language pack architecture" below |
 | `pm_safeMode`       | `boolean`                 | DEPRECATED, read-only. No longer written by the popup — merged into `pm_catchupMode`. Only consulted, once, to migrate a legacy `false` forward (see "Safe mode + catch-up mode merge" below) |
+| `pm_devlogVerbose`  | `boolean`                 | `false` — when true, the persistent dev log also stores each analyzed window's FULL transcript text. Owned and read directly by `shared/devlog.js`; deliberately NOT in this file's `STORAGE_KEYS` and NOT part of the `PMWordlist.settings` contract — it is a debugging escape hatch with no popup UI (set it from the extension console), not a user-facing setting. See "FEATURE: persistent dev log" above |
 | `pm_wordlist`       | `string[]`                | unset -> built-in `DEFAULT_WORDLIST` (or `CORE_WORDLIST`/nothing, depending on `pm_strictness` — see below); once saved, respected exactly as-is (even `[]`) WHEN `pm_strictness` is `"custom"` (or migrates to it) |
 
 `pm_wordlist` semantics matter: built-in defaults are used **only** when
@@ -904,6 +1041,7 @@ saving, without silently reverting to defaults.
 |------------|--------------------------------------------------|---------|
 | `pm_stats` | `{totalMuted: number, videosProtected: number}`  | absent -> popup shows zeros |
 | `pm_activeLanguage` | `{lang: string, quality: string\|null, available: boolean}` | absent -> popup shows nothing (assumed English). Written by `shared/wordlist.js`'s `setLanguage()` on every call (success or failure); read by `popup/popup.js` to display the active non-English pack, if any — see "FEATURE: language pack architecture" below |
+| `pm_devlog` | `{version: 1, videos: Entry[]}` | absent -> popup's "Copy debug log" says "No debug log yet". The persistent dev log: a ring buffer of the last 10 videos (analyzed windows + matched words, padded mute intervals, unanalyzed-playback gaps, caption censor events, errors), capped at ~256KB serialized. Written by `shared/devlog.js` from `content.js`/`captions.js`, batched to at most one write per 5s; read (never modified) by `popup/popup.js`'s "Copy debug log" button. `shared/wordlist.js` does not touch it. Full `Entry` schema lives in `shared/devlog.js`'s header comment — see "FEATURE: persistent dev log" above |
 
 Written by the audio pipeline (`content.js`, owned by the other agent)
 as it runs; `shared/wordlist.js` does not read or write this key at
