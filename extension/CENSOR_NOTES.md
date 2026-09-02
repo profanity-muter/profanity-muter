@@ -742,6 +742,100 @@ of that file) - it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
+## FIX ROUND (2026-09-02, 0.1.41): the backstop that broke the thing it protected
+
+A user seek-stormed: 25 -> 1495 -> 1596 -> 1566, inside about two seconds.
+Three legitimate run boundaries fired for the disjoint regions. The fourth
+tripped the 0.1.24 churn cap, which suppressed it and fed audio from 1560
+into a demux run anchored around 1590. That run cannot decode audio it was
+never given, so window `[1565.73,1572.39)` skipped forever with "no
+decodable audio in this run at that time yet". Coverage returned only when
+the playhead drifted into a region the run could serve:
+`covered at t=1602.00 in 35.81s`, which in play mode is 35.8 seconds of
+audible unfiltered video.
+
+### Why the backstop was right in 0.1.24 and wrong now
+
+0.1.24 fixed a genuine catastrophe: `findGrowth` misread ordinary buffer
+eviction (YouTube trimming a range's front while extending its tail) as a
+disjoint new range on EVERY segment of a long video, firing hundreds of run
+boundaries a minute, each superseded before it could transcribe anything.
+The real fix was interval set-difference. The rate limiter was
+defense-in-depth against that bug class recurring, and its rule was: after
+three boundaries in ten seconds, stop opening runs and feed everything into
+the existing one. Degraded but alive beat churn death.
+
+That reasoning contains an assumption which was true then and false now:
+that a suppressed boundary is a misclassified one. After 0.1.24,
+misclassified growth is **contiguous** by construction, because it is the
+same range trimmed and extended. A seek jump is **disjoint**. Suppressing a
+contiguous boundary costs nothing, since the existing run holds that audio
+anyway. Suppressing a disjoint one guarantees audio that can never be
+decoded.
+
+So the question was never "how many boundaries recently". It is "can the
+existing run serve this". `shared/runs.js` now answers it, and its tests
+hold both outages at once, because a fix for either can cause the other:
+the trim-and-extend snapshot from the 0.1.24 report must still be
+suppressed during a storm, and the 1560-into-1590 case must open a run no
+matter how severe the storm is.
+
+Churn protection survives as a cap on runs opened. It simply has one
+exception no rate limit may override.
+
+### Retirement had the same shape of bug
+
+Keeping two runs, FIFO, was right when runs arrived one at a time. After a
+seek storm the OLDEST run can be exactly the one holding the region the
+playhead just came back to, so dropping it recreates the identical outage
+from the other direction. Runs are now retired by distance from the
+playhead, never the current one and never the one serving the playhead,
+with the cap still enforced so a pathological session cannot accumulate
+64MiB stream caches without bound.
+
+This needed `run.fedStart`, which did not exist. `fedEnd` could say how far
+a run had reached but never where it began, and "where did this run begin"
+is precisely the question a seek storm asks.
+
+### A restart that restores something
+
+The 0.1.40 stall detector fired correctly at 15 seconds and requested a
+restart. The restart re-ran the picker against the same poisoned mapping,
+so it skipped identically: correct detection, toothless response.
+
+Waiting helps a slow pipeline. It can never help a run that does not hold
+the audio. The restart now asks first whether any run can serve the
+playhead, and if none can, requests a fresh run for that region instead of
+re-reading the same wrong map. Only `capture.js` can grant that, since the
+cached init bytes live in the MAIN world, so the request travels
+offscreen -> background -> content -> capture over the same bridge the
+eviction check already uses. The churn cap is explicitly cleared for the
+repair: it exists to stop runaway run creation, and this path only fires
+when the pipeline is already stalled and producing nothing.
+
+### Topology in the devlog
+
+Suppressions, openings, retirements and rebuild requests are now recorded.
+The entire cost of this round was a log that showed a window skipping
+forever and nothing about why the mapping was wrong.
+
+### Confirmed working in the same log, preserved
+
+Badge click outcome logging (`outcome=opened-popup`, so 0.1.37's
+instrumentation answered the question it was built for), the language gate
+holding English through three `already-english` records, `PM-STALE-KEPT`
+applying across generation 1 to 4, and the monotonic pill quote presenting
+sensibly.
+
+### Tests
+
+`runs_test.js` (20): the disjoint-versus-contiguous matrix including both
+field snapshots, rate-limit immunity for disjoint regions, the empty-run
+case, append slop tolerance, storm timestamps ageing out, retirement LRU
+including "never the run serving the playhead" and "never the current run",
+and `runCanServe` as the stall recovery's question. Suite: 370 node checks,
+184 browser checks.
+
 ## FIX ROUND (2026-09-02, 0.1.40): the decode hang was ours all along
 
 Three releases treated the `sink.buffers()` hang as a mediabunny or

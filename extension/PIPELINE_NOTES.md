@@ -3277,3 +3277,37 @@ Pipeline-side specifics:
   monotonic display ledger, reset only by a seek. `computeStatusState`
   passes `displayedS` through to `PMPill.present`, which prefers it over
   the raw promise remainder.
+
+## 0.1.41: run topology after a seek storm
+
+Full write-up in CENSOR_NOTES.md "the backstop that broke the thing it
+protected". Pipeline-side specifics:
+
+- **The 0.1.24 rate limiter no longer suppresses disjoint boundaries.**
+  `shared/runs.js` `classifyBoundary()` compares the growth span against
+  what the current run has actually been fed. Contiguous plus storm ->
+  suppressed (the 0.1.24 case, free to suppress). Disjoint -> `new-run`,
+  regardless of the cap, because suppressing it feeds the run audio it can
+  never decode. `capture.js` tracks `currentRunSpan` in the instrumentation
+  closure, reset on every real init segment and every boundary it emits.
+- **Retirement is playhead-aware.** `selectRunToRetire()` picks the run
+  furthest from `s.currentTimeS`, skipping the current run and any run that
+  can serve (or nearly serve) the playhead, with a fallback to the oldest
+  non-current run so the cap is always enforced. `KEEP_RUNS` 2 -> 4, since
+  a storm legitimately produces several.
+- **`run.fedStart`** joins `fedEnd`, minimum of every `growthAbsStart` fed
+  to that run. Without it there was no way to ask whether a run could serve
+  a position.
+- **The stall restart can now repair the mapping.** `pm-restart` checks
+  `PMRuns.runCanServe` for the current run and every other run; if none can
+  serve the playhead it sends `pm-request-run-rebuild`, which background
+  relays to content.js, which posts `force-run-boundary` to capture.js over
+  the existing `__pmToCapture` bridge. `capture.js` registers
+  `activeForceRunBoundary` from inside `instrumentAudioSourceBuffer` (the
+  same hook pattern as `activeEvictionSB`), since `cachedInitBytes` lives
+  in that closure. The repair clears `runBoundaryRateLimited` and the
+  timestamp list: the cap stops runaway creation, and this path only fires
+  when the pipeline is already producing nothing.
+- **Devlog `runs` array**, via `devlog('logRunTopology', ...)`, fed from
+  both capture.js (`run-topology` over the segment bridge) and offscreen
+  (`pm-run-topology` through background).
