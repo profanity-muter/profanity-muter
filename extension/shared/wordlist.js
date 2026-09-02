@@ -221,8 +221,9 @@
     "cocksucker", "crap", "crappy", "cum", "cumming", "cunnilingus", "cunt",
     "dammit", "damn", "dang", "deepthroat", "dick", "dickhead", "dickwad",
     "dickweed", "dildo", "dipshit", "douche", "douchebag", "dumbass",
-    "dumbfuck", "dyke", "effing", "fag", "faggot", "fellatio", "freaking",
-    "frickin", "fricking", "friggin", "fuck", "fucker", "fuckface",
+    "dumbfuck", "dyke", "effing", "fag", "faggot", "fellatio", "flippin",
+    "flipping", "freaken", "freaking",
+    "fricken", "frickin", "fricking", "friggen", "friggin", "fuck", "fucker", "fuckface",
     "fuckhead", "fucking", "fuckwit", "gangbang", "god damn", "goddam",
     "goddamn", "goddamnit", "gook", "gosh", "handjob", "heck", "hell",
     "holy shit", "horseshit", "jackass", "jackoff", "jerkoff",
@@ -244,7 +245,8 @@
   // (so there's one source of truth for the full list's contents; this
   // array only decides which of those entries count as "extended").
   var EXTENDED_WORDLIST = [
-    "dang", "effing", "freaking", "frickin", "fricking", "friggin",
+    "dang", "effing", "flippin", "flipping", "freaken", "freaking",
+    "fricken", "frickin", "fricking", "friggen", "friggin",
     "god damn", "goddam", "goddamn", "goddamnit", "gosh", "heck",
     "jesus christ", "oh god", "oh my god", "oh my gosh"
   ];
@@ -459,7 +461,8 @@
     "spiced",
     "spicer",
     "spicing",
-    "spicy"
+    "spicy",
+    "flip", "flipped", "flips",
   ]);
 
   // Strip leading/trailing punctuation/whitespace, lowercase. Asterisks
