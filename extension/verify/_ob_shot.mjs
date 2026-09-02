@@ -17,7 +17,7 @@ await page.addInitScript(() => {
 const url = pathToFileURL(process.argv[2] || 'onboarding/onboarding.html').href;
 await page.goto(url);
 await page.waitForTimeout(800);
-await page.screenshot({ path: '/tmp/ob_step1.png', fullPage: true });
+await page.screenshot({ path: '/tmp/ob_step1.png', fullPage: false });
 // advance to step 2 (limits) and 3 (setup)
 for (const [i, name] of [[2,'ob_step2'],[3,'ob_step3'],[4,'ob_step4']]) {
   await page.evaluate(() => {
@@ -25,7 +25,7 @@ for (const [i, name] of [[2,'ob_step2'],[3,'ob_step3'],[4,'ob_step4']]) {
     btn && btn.click();
   });
   await page.waitForTimeout(400);
-  await page.screenshot({ path: `/tmp/${name}.png`, fullPage: true });
+  await page.screenshot({ path: `/tmp/${name}.png`, fullPage: false });
 }
 await browser.close();
 console.log('shots done');
