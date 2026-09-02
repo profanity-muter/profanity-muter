@@ -299,10 +299,6 @@
           catch 100% of words, and I should not rely on it as a guarantee.
         </span>
       </label>
-      <p id="ob-ack-done" class="pm-hint pm-hidden" aria-hidden="true">
-        You're all set. You can close this tab - everything is saved, and the
-        toolbar popup has these settings whenever you want them.
-      </p>
       <p class="pm-hint">
         Something not working the way you expect?
         <button id="ob-report-problem" class="pm-link-button" type="button">Report a problem</button>
@@ -316,6 +312,94 @@
         endorsed by, or approved by YouTube or Google LLC. YouTube&trade; is a
         trademark of Google LLC, referenced only to describe compatibility.
       </p>
+    </section>
+
+    <!-- ===== 5. Done =====
+         A real completion state rather than a line of small print under a
+         screen still titled "One last thing". Finishing setup is the one
+         genuinely good moment in this flow and should look like one:
+         large, calm, and pointing at the next action rather than leaving
+         the user to work out that the tab is now theirs to close.
+
+         Reached ONLY by finishing, never by Next/Back, which is why the
+         header and nav hide here rather than the rail growing a fifth
+         station: setup is over, so progress through it has stopped being
+         a useful thing to show. Hiding the header also resolves the stale
+         subtitle rule (a CSS :has() on the rail's aria-valuenow) instead
+         of leaving it to resolve something that no longer applies. -->
+    <section class="ob-step pm-hidden" id="ob-step-5" aria-hidden="true">
+      <h2 class="ob-done-title">You're all set.</h2>
+      <p class="ob-done-lede">
+        Filtering starts automatically on the next video you watch.
+      </p>
+
+      <!-- THE REVIEW MODULE. The one card-treatment element on this page,
+           ranked directly under the headline and deliberately ABOVE the
+           exit button, so the highest-traffic eyeballs in the product
+           cross it before they leave.
+
+           It asks for support of the project, not a verdict on a product
+           nobody has used yet: at minute zero "is it working well?" has no
+           answer, and inviting a rating anyway produces uninformed
+           reviews. "Reviews decide whether people find this" is true and
+           answerable on day one.
+
+           Policy line, absolute: no incentive, nothing gated on it, and
+           declining is one plain click with no ceremony and no guilt copy.
+           No fake counts, no pre-filled stars. See shared/moments.js. -->
+      <section class="ob-review" id="ob-review">
+        <p class="ob-review-terms">Free, no account, and nothing leaves your device.</p>
+        <h3 class="ob-review-title">You're one of the first.</h3>
+        <p class="ob-review-body">
+          Reviews decide whether people find this or never hear of it. If you
+          want this to exist, half a minute here does more than anything else.
+        </p>
+        <div class="ob-review-actions">
+          <a id="ob-review-link" class="pm-button ob-review-cta" href="#" target="_blank" rel="noreferrer">
+            Leave a review
+          </a>
+          <button id="ob-review-later" class="ob-review-later" type="button">Maybe later</button>
+        </div>
+        <p class="ob-review-effort">Takes about 30 seconds.</p>
+      </section>
+
+      <!-- Pin request. Chrome offers no programmatic pin, so this is
+           instructional only. The diagram is a schematic drawn in this
+           page's own navy/gold system, NOT a mock of Chrome's UI: a fake
+           screenshot of someone else's interface ages badly, misleads when
+           their UI changes, and edges toward impersonation. -->
+      <section class="ob-pin">
+        <div class="ob-pin-copy">
+          <h3 class="ob-pin-title">Pin Profanity Muter to your toolbar</h3>
+          <p class="ob-pin-line">
+            Open the extensions menu, then click the pin next to Profanity
+            Muter. It keeps filtering status and settings one click away.
+          </p>
+        </div>
+        <svg class="ob-pin-diagram" viewBox="0 0 132 46" role="img"
+             aria-label="Open the extensions menu in the toolbar, then click the pin next to Profanity Muter">
+          <rect x="1" y="1" width="130" height="44" rx="7" fill="none"
+                stroke="var(--hairline)" stroke-width="1.5"/>
+          <g fill="none" stroke="var(--ink-60)" stroke-width="1.6" stroke-linejoin="round">
+            <path d="M16 15h7a3.2 3.2 0 0 1 6.4 0H36v8a3.2 3.2 0 0 0 0 6.4V31H16z"/>
+          </g>
+          <rect x="48" y="14" width="52" height="4" rx="2" fill="var(--ink-30)"/>
+          <rect x="48" y="26" width="34" height="4" rx="2" fill="var(--ink-30)"/>
+          <g stroke="var(--gold-deep)" stroke-width="2" stroke-linecap="round" fill="none">
+            <path d="M112 14v8"/><path d="M108 22h8"/><path d="M112 22v8"/>
+          </g>
+        </svg>
+      </section>
+
+      <div class="ob-done-actions">
+        <button id="ob-open-youtube" class="pm-button" type="button">Open YouTube&trade;</button>
+        <button id="ob-share" class="pm-link-button" type="button">Share with a friend</button>
+      </div>
+      <p class="pm-hint ob-done-hint">
+        You can close this tab whenever you like. Everything is saved, and the
+        toolbar popup has these settings whenever you want them.
+      </p>
+      <p id="ob-done-status" class="pm-status" role="status" aria-live="polite"></p>
     </section>
 
     <nav class="ob-nav">

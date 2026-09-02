@@ -263,6 +263,62 @@ test("no incentive is promised anywhere in the review or share copy", () => {
   });
 });
 
+// ---- completion review module (0.1.33) ----------------------------------
+
+test("clicking Leave a review at completion retires every later ask", () => {
+  // Someone who has been asked and acted should not be asked again;
+  // asking twice reads as not listening. Implemented by reusing
+  // pm_reviewPrompt so there is ONE definition of "already asked".
+  const record = M.completionReviewOutcome(true, NOW);
+  assert.deepStrictEqual(record, { shownAt: NOW, dismissed: true });
+  const v = M.reviewPromptEligibility(eligibleInput({ reviewPrompt: record }));
+  assert.strictEqual(v.eligible, false);
+  assert.strictEqual(v.reason, "already-prompted");
+});
+
+test("'maybe later' at completion retires NOTHING", () => {
+  // At minute zero a decline is not a verdict: that user is exactly who
+  // the milestone surface exists for, once they have some experience.
+  assert.strictEqual(M.completionReviewOutcome(false, NOW), null);
+  assert.strictEqual(M.reviewPromptEligibility(eligibleInput()).eligible, true);
+});
+
+test("growth counters start at zero and increment one at a time", () => {
+  let g = M.bumpGrowthCounter(null, "completionReviewShown");
+  assert.deepStrictEqual(g, {
+    completionReviewShown: 1,
+    completionReviewClicked: 0,
+    completionReviewDismissed: 0,
+    milestoneReviewClicked: 0
+  });
+  g = M.bumpGrowthCounter(g, "completionReviewShown");
+  g = M.bumpGrowthCounter(g, "milestoneReviewClicked");
+  assert.strictEqual(g.completionReviewShown, 2);
+  assert.strictEqual(g.milestoneReviewClicked, 1);
+  assert.strictEqual(g.completionReviewClicked, 0);
+});
+
+test("growth counters survive a corrupted or partial stored record", () => {
+  const g = M.bumpGrowthCounter({ completionReviewShown: "nonsense", extra: 5 }, "completionReviewClicked");
+  assert.strictEqual(g.completionReviewShown, 0);
+  assert.strictEqual(g.completionReviewClicked, 1);
+  assert.strictEqual("extra" in g, false, "unknown keys are dropped, not carried");
+});
+
+test("an unknown counter name changes nothing", () => {
+  const before = M.bumpGrowthCounter(null, "completionReviewShown");
+  assert.deepStrictEqual(M.bumpGrowthCounter(before, "notACounter"), before);
+});
+
+test("there are exactly four local-only counters", () => {
+  assert.deepStrictEqual(M.GROWTH_COUNTERS, [
+    "completionReviewShown",
+    "completionReviewClicked",
+    "completionReviewDismissed",
+    "milestoneReviewClicked"
+  ]);
+});
+
 // ---- summary -------------------------------------------------------------
 
 console.log("moments_test.js: " + passed + "/" + (passed + failed) + " passed");

@@ -476,12 +476,20 @@ const browser = await chromium.launch();
   await page.waitForTimeout(150);
 
   const obSnap = () => ({
-    step: [1, 2, 3, 4].filter(i => !document.getElementById('ob-step-' + i).classList.contains('pm-hidden')),
+    // Step 5 is the 0.1.33 completion view, reached only by finishing.
+    step: [1, 2, 3, 4, 5].filter(i => !document.getElementById('ob-step-' + i).classList.contains('pm-hidden')),
     dotsDone: document.querySelectorAll('.ob-dot--done').length,
     finishHidden: document.getElementById('ob-finish').classList.contains('pm-hidden'),
     finishDisabled: document.getElementById('ob-finish').disabled,
     backDisabled: document.getElementById('ob-back').disabled,
-    ackDoneHidden: document.getElementById('ob-ack-done').classList.contains('pm-hidden')
+    headerHidden: document.querySelector('.ob-header').classList.contains('pm-hidden'),
+    navHidden: document.querySelector('.ob-nav').classList.contains('pm-hidden'),
+    doneTitle: (document.querySelector('.ob-done-title') || {}).textContent,
+    reviewHidden: (document.getElementById('ob-review') || {}).classList
+      ? document.getElementById('ob-review').classList.contains('pm-hidden') : true,
+    reviewHref: (document.getElementById('ob-review-link') || {}).href,
+    pinShown: !!document.querySelector('.ob-pin'),
+    markAlt: (document.querySelector('.ob-header .ob-mark') || {}).alt
   });
 
   let s = await page.evaluate(obSnap);
@@ -544,7 +552,48 @@ const browser = await chromium.launch();
   ack = await page.evaluate(() => window.__pmSync.pm_ackNotPerfect);
   s = await page.evaluate(obSnap);
   check('onboarding: ack record written', !!ack && ack.version === 1 && typeof ack.timestamp === 'number', ack);
-  check('onboarding: confirmation shown', s.ackDoneHidden === false);
+
+  // ---- 0.1.33 completion view ----
+  check('done: lands on the completion view', s.step.length === 1 && s.step[0] === 5, s.step);
+  check('done: large completion headline', /You're all set\./.test(s.doneTitle || ''), s.doneTitle);
+  check('done: the stale header goes with it', s.headerHidden === true);
+  check('done: the setup nav goes with it', s.navHidden === true);
+  check('done: review module shown', s.reviewHidden === false);
+  check('done: review CTA points at the store review URL', /\/reviews$/.test(s.reviewHref || ''), s.reviewHref);
+  check('done: pin request present', s.pinShown === true);
+
+  const doneText = await page.evaluate(() => document.getElementById('ob-step-5').innerText);
+  check('done: no incentive language anywhere in the ask',
+    !/free trial|discount|reward|unlock|premium|coupon|gift/i.test(doneText), doneText);
+  check('done: no fake social proof', !/\d+[,\d]*\s+(users|people|installs|reviews)/i.test(doneText), doneText);
+  check('done: declining is offered plainly', /Maybe later/.test(doneText), doneText);
+  check('done: names the next action', /Open YouTube/.test(doneText), doneText);
+
+  const growthShown = await page.evaluate(() => window.__pmLocal.pm_growth);
+  check('done: shown counter recorded', !!growthShown && growthShown.completionReviewShown === 1, growthShown);
+
+  // Declining must retire nothing and must not re-ask.
+  await page.click('#ob-review-later');
+  await page.waitForTimeout(80);
+  let s2 = await page.evaluate(obSnap);
+  const afterLater = await page.evaluate(() => ({
+    growth: window.__pmLocal.pm_growth,
+    prompt: window.__pmSync.pm_reviewPrompt
+  }));
+  check('done: Maybe later hides the module', s2.reviewHidden === true);
+  check('done: Maybe later counts as a dismissal', afterLater.growth.completionReviewDismissed === 1, afterLater.growth);
+  check('done: Maybe later retires NOTHING', afterLater.prompt === undefined, afterLater.prompt);
+
+  await page.click('#ob-open-youtube');
+  await page.waitForTimeout(60);
+  const openedTabs = await page.evaluate(() => window.__pmTabs);
+  check('done: Open YouTube opens youtube.com',
+    openedTabs.some(u => /^https:\/\/www\.youtube\.com\/$/.test(u)), openedTabs);
+
+  await page.click('#ob-share');
+  await page.waitForTimeout(100);
+  const shared = await page.evaluate(() => window.__pmClipboard);
+  check('done: share copies the standard blurb', /^I use Profanity Muter/.test(shared || ''), shared);
   await page.close();
 }
 
@@ -799,6 +848,49 @@ const devlogFixture = {
   await page.waitForTimeout(60);
   const tabs = await page.evaluate(() => window.__pmTabs);
   check('onboarding: final screen links to the report page', tabs.length === 1 && /report\/report\.html$/.test(tabs[0]), tabs);
+  await page.close();
+}
+
+// ---- completion review: clicking the CTA retires every later ask ----
+{
+  const OB3 = pathToFileURL(path.join(EXT, 'onboarding', 'onboarding.html')).href;
+  const page = await browser.newPage();
+  await page.addInitScript(stub({}, {}));
+  await page.goto(OB3);
+  await page.waitForTimeout(120);
+  await page.click('#ob-next');
+  await page.click('#ob-next');
+  await page.click('#ob-next');
+  await page.click('#ob-ack-check');
+  await page.click('#ob-finish');
+  await page.waitForTimeout(150);
+  // Suppress the anchor's navigation; we only care about the side effects.
+  await page.evaluate(() => {
+    document.getElementById('ob-review-link').addEventListener('click', (e) => e.preventDefault(), true);
+  });
+  await page.click('#ob-review-link');
+  await page.waitForTimeout(150);
+  const after = await page.evaluate(() => ({
+    prompt: window.__pmSync.pm_reviewPrompt,
+    growth: window.__pmLocal.pm_growth
+  }));
+  check('done: clicking the CTA counts the click', after.growth.completionReviewClicked === 1, after.growth);
+  check('done: clicking the CTA writes pm_reviewPrompt',
+    !!after.prompt && after.prompt.dismissed === true, after.prompt);
+  // Which is exactly what makes every later surface stand down.
+  const stood = await page.evaluate(() => {
+    const M = window.PMMoments;
+    const v = M.reviewPromptEligibility({
+      stats: { videosProtected: 99, totalMuted: 99 },
+      installedAt: Date.now() - 40 * 24 * 3600 * 1000,
+      ack: { version: 1, timestamp: 1 },
+      reviewPrompt: window.__pmSync.pm_reviewPrompt,
+      now: Date.now()
+    });
+    return { eligible: v.eligible, reason: v.reason };
+  });
+  check('done: the milestone surfaces are retired by that write',
+    stood.eligible === false && stood.reason === 'already-prompted', stood);
   await page.close();
 }
 

@@ -22,7 +22,12 @@
 (function () {
   "use strict";
 
+  // Four navigable setup steps, plus a fifth DONE view reached only by
+  // finishing (never by Next/Back), which is why the rail and the nav both
+  // hide there rather than the rail growing a fifth station: setup is over,
+  // so progress through it has stopped being a useful thing to show.
   var TOTAL_STEPS = 4;
+  var DONE_STEP = 5;
 
   var dotsEl = document.getElementById("ob-dots");
   var backEl = document.getElementById("ob-back");
@@ -47,8 +52,15 @@
   var lockSetStatusEl = document.getElementById("ob-lock-set-status");
 
   var ackCheckEl = document.getElementById("ob-ack-check");
-  var ackDoneEl = document.getElementById("ob-ack-done");
   var reportProblemEl = document.getElementById("ob-report-problem");
+  var openYouTubeEl = document.getElementById("ob-open-youtube");
+  var shareEl = document.getElementById("ob-share");
+  var doneStatusEl = document.getElementById("ob-done-status");
+  var reviewLinkEl = document.getElementById("ob-review-link");
+  var reviewModuleEl = document.getElementById("ob-review");
+  var reviewLaterEl = document.getElementById("ob-review-later");
+  var headerEl = document.querySelector(".ob-header");
+  var navEl = document.querySelector(".ob-nav");
 
   var hasStorage =
     typeof chrome !== "undefined" &&
@@ -309,9 +321,19 @@
   var step = 1;
 
   function renderStep() {
-    for (var i = 1; i <= TOTAL_STEPS; i++) {
+    for (var i = 1; i <= DONE_STEP; i++) {
       var el = document.getElementById("ob-step-" + i);
       if (el) show(el, i === step);
+    }
+    var done = step === DONE_STEP;
+    // On the completion view the rail and the whole header are stale:
+    // there is no step 5 of 4, and the "set this up" tagline is finished
+    // business.
+    show(headerEl, !done);
+    show(navEl, !done);
+    if (done) {
+      window.scrollTo(0, 0);
+      return;
     }
     var dots = dotsEl.querySelectorAll(".ob-dot");
     for (var d = 0; d < dots.length; d++) {
@@ -325,9 +347,106 @@
     window.scrollTo(0, 0);
   }
 
+  // Clamped to TOTAL_STEPS on purpose: Next and Back must never walk into
+  // the completion view, which is reached only by actually finishing.
   function goTo(n) {
     step = Math.min(TOTAL_STEPS, Math.max(1, n));
     renderStep();
+  }
+
+  function goDone() {
+    step = DONE_STEP;
+    renderStep();
+    wireReviewModule();
+    bumpGrowth("completionReviewShown");
+  }
+
+  function setDoneStatus(text) {
+    doneStatusEl.textContent = text || "";
+    if (text) {
+      window.clearTimeout(setDoneStatus._t);
+      setDoneStatus._t = window.setTimeout(function () {
+        doneStatusEl.textContent = "";
+      }, 2500);
+    }
+  }
+
+  function openYouTube() {
+    var url = "https://www.youtube.com/";
+    try {
+      chrome.tabs.create({ url: url });
+    } catch (e) {
+      window.open(url, "_blank");
+    }
+  }
+
+  // The same blurb the popup's share row copies (shared/moments.js), so
+  // there is one piece of share copy in the product rather than two.
+  // Offered here because sharing needs no product experience to be
+  // sincere, unlike a review.
+  function shareWithFriend() {
+    var m = moments();
+    if (!m || !navigator.clipboard || !navigator.clipboard.writeText) {
+      setDoneStatus("Clipboard unavailable");
+      return;
+    }
+    navigator.clipboard.writeText(m.SHARE_TEXT).then(
+      function () { setDoneStatus("Copied!"); },
+      function () { setDoneStatus("Copy failed"); }
+    );
+  }
+
+  // ---- completion review module -------------------------------------------
+  //
+  // Counters are local-only (chrome.storage.local, pm_growth) and exist so
+  // conversion can be read off a devlog or problem report later. Nothing is
+  // transmitted, by this or anything else here.
+  function bumpGrowth(key) {
+    var m = moments();
+    if (!m || typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+    try {
+      chrome.storage.local.get(["pm_growth"], function (items) {
+        if (chrome.runtime && chrome.runtime.lastError) return;
+        chrome.storage.local.set({
+          pm_growth: m.bumpGrowthCounter(items && items.pm_growth, key)
+        });
+      });
+    } catch (e) {
+      // A counter is never worth breaking the page for.
+    }
+  }
+
+  // The store URL lives in exactly one constant (shared/moments.js), so
+  // this resolves it at runtime rather than hardcoding a second copy in
+  // markup.
+  function wireReviewModule() {
+    var m = moments();
+    if (!m || !reviewLinkEl) return;
+    reviewLinkEl.href = m.REVIEW_URL;
+  }
+
+  function onReviewClicked() {
+    var m = moments();
+    bumpGrowth("completionReviewClicked");
+    // Acting here retires every later review surface: the milestone card,
+    // its badge and its pill. Reusing pm_reviewPrompt means there is one
+    // definition of "already asked" rather than a second flag to sync.
+    if (m && hasStorage) {
+      try {
+        var record = m.completionReviewOutcome(true, Date.now());
+        if (record) chrome.storage.sync.set({ pm_reviewPrompt: record });
+      } catch (e) {}
+    }
+    // The anchor's own navigation opens the store; nothing else to do.
+  }
+
+  // Declining is one plain click, with no second ask and no guilt copy. It
+  // deliberately does NOT retire the milestone surface: "maybe later" at
+  // minute zero describes exactly the person that surface exists for, once
+  // they have some experience to draw on.
+  function onReviewLater() {
+    bumpGrowth("completionReviewDismissed");
+    show(reviewModuleEl, false);
   }
 
   // ---- acknowledgment -----------------------------------------------------
@@ -343,7 +462,9 @@
     if (!ackCheckEl.checked) return; // belt and braces; the button is disabled
     var m = moments();
     if (!m || !hasStorage) {
-      show(ackDoneEl, true);
+      // No storage to record it in, but the user still did the thing, so
+      // still show the completion view rather than a dead button.
+      goDone();
       return;
     }
     // NOT routed through persist(): the acknowledgment is not a setting,
@@ -357,9 +478,8 @@
           setStatus("Couldn't save - try again");
           return;
         }
-        show(ackDoneEl, true);
         finishEl.disabled = true;
-        setStatus("Setup complete");
+        goDone();
       }
     );
   }
@@ -382,6 +502,10 @@
     }
   });
 
+  reviewLinkEl.addEventListener("click", onReviewClicked);
+  reviewLaterEl.addEventListener("click", onReviewLater);
+  openYouTubeEl.addEventListener("click", openYouTube);
+  shareEl.addEventListener("click", shareWithFriend);
   backEl.addEventListener("click", function () { goTo(step - 1); });
   nextEl.addEventListener("click", function () { goTo(step + 1); });
   finishEl.addEventListener("click", finish);

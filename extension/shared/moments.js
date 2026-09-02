@@ -206,6 +206,61 @@
     return value === true;
   }
 
+  // ---- completion review module (0.1.33) ----------------------------------
+  //
+  // The completion page is the highest-traffic point in the product:
+  // effectively everyone who installs reaches it, and almost nobody
+  // navigates back to the popup afterwards. So the review ask lives there,
+  // designed rather than whispered.
+  //
+  // WHAT IT MUST NOT DO, absolute rather than stylistic:
+  //   * No incentive of any kind, in copy or in product behaviour.
+  //   * Nothing gated, delayed or degraded for declining.
+  //   * Declining is one plain click, with no ceremony and no guilt copy.
+  //     "Maybe later" is a real answer, not a retry prompt.
+  //   * No fake social proof, no pre-filled stars, no invented counts.
+  //
+  // WHAT MAKES IT WORK inside that: it asks for support of the project
+  // rather than a verdict on a product nobody has used yet. At minute zero
+  // "is it working well?" has no answer, and asking anyway invites an
+  // uninformed rating; "reviews decide whether people find this" is both
+  // true and answerable on day one.
+  //
+  // Local-only counters (chrome.storage.local, pm_growth) exist so
+  // conversion can be read off a devlog or a problem report later. No
+  // network, ever.
+  var GROWTH_COUNTERS = [
+    "completionReviewShown",
+    "completionReviewClicked",
+    "completionReviewDismissed",
+    "milestoneReviewClicked"
+  ];
+
+  function bumpGrowthCounter(record, key) {
+    var out = {};
+    var src = record && typeof record === "object" ? record : {};
+    for (var i = 0; i < GROWTH_COUNTERS.length; i++) {
+      var name = GROWTH_COUNTERS[i];
+      var n = Number(src[name]);
+      out[name] = isFinite(n) && n > 0 ? n : 0;
+    }
+    if (GROWTH_COUNTERS.indexOf(key) !== -1) out[key] = out[key] + 1;
+    return out;
+  }
+
+  // Acting on the completion ask retires every later review surface: the
+  // milestone card, its badge, and its pill. Someone who has been asked and
+  // acted should not be asked again; asking twice reads as not listening.
+  // Reusing pm_reviewPrompt for it means there is ONE definition of
+  // "already asked" rather than a second flag to keep in sync.
+  //
+  // Declining retires NOTHING. "Maybe later" at minute zero describes
+  // exactly the person the milestone surface exists for, once they have
+  // some experience to draw on.
+  function completionReviewOutcome(clicked, now) {
+    return clicked === true ? makeReviewPromptRecord(true, now) : null;
+  }
+
   // Should background.js auto-open the onboarding tab? Only on a genuine
   // first install, and only once. An UPDATE must never steal a tab from
   // someone who is mid-video - an update the user did not ask for is the
@@ -230,7 +285,10 @@
     reviewPromptEligibility: reviewPromptEligibility,
     makeReviewPromptRecord: makeReviewPromptRecord,
     isOnboarded: isOnboarded,
-    shouldAutoOpenOnboarding: shouldAutoOpenOnboarding
+    shouldAutoOpenOnboarding: shouldAutoOpenOnboarding,
+    GROWTH_COUNTERS: GROWTH_COUNTERS,
+    bumpGrowthCounter: bumpGrowthCounter,
+    completionReviewOutcome: completionReviewOutcome
   };
 
   root.PMMoments = PMMomentsCore;

@@ -1093,6 +1093,24 @@
     markReviewPromptShown(false);
   }
 
+  // Local-only conversion counters (chrome.storage.local, pm_growth), the
+  // same record the completion page writes, so the two review surfaces can
+  // be compared later from a devlog or a problem report. No network.
+  function bumpGrowth(key) {
+    var m = momentsApi();
+    if (!m || !hasLocalStorage) return;
+    try {
+      chrome.storage.local.get(["pm_growth"], function (items) {
+        if (chrome.runtime && chrome.runtime.lastError) return;
+        chrome.storage.local.set({
+          pm_growth: m.bumpGrowthCounter(items && items.pm_growth, key)
+        });
+      });
+    } catch (e) {
+      /* a counter is never worth breaking the popup for */
+    }
+  }
+
   function markReviewPromptShown(dismissed) {
     var m = momentsApi();
     if (!m || !hasStorage) return;
@@ -1113,6 +1131,7 @@
   function onReviewYes() {
     var m = momentsApi();
     markReviewPromptShown(true);
+    bumpGrowth("milestoneReviewClicked");
     hideReviewCard();
     if (!m) return;
     try {
