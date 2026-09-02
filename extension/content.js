@@ -329,6 +329,13 @@
       // completes, so "no outstanding promise" and "the promise was kept"
       // are the same thing to everything downstream.
       etaPromise: null,
+      // 0.1.40: throughput measured in WALL time including hang losses, so
+      // a hang-prone video quotes slower numbers by itself instead of
+      // promising a healthy session's speed.
+      effectiveRtf: null,
+      // The monotonic display ledger. Kept apart from etaPromise, which
+      // stays the internal estimate the health monitor reasons about.
+      countdown: null,
       // 0.1.36 addendum: where the muted-playback fallback started, so the
       // content it consumed can be replayed audibly once coverage catches
       // up. Null when no rewind is pending. userSeekedSinceFallback drops
@@ -458,6 +465,13 @@
     var g = session.devlogGap;
     if (g && (g.mode !== mode || t < g.end - COVERAGE_EPS || t > g.end + GAP_JUMP_S)) {
       closeDevlogGap();
+      // 0.1.40: a seek asks a new question, so the countdown is allowed to
+      // start over rather than being held down by the previous answer. The
+      // only path that may raise the displayed number.
+      if (session) {
+        session.countdownReset = true;
+        session.countdown = null;
+      }
       g = null;
     }
     if (playing && uncovered) {
@@ -465,6 +479,13 @@
       else g.end = t;
     } else if (g) {
       closeDevlogGap();
+      // 0.1.40: a seek asks a new question, so the countdown is allowed to
+      // start over rather than being held down by the previous answer. The
+      // only path that may raise the displayed number.
+      if (session) {
+        session.countdownReset = true;
+        session.countdown = null;
+      }
     }
   }
 
@@ -566,6 +587,21 @@
     // can throw, and counted even for a window that matched nothing: zero
     // matches is a result, not a failure.
     session.windowsCompleted++;
+    // 0.1.40: wall time, not compute time. A window that took twelve
+    // seconds because the decoder hung for nine really did deliver its
+    // audio at that rate, and the countdown is a promise about elapsed
+    // time. Feeding compute-only numbers here is how the old quotes stayed
+    // optimistic on exactly the videos that needed pessimism.
+    if (typeof windowStartS === 'number' && typeof windowEndS === 'number' && windowEndS > windowStartS) {
+      var pillRtfApi = globalThis.PMPill;
+      if (pillRtfApi && wallMs != null) {
+        session.effectiveRtf = pillRtfApi.updateEffectiveRtf(
+          session.effectiveRtf,
+          windowEndS - windowStartS,
+          wallMs
+        );
+      }
+    }
     // 0.1.34: a completed window is the single biggest change to what the
     // pill should say ("Analyzing" becoming "Protected"), and waiting up to
     // half a second to say so was measured in the field as much worse than
@@ -1698,8 +1734,16 @@
       // old model escalated to alarming copy two seconds into a normal cold
       // start. Until a real rtf has been measured the floor is generous.
       var pillApi = globalThis.PMPill;
+      // 0.1.40: quote TIME-TO-PROTECTED using measured wall-clock
+      // throughput, biased pessimistic. Falls back to the old
+      // per-window estimate only if the shared module is missing.
+      var hasRtf = session.effectiveRtf != null || session.lastKnownRtf != null;
       var etaS = pillApi
-        ? pillApi.clampEta(uncoveredAheadS * rtf, session.lastKnownRtf != null)
+        ? pillApi.estimateSecondsToProtected(
+            uncoveredAheadS,
+            session.effectiveRtf != null ? session.effectiveRtf : rtf,
+            hasRtf
+          )
         : Math.min(30, Math.max(1, Math.ceil(uncoveredAheadS * rtf)));
 
       // The promise ledger (0.1.34) lives in shared/health.js, because the
@@ -1720,10 +1764,27 @@
       // than the health warning: at 2x this is "taking longer than
       // expected", which is true and might still resolve; the monitor's own
       // slower check is what escalates to "not filtering" if it never does.
+      // 0.1.40: the DISPLAY ledger. New estimates may only lower what is on
+      // screen; a worse one holds the number flat instead of ticking it up.
+      // A number that can rise is not a countdown, and the user stops
+      // trusting it, which costs more than the accuracy gained.
+      if (pillApi) {
+        session.countdown = pillApi.advanceCountdown(session.countdown, {
+          candidateS: etaS,
+          now: Date.now(),
+          reset: session.countdownReset === true
+        });
+        session.countdownReset = false;
+      }
+      var displayedS = session.countdown ? session.countdown.displayedS : etaS;
+      trace.displayedEta = displayedS;
+      // Held flat at zero for longer than the promise allows: the elapsed
+      // rule takes over with the numberless label. That is the escape
+      // valve, and it is why the display never needs to tick upward.
       if (api.promiseEscalated(session.etaPromise, Date.now())) {
         return withTrace({ kind: 'analyzing-slow' });
       }
-      return withTrace({ kind: 'analyzing-safe', etaS: session.etaPromise.etaS });
+      return withTrace({ kind: 'analyzing-safe', etaS: session.etaPromise.etaS, displayedS: displayedS });
     }
 
     var sinceGrowthMs = Date.now() - (session.lastBufferedGrowthWall || 0);
@@ -1756,7 +1817,11 @@
     // of subtly-wrong diagnostic that cost this round two releases.
     var pillApi = globalThis.PMPill;
     var presented = status && pillApi
-      ? pillApi.present(status, { promise: session ? session.etaPromise : null, now: Date.now() })
+      ? pillApi.present(status, {
+          promise: session ? session.etaPromise : null,
+          displayedS: status.displayedS,
+          now: Date.now()
+        })
       : null;
     lastPresentedLabel = presented ? presented.label : null;
     // Traced on CHANGE only, so a paste reconstructs the pill's history
@@ -2557,6 +2622,13 @@
       // unanalyzed on our watch, so any open gap ends here rather than
       // silently absorbing however long the disabled/idle period lasts.
       closeDevlogGap();
+      // 0.1.40: a seek asks a new question, so the countdown is allowed to
+      // start over rather than being held down by the previous answer. The
+      // only path that may raise the displayed number.
+      if (session) {
+        session.countdownReset = true;
+        session.countdown = null;
+      }
     }
   }
 
@@ -2612,6 +2684,13 @@
       // the next tick anyway; doing it here keeps the recorded end time at
       // the pre-seek position instead of wherever the playhead landed.
       closeDevlogGap();
+      // 0.1.40: a seek asks a new question, so the countdown is allowed to
+      // start over rather than being held down by the previous answer. The
+      // only path that may raise the displayed number.
+      if (session) {
+        session.countdownReset = true;
+        session.countdown = null;
+      }
       // Proactively react synchronously here (don't wait for the next rAF
       // tick or an armed timer) so there is no gap between "seek lands" and
       // "safe mode notices the new position is uncovered".

@@ -324,6 +324,138 @@ test("the DEFAULT position is the safe one", () => {
   assert.ok(defaultRule > 0 && idleRule > defaultRule, "idle rule must override the safe default");
 });
 
+// ---- monotonic countdown (0.1.40) ----------------------------------------
+//
+// Field report: the countdown "goes down, then up, then says analyzing,
+// then finally protected". Each jump was truthful in isolation, because a
+// hang-delayed window produces a worse estimate than the one on screen.
+// Truthful in isolation is not trustworthy: a number that can rise is not a
+// countdown, and a user who sees it rise once stops reading it.
+
+test("PROPERTY: no sequence of estimates can ever raise the display", () => {
+  // The core guarantee, checked against deliberately hostile input rather
+  // than a happy path: wild swings, repeats, zeros, nulls.
+  const estimates = [12, 30, 4, 29, 4, 18, 3, 25, 1, 40, 9, 0, 17, 2];
+  let state = null;
+  let now = 0;
+  let prevDisplayed = Infinity;
+  estimates.forEach(function (candidate) {
+    state = P.advanceCountdown(state, { candidateS: candidate, now: now });
+    assert.ok(
+      state.displayedS <= prevDisplayed,
+      "display rose from " + prevDisplayed + " to " + state.displayedS
+    );
+    prevDisplayed = state.displayedS;
+    now += 1000;
+  });
+});
+
+test("a WORSE estimate holds the number flat rather than ticking it up", () => {
+  let state = P.advanceCountdown(null, { candidateS: 10, now: 0 });
+  state = P.advanceCountdown(state, { candidateS: 25, now: 0 });
+  assert.strictEqual(state.displayedS, 10, "held, not raised");
+});
+
+test("a meaningfully better estimate is adopted", () => {
+  let state = P.advanceCountdown(null, { candidateS: 20, now: 0 });
+  state = P.advanceCountdown(state, { candidateS: 5, now: 0 });
+  assert.strictEqual(state.displayedS, 5);
+});
+
+test("the jitter gate ignores trivially better quotes", () => {
+  // Otherwise a 1Hz tick is interrupted constantly by noise that carries no
+  // information.
+  assert.strictEqual(P.passesJitterGate(20, 19), false, "5% better is flicker");
+  assert.strictEqual(P.passesJitterGate(20, 14), true, "30% better is news");
+  assert.strictEqual(P.passesJitterGate(8, 6), true, "2 whole seconds is news");
+  assert.strictEqual(P.passesJitterGate(20, 21), false, "never upward");
+  assert.strictEqual(P.passesJitterGate(20, 20), false, "no change is not news");
+});
+
+test("the display ticks down on the wall clock between estimates", () => {
+  let state = P.advanceCountdown(null, { candidateS: 10, now: 0 });
+  state = P.advanceCountdown(state, { candidateS: null, now: 3000 });
+  assert.strictEqual(state.displayedS, 7);
+});
+
+test("the display floors at zero and never goes negative", () => {
+  let state = P.advanceCountdown(null, { candidateS: 3, now: 0 });
+  state = P.advanceCountdown(state, { candidateS: null, now: 60000 });
+  assert.strictEqual(state.displayedS, 0);
+});
+
+test("a seek RESETS the promise and may raise the number", () => {
+  // The one legitimate way up: a seek is a new question, not a revised
+  // answer to the old one.
+  let state = P.advanceCountdown(null, { candidateS: 4, now: 0 });
+  state = P.advanceCountdown(state, { candidateS: 22, now: 1000, reset: true });
+  assert.strictEqual(state.displayedS, 22);
+});
+
+test("zero held flat is the escape valve, not an upward tick", () => {
+  // Once the display sits at zero and the estimate is still worse, the
+  // caller's elapsed rule shows the numberless "Analyzing..." label. The
+  // number itself must never climb back up to explain the overrun.
+  let state = P.advanceCountdown(null, { candidateS: 2, now: 0 });
+  state = P.advanceCountdown(state, { candidateS: null, now: 5000 });
+  assert.strictEqual(state.displayedS, 0);
+  state = P.advanceCountdown(state, { candidateS: 30, now: 6000 });
+  assert.strictEqual(state.displayedS, 0, "still zero: the label changes, the number does not rise");
+});
+
+// ---- effective throughput ------------------------------------------------
+
+test("the rtf EWMA measures WALL time, so hangs make quotes slower", () => {
+  // A window that took twelve seconds because the decoder hung for nine
+  // really did deliver its audio at that rate, and the countdown is a
+  // promise about elapsed time. Feeding compute-only numbers is how the old
+  // quotes stayed optimistic on exactly the videos that needed pessimism.
+  const healthy = P.updateEffectiveRtf(null, 18, 4000);
+  const hung = P.updateEffectiveRtf(healthy, 18, 13000);
+  assert.ok(hung > healthy, "a hang-delayed window must slow the estimate");
+});
+
+test("one fast window cannot erase a slow stretch", () => {
+  let rtf = P.updateEffectiveRtf(null, 18, 13000);
+  const afterOneFast = P.updateEffectiveRtf(rtf, 18, 2000);
+  assert.ok(afterOneFast > 0.3, "EWMA keeps memory: " + afterOneFast);
+});
+
+test("the EWMA ignores junk samples rather than poisoning itself", () => {
+  const base = P.updateEffectiveRtf(null, 18, 4000);
+  assert.strictEqual(P.updateEffectiveRtf(base, 0, 4000), base);
+  assert.strictEqual(P.updateEffectiveRtf(base, 18, -5), base);
+  assert.strictEqual(P.updateEffectiveRtf(base, null, 4000), base);
+});
+
+test("quotes are biased pessimistic, and keep the cold-start floor", () => {
+  // Finishing early and snapping to Protected reads as fast; hitting zero
+  // and lingering reads as broken.
+  const optimistic = 10 * 0.3;
+  const quoted = P.estimateSecondsToProtected(10, 0.3, true);
+  assert.ok(quoted >= optimistic, "quote must not be optimistic: " + quoted);
+  assert.strictEqual(P.estimateSecondsToProtected(0.1, 0.3, false), P.ETA_FLOOR_COLD_S);
+});
+
+test("an early finish is possible by construction", () => {
+  // The pessimism factor exists precisely so the common case is finishing
+  // before the countdown does.
+  assert.ok(P.PESSIMISM_FACTOR > 1);
+});
+
+test("present() prefers the DISPLAYED value over the raw promise", () => {
+  const out = P.present(
+    { kind: "analyzing-safe" },
+    { promise: { issuedWall: 0, etaS: 30 }, displayedS: 4, now: 0 }
+  );
+  assert.strictEqual(out.label, "Analyzing ~4s");
+});
+
+test("a displayed zero shows the numberless label, not '~0s'", () => {
+  const out = P.present({ kind: "analyzing-safe" }, { displayedS: 0, now: 0 });
+  assert.strictEqual(out.label, "Analyzing…");
+});
+
 // ---- summary -------------------------------------------------------------
 
 console.log("pill_test.js: " + passed + "/" + (passed + failed) + " passed");

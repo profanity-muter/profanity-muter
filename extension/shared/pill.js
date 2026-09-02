@@ -111,7 +111,12 @@
     }
 
     if (isProcessing(kind)) {
-      var remainingS = countdownRemainingS(opts.promise, now);
+      // The DISPLAYED value wins when the caller keeps a countdown ledger
+      // (0.1.40), because that is the monotonic one. countdownRemainingS
+      // remains the fallback for callers that do not.
+      var remainingS = typeof opts.displayedS === "number"
+        ? opts.displayedS
+        : countdownRemainingS(opts.promise, now);
       if (remainingS != null && remainingS > 0) {
         return { label: "Analyzing ~" + remainingS + "s", presented: "analyzing" };
       }
@@ -186,7 +191,127 @@
     return plan;
   }
 
+  // ---- monotonic countdown (0.1.40) --------------------------------------
+  //
+  // Field report: the countdown "goes down, then up, then says analyzing,
+  // then finally protected". Every one of those transitions was truthful in
+  // isolation, because each completed window recomputes an estimate and a
+  // hang-delayed window produces a bigger one. Truthful in isolation is not
+  // the same as trustworthy: a number that can go up is not a countdown,
+  // and a user watching it learns to ignore it.
+  //
+  // Three rules, in order of how much they matter:
+  //
+  //   1. MONOTONIC DISPLAY. The displayed number may fall or hold. It may
+  //      never rise. A new, worse estimate stops the descent rather than
+  //      reversing it. The existing elapsed rule is the escape valve: if
+  //      the hold outlasts the promise, the label drops the number and says
+  //      "Analyzing...", which is the truthful way to say "longer than I
+  //      thought" without ever ticking upward. Only a seek or a video
+  //      change may raise it, because those are new questions rather than
+  //      revised answers to the old one.
+  //
+  //   2. QUOTE TIME-TO-PROTECTED, PESSIMISTICALLY. The quantity a viewer
+  //      cares about is when the badge turns green, not how long one window
+  //      takes. And the throughput estimate feeding it counts WALL time
+  //      including hangs, so a hang-prone video quotes slower numbers by
+  //      itself rather than promising the throughput of a healthy one. The
+  //      bias is deliberately toward over-quoting: finishing early and
+  //      snapping to Protected reads as fast, while hitting zero and
+  //      lingering reads as broken.
+  //
+  //   3. JITTER GATE. A quote that differs trivially from what is on screen
+  //      is not new information, it is flicker. Adopt a lower quote only
+  //      when the improvement is worth interrupting a smooth 1Hz tick.
+  var JITTER_MIN_RATIO = 0.25; // 25% better
+  var JITTER_MIN_S = 2; // or two whole seconds better
+  // Pessimism applied to a raw estimate before it is ever quoted.
+  var PESSIMISM_FACTOR = 1.25;
+  // EWMA weight for new throughput samples. Low enough that one fast window
+  // cannot erase the memory of a slow stretch.
+  var RTF_EWMA_ALPHA = 0.3;
+
+  // Fold one window's WALL time into the effective throughput estimate.
+  // Wall, not compute: a window that took 12 seconds because the decoder
+  // hung for 9 of them really did deliver its audio at that rate, and the
+  // countdown is a promise about elapsed time, not about CPU.
+  function updateEffectiveRtf(prevRtf, audioS, wallMs) {
+    if (typeof audioS !== "number" || !(audioS > 0)) return prevRtf;
+    if (typeof wallMs !== "number" || !(wallMs >= 0)) return prevRtf;
+    var sample = wallMs / 1000 / audioS;
+    if (!isFinite(sample) || sample <= 0) return prevRtf;
+    if (typeof prevRtf !== "number" || !isFinite(prevRtf) || prevRtf <= 0) return sample;
+    return prevRtf * (1 - RTF_EWMA_ALPHA) + sample * RTF_EWMA_ALPHA;
+  }
+
+  // Time until the protect margin ahead of the playhead is covered, given
+  // how fast this session is actually going. Deliberately quoted on the
+  // pessimistic side.
+  function estimateSecondsToProtected(uncoveredAheadS, effectiveRtf, hasMeasuredRtf) {
+    var rtf = typeof effectiveRtf === "number" && isFinite(effectiveRtf) && effectiveRtf > 0
+      ? effectiveRtf
+      : 0.3;
+    var raw = (typeof uncoveredAheadS === "number" && uncoveredAheadS > 0 ? uncoveredAheadS : 0) * rtf;
+    return clampEta(raw * PESSIMISM_FACTOR, hasMeasuredRtf);
+  }
+
+  // Would adopting `candidateS` be a real improvement over what is shown?
+  function passesJitterGate(displayedS, candidateS) {
+    if (typeof displayedS !== "number") return true;
+    if (typeof candidateS !== "number") return false;
+    if (candidateS >= displayedS) return false; // never upward; rule 1
+    var improvement = displayedS - candidateS;
+    return improvement >= JITTER_MIN_S || improvement >= displayedS * JITTER_MIN_RATIO;
+  }
+
+  // The display ledger. Separate from the promise's own etaS, which stays
+  // the raw internal estimate; this is only what the user is shown.
+  //
+  // state: {displayedS, lastTickWall} or null
+  // input: {candidateS, now, issuedWall, reset}
+  // returns {displayedS, lastTickWall, changed}
+  function advanceCountdown(state, input) {
+    input = input || {};
+    var now = typeof input.now === "number" ? input.now : Date.now();
+    var candidate = typeof input.candidateS === "number" ? input.candidateS : null;
+
+    // A seek or a video change is a new question, so the display may be
+    // raised. This is the ONLY path that can increase it.
+    if (input.reset === true || !state || typeof state.displayedS !== "number") {
+      return { displayedS: candidate, lastTickWall: now, changed: true };
+    }
+
+    // Tick down with the wall clock, so the number moves at 1Hz whatever
+    // the render cadence.
+    // Explicit null check, not `state.lastTickWall || now`: a zero
+    // timestamp is falsy, and that form silently disabled the tick
+    // whenever the clock read exactly 0. Real wall clocks never do, but
+    // injected ones in tests do, and a guard that only works on real
+    // inputs is not a guard.
+    var lastTick = typeof state.lastTickWall === "number" ? state.lastTickWall : now;
+    var elapsedS = Math.floor((now - lastTick) / 1000);
+    var ticked = elapsedS > 0 ? Math.max(0, state.displayedS - elapsedS) : state.displayedS;
+    var lastTickWall = elapsedS > 0 ? lastTick + elapsedS * 1000 : lastTick;
+
+    // Rule 1 plus rule 3: adopt a candidate only when it is genuinely
+    // better. Otherwise hold whatever the tick produced, which may be flat
+    // at zero, at which point the caller's elapsed rule shows the
+    // numberless label.
+    if (candidate != null && passesJitterGate(ticked, candidate)) {
+      return { displayedS: candidate, lastTickWall: now, changed: true };
+    }
+    return { displayedS: ticked, lastTickWall: lastTickWall, changed: ticked !== state.displayedS };
+  }
+
   var PMPillCore = {
+    JITTER_MIN_RATIO: JITTER_MIN_RATIO,
+    JITTER_MIN_S: JITTER_MIN_S,
+    PESSIMISM_FACTOR: PESSIMISM_FACTOR,
+    RTF_EWMA_ALPHA: RTF_EWMA_ALPHA,
+    updateEffectiveRtf: updateEffectiveRtf,
+    estimateSecondsToProtected: estimateSecondsToProtected,
+    passesJitterGate: passesJitterGate,
+    advanceCountdown: advanceCountdown,
     BADGE_TOP_PX: BADGE_TOP_PX,
     BADGE_TOP_IDLE_PX: BADGE_TOP_IDLE_PX,
     BADGE_LEFT_PX: BADGE_LEFT_PX,
