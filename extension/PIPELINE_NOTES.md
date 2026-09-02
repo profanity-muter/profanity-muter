@@ -3205,3 +3205,40 @@ stops costing content". Pipeline-side specifics:
 - **The context-invalidated banner stays separate** and non-interactive by
   design: it fires when chrome.runtime is gone, so a clickable badge there
   would invite a click it could not honour.
+
+## 0.1.37: language-switch gating, badge suffix removal, adaptive position
+
+Full write-up in CENSOR_NOTES.md "a two-letter code, and the protection
+failure behind it". Pipeline-side specifics:
+
+- **The probe is now an observation, not a verdict.** `transcribeWindow`'s
+  detection block runs up to `PMLanguage.MAX_PROBES` times per session
+  (previously exactly once, gated on `languageState === 'pending'`) and
+  feeds each result to `PMLanguage.decide()`. `s.detectedLanguage` is only
+  written on a `switch` or `revert`, so `effectiveModelId` and the tab's
+  word list follow the gate rather than the raw probe.
+- **`s.languageGate`** holds the accumulating confidence/streak state, per
+  session, alongside the existing `languageState`.
+- **Detection failure no longer pins `detectedLanguage = 'en'`**; it only
+  burns a probe. Pinning meant one flaky probe disabled multilingual
+  support for the rest of the video.
+- **`pm-language` is only sent on a real switch or revert.** A hold means
+  nothing changed, and pushing it to the tab would swap the word list on a
+  decision the gate declined to make.
+- **`pm-language-decision`** is the new message carrying every outcome
+  (including holds) through background.js to the tab, where content.js
+  records it via `devlog('logLanguage')` into a new per-entry `language`
+  array. `[PM-LANG]` remains in the diag noise deny-list, so this is the
+  path that makes decisions visible in a paste.
+- **`shared/language.js` is imported into the offscreen bundle** for its
+  side effect (it attaches `globalThis.PMLanguage`) so the rule has one
+  implementation shared with the content script and the tests.
+- **Badge position** is a stylesheet injected once by `ensureBadgeStyle()`:
+  `.pm-badge{top:56px}` with `.ytp-autohide .pm-badge{top:12px}` and a
+  transition. `!important` is required because the badge is built in JS and
+  carries an inline `top`; that is the price of keeping the position
+  declarative rather than polling the player's class.
+- **`openExtensionUi(plan, index, tabId)`** now reports each rung's outcome
+  back over the tab's port (`open-ui-outcome`), which content.js logs as
+  `[PM-BADGE] outcome=...`. The ladder logic is otherwise unchanged: it was
+  working, and the repeated clicks in the field log were deliberate use.

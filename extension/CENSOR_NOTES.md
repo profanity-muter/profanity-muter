@@ -742,6 +742,113 @@ of that file) - it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
+## FIX ROUND (2026-09-02, 0.1.37): a two-letter code, and the protection failure behind it
+
+The user photographed the badge reading "Analyzing ~5s · ko", then
+"Protected · ko", on a plainly English video. He asked what "ko" meant.
+That question is the whole finding: it disqualified the suffix from the
+badge, and following it down found something considerably worse.
+
+### The suffix is gone
+
+A two-letter language code is dev information. The badge is the one surface
+a non-technical user reads, and the pill doctrine is already countdown,
+Protected, warnings, nothing else. Removed from both label paths (the
+collapsed one and the legacy fallback); it remains in the `[PM-LANG]`
+traces and the devlog, where it is genuinely useful.
+
+### What the misdetection was actually doing
+
+The log:
+
+```
+[PM-LANG] detected=ko score=13.18 model=multilingual
+          (switching subsequent windows to the multilingual model)
+```
+
+A correct detection on comparable content scored 19.76. So the wrong answer
+was acted on at two thirds the confidence of a right one, from a single
+probe, permanently for that video.
+
+The reported cost was throughput, and it was real: the multilingual model
+pushed computeMs from ~4000 to as high as 13983, and catch-up time from
+~6s to 19.07s. In pause-until-ready that is the user sitting through three
+times the wait.
+
+But the detected language **also swaps the active word list to that
+language's pack**, and that is not a throughput problem. Verified directly
+against the shipped `ko.json`, whose 66 entries are Korean:
+
+| word | English pack | after ko switch |
+|---|---|---|
+| fuck | matches | does not match |
+| shit | matches | does not match |
+| asshole | matches | does not match |
+| bitch | matches | does not match |
+
+On an English video, after a misdetection, the filter silently stopped
+filtering, and the badge said Protected while it did. That is the failure
+mode this product exists to prevent, reached from one unconfirmed guess.
+
+### The gate
+
+Switching away from English can disable protection. Switching back restores
+the safe default. Every rule follows from that asymmetry:
+
+- **Confidence**: a probe below the bar cannot switch, and cannot even
+  start a streak, or two weak guesses would add up to a decision neither
+  earned. The bar sits between the two observed scores with room on both
+  sides.
+- **Corroboration**: the same language twice in a row. One probe is one
+  opinion about a few seconds of audio, and music, an accent or a quiet
+  passage can produce a confident wrong one. This carries most of the
+  weight, precisely because two data points is thin calibration for a
+  threshold.
+- **Recovery**: one confident English observation reverts, at a lower bar
+  and with no corroboration required. Before this, a wrong switch held for
+  the rest of the video with no way back.
+- **Accountability**: every decision, including the holds, goes to the
+  devlog with its score and reason. The old line said what happened and
+  nothing about why, which is exactly what made the field case
+  unexplainable from a paste.
+
+Probing is bounded (it loads a separate model and shares the single worker
+thread), and detection failure no longer pins the session to English, so a
+genuinely non-English video can still be found by a later probe.
+
+### Badge position
+
+The 56px offset was right while the player chrome is showing and wrong when
+it is hidden, where it floated mid-picture attached to nothing. It now
+rides up to the corner when the player is idle and glides back down when
+the chrome appears, driven by a CSS descendant rule keyed on YouTube's own
+`ytp-autohide` class: no polling, no observer, and it tracks the real
+player state rather than our guess at it. The DEFAULT is the below-title
+offset, so if that class ever disappears the rule never matches and the
+badge stays somewhere safe instead of sitting under the title text.
+
+### The click ladder was not broken
+
+The first supplement read three clicks in nineteen seconds as a dead
+button; the user confirmed they were deliberate use. The ladder is
+unchanged. What it gained is outcome reporting at each rung
+(opened-popup / opened-tab / rung-failed with a reason) flowing back into
+the content trace, so the next field log distinguishes use from failure
+without anyone having to guess. Worth noting as its own lesson: the trace
+recorded the request and not the result, and that gap alone cost a round of
+speculation.
+
+### Tests
+
+`language_test.js` (17) pins the gate against the real numbers: 13.18 must
+not switch and cannot accumulate, 19.76 must be able to, corroboration is
+required, disagreeing probes never add up, a weak probe breaks a streak,
+reverting is easier than switching but not free, and every decision carries
+a reason. `pill_test.js` grew assertions that no presented label can ever
+carry a language code, that neither content.js path appends one, and that
+the position rule is declarative with the safe default. Suite: 316 node
+checks, 184 browser checks.
+
 ## FIX ROUND (2026-09-02, 0.1.36): one processing state, and a fallback that stops costing content
 
 Two field traces. The first produced a product verdict rather than a bug
