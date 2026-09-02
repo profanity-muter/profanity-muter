@@ -719,15 +719,15 @@ const devlogFixture = {
   const mailto = await page.evaluate(() => window.__pmMailto);
   check('report: confirmation panel shown', s.doneHidden === false);
   check('report: status toast', /copied/i.test(s.status), s.status);
-  check('report: mail draft opened', typeof mailto === 'string' && mailto.startsWith('mailto:support@example.com?'), mailto);
+  check('report: mail draft opened', typeof mailto === 'string' && mailto.startsWith('mailto:profanity.muter@gmail.com?'), mailto);
   check('report: fallback link has the same href', s.mailto === mailto, s.mailto);
-  check('report: support address shown as text too', s.email === 'support@example.com', s.email);
+  check('report: support address shown as text too', s.email === 'profanity.muter@gmail.com', s.email);
 
   const subject = decodeURIComponent((mailto.split('?subject=')[1] || '').split('&body=')[0]);
   const body = decodeURIComponent(mailto.split('&body=')[1] || '');
   check('report: subject is versioned', subject === 'Profanity Muter problem report v' + MANIFEST_VERSION, subject);
   check('report: body carries the user text', body.includes('swearing at 1:20 was not muted'));
-  check('report: body carries the paste instruction', body.includes('please paste it below this line before sending'));
+  check('report: body carries the paste instruction', body.includes('paste it below this line before sending'));
   check('report: body does NOT carry the log', !body.includes('dQw4w9WgXcQ') || body.indexOf('muteIntervals') === -1, 'no log in the mail body');
   check('report: mail draft stays small', mailto.length < 2000, mailto.length);
   await page.close();

@@ -15,8 +15,15 @@
 <body>
   <main class="ob-page">
     <header class="ob-header">
-      <h1 class="ob-title">Profanity Muter</h1>
-      <p class="ob-subtitle">A few minutes now, and it runs by itself after that.</p>
+      <!-- Quiet lockup, not a hero logo: the mark sits inline with the
+           wordmark at text scale so the page still opens on its content.
+           Identical treatment on report/report.html so the two full-page
+           surfaces read as one product. -->
+      <div class="ob-lockup">
+        <img class="ob-mark" src="../icons/icon128.png" alt="Profanity Muter" width="30" height="30" />
+        <h1 class="ob-title">Profanity Muter</h1>
+      </div>
+      <p class="ob-subtitle">Set up profanity filtering for YouTube&trade; in about two minutes.</p>
       <div class="ob-dots" id="ob-dots" role="progressbar" aria-label="Setup progress" aria-valuemin="1" aria-valuemax="4" aria-valuenow="1">
         <span class="ob-dot" data-step="1"></span>
         <span class="ob-dot" data-step="2"></span>
@@ -299,6 +306,15 @@
       <p class="pm-hint">
         Something not working the way you expect?
         <button id="ob-report-problem" class="pm-link-button" type="button">Report a problem</button>
+      </p>
+      <!-- Non-affiliation, footer-scale. Sits on the acknowledgment step
+           because that is where the user is being asked to understand what
+           this is and is not, and a trademark line belongs with the rest of
+           that. Quiet by design: a legal necessity, not a message. -->
+      <p class="ob-colophon">
+        Profanity Muter is an independent project. It is not affiliated with,
+        endorsed by, or approved by YouTube or Google LLC. YouTube&trade; is a
+        trademark of Google LLC, referenced only to describe compatibility.
       </p>
     </section>
 

@@ -490,3 +490,37 @@ input:focus-visible {
 .ob-list li:first-child strong {
   font-size: 16px;
 }
+
+/* ---- Header lockup (0.1.33) -----------------------------------------
+   The mark sits inline with the wordmark at text scale. Quiet by intent:
+   these pages should open on their content, not on a logo. Shared with
+   report/report.html so the two full-page surfaces read as one product. */
+.ob-lockup {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.ob-mark {
+  width: 30px;
+  height: 30px;
+  flex: 0 0 auto;
+  display: block;
+}
+
+.ob-lockup .ob-title {
+  margin: 0;
+}
+
+/* ---- Colophon: non-affiliation, footer-scale ------------------------
+   A legal necessity rather than a message, so it is sized and colored to
+   be findable and not to compete with the acknowledgment above it. */
+.ob-colophon {
+  margin: 34px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--hairline);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--ink-60);
+  max-width: 52ch;
+}
