@@ -47,6 +47,20 @@
   // to the preemption side of the ledger rather than quietly ignored.
   var WARMUP_PENALTY_MS = 1500;
 
+  // Observed throughput of the first inferences after a fresh worker, in
+  // wall ms per second of audio. The 0.1.42 field log put early windows at
+  // rtf 1.0 to 1.9 against 0.23 once settled. Exported because the pill's
+  // cold-start quote needs the same number: a cold estimate built from a
+  // different constant would contradict the preemption model about how
+  // slow a cold pipeline is, and one of them would be wrong.
+  var WARMUP_RTF = 1.5;
+
+  // A window that has already run past its predicted time tells us the
+  // prediction was wrong, not that it is about to finish. When overdue,
+  // assume at least this fraction of the elapsed time still remains,
+  // rather than reporting zero. See estimateRemainingMs.
+  var OVERDUE_REMAINING_RATIO = 0.5;
+
   // A scrubbing user fires a seek per frame. Preempting on each one would
   // respawn the worker continuously and transcribe nothing at all, which
   // is a worse failure than the one being fixed.
@@ -74,13 +88,32 @@
     return inFlight.start <= playheadT + margin && inFlight.end >= playheadT;
   }
 
-  // How much longer this compute is likely to run.
+  // How much longer this window is likely to take.
   //
-  // `effectiveRtf` must be WALL-clock throughput (wallMs per second of
-  // audio), not compute-only. The field window spent 3647ms waiting for the
-  // worker mutex and 4688ms computing; an estimate built from compute alone
-  // would have put its remaining time at half the truth and talked itself
-  // out of a preemption that was clearly worth making.
+  // 0.1.43 rewrote this after the field log caught it reporting
+  // remaining=0ms for a window that then ran 4.4 more seconds. Two separate
+  // errors, both of which made abandoned work look free to wait for:
+  //
+  // 1. IT FLOORED AT ZERO. `max(0, expected - elapsed)` says that anything
+  //    already overdue is about to finish. That is backwards. Running past
+  //    the prediction is evidence the prediction was wrong, and the accurate
+  //    reading of "this should have taken 750ms and has taken 1447ms" is
+  //    "it is slower than I thought", never "it is nearly done".
+  //
+  // 2. IT TREATED THE WINDOW AS ONE BLOB. A window waits for the worker
+  //    mutex and then computes. At the moment of the field decision the
+  //    window had been QUEUED for 1447ms and had not started computing at
+  //    all, so the entire compute still lay ahead of it. Subtracting queue
+  //    time from a whole-window prediction charged that waiting against
+  //    work that had not begun.
+  //
+  // So the estimate is now built per stage. `computeStartedWall` is null
+  // while the window is still waiting, in which case the full expected
+  // compute is still to come.
+  //
+  // `effectiveRtf` must be WALL-clock throughput, not compute-only, for the
+  // same reason as before: the queue wait is elapsed time a preemption
+  // reclaims.
   function estimateRemainingMs(inFlight, effectiveRtf, now) {
     if (!inFlight || typeof inFlight.startedWall !== "number") return null;
     var audioS = typeof inFlight.audioS === "number" && inFlight.audioS > 0 ? inFlight.audioS : null;
@@ -88,9 +121,27 @@
     var rtf = typeof effectiveRtf === "number" && isFinite(effectiveRtf) && effectiveRtf > 0
       ? effectiveRtf
       : DEFAULT_RTF;
+    // A cold window runs at warm-up speed, not at the session's settled
+    // average. The field case was exactly this: a steady-state rtf of about
+    // 0.3 predicted 750ms for a window that took 5518ms, because it was the
+    // first window at a fresh position. Using the higher of the two is the
+    // only reading that is not knowingly optimistic.
+    if (inFlight.isCold === true) rtf = Math.max(rtf, WARMUP_RTF);
+    var nowMs = typeof now === "number" ? now : Date.now();
     var expectedTotalMs = audioS * rtf * 1000;
-    var elapsedMs = Math.max(0, (typeof now === "number" ? now : Date.now()) - inFlight.startedWall);
-    return Math.max(0, expectedTotalMs - elapsedMs);
+
+    if (typeof inFlight.computeStartedWall !== "number") {
+      // Still queued. Everything the compute will take is ahead of us, and
+      // no amount of waiting already done reduces it.
+      return expectedTotalMs;
+    }
+
+    var computeElapsedMs = Math.max(0, nowMs - inFlight.computeStartedWall);
+    var remaining = expectedTotalMs - computeElapsedMs;
+    if (remaining > 0) return remaining;
+    // Overdue: the prediction has been falsified, so lean on what has
+    // actually been observed rather than on a number already proven wrong.
+    return Math.max(0, computeElapsedMs * OVERDUE_REMAINING_RATIO);
   }
 
   function respawnCostMs(input) {
@@ -145,17 +196,41 @@
       return { action: "let-finish", reason: "still-useful", remainingMs: null, costMs: cost };
     }
 
-    // Thrash guard. Even with a settle delay, a user working a long video
-    // can produce settled seeks repeatedly; respawning the worker every
-    // few seconds would spend the session starting up.
+    var remainingMs = estimateRemainingMs(inFlight, input.effectiveRtf, now);
+
+    // THE FREE CASE (0.1.43). A window still waiting for the worker mutex
+    // has not consumed the worker at all, so dropping it needs no
+    // terminate, no respawn and no warm-up: the cost is zero and the whole
+    // remaining time is recovered. The field decision was exactly here,
+    // 823ms before its compute began, and the old code weighed it as though
+    // abandoning it required killing the worker.
+    //
+    // No thrash guard and no margin apply, because there is nothing to
+    // trade off. Cancelling queued work for a position nobody is watching
+    // is not a wager, it is tidying up.
+    if (typeof inFlight.computeStartedWall !== "number") {
+      return {
+        action: "cancel-queued",
+        reason: "queued-and-abandoned",
+        remainingMs: remainingMs,
+        costMs: 0
+      };
+    }
+
+    // From here the worker is genuinely busy with this window, so taking
+    // the thread back means terminating it. That IS a wager.
+    //
+    // Thrash guard: even with a settle delay, a user working a long video
+    // produces settled seeks repeatedly, and respawning every few seconds
+    // would spend the session starting up. Deliberately below the free
+    // path above, which it must never block.
     var minInterval = typeof input.minPreemptIntervalMs === "number"
       ? input.minPreemptIntervalMs
       : MIN_PREEMPT_INTERVAL_MS;
     if (typeof input.lastPreemptWall === "number" && now - input.lastPreemptWall < minInterval) {
-      return { action: "let-finish", reason: "thrash-guard", remainingMs: null, costMs: cost };
+      return { action: "let-finish", reason: "thrash-guard", remainingMs: remainingMs, costMs: cost };
     }
 
-    var remainingMs = estimateRemainingMs(inFlight, input.effectiveRtf, now);
     if (remainingMs == null) {
       // No basis for an estimate means no basis for a wager. Finishing is
       // the outcome we can at least predict.
@@ -174,6 +249,8 @@
     SETTLE_MS: SETTLE_MS,
     MIN_PREEMPT_INTERVAL_MS: MIN_PREEMPT_INTERVAL_MS,
     DEFAULT_RTF: DEFAULT_RTF,
+    WARMUP_RTF: WARMUP_RTF,
+    OVERDUE_REMAINING_RATIO: OVERDUE_REMAINING_RATIO,
     MIN_NET_SAVING_MS: MIN_NET_SAVING_MS,
     stillUseful: stillUseful,
     estimateRemainingMs: estimateRemainingMs,

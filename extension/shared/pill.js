@@ -247,11 +247,61 @@
   // Time until the protect margin ahead of the playhead is covered, given
   // how fast this session is actually going. Deliberately quoted on the
   // pessimistic side.
-  function estimateSecondsToProtected(uncoveredAheadS, effectiveRtf, hasMeasuredRtf) {
+  // The cold case had no arithmetic at all: with no measured throughput it
+  // fell to a flat floor, which quoted 8s for a fresh seek that took 15.2s.
+  // That breaks the pessimism rule in exactly the situation the rule exists
+  // for. The user's words were that the countdown "hits zero and lingers",
+  // and lingering at zero is what a floor produces when the floor was
+  // never an estimate of anything.
+  //
+  // So a cold quote is now computed rather than guessed: covering the
+  // protect margin from a standing start takes roughly two windows at
+  // warm-up throughput, and warm-up throughput is the SAME constant the
+  // preemption model uses (shared/preempt.js WARMUP_RTF). Two modules
+  // disagreeing about how slow a cold pipeline is would mean one of them
+  // was wrong.
+  //
+  // It stays a floor rather than the whole answer: once real EWMA data
+  // arrives the ordinary estimate takes over, and the monotonic display
+  // rules let the number fall from a truthful 15 to done-at-12 and snap to
+  // Protected. Finishing early reads as fast; hitting zero and waiting
+  // reads as broken.
+  var COLD_WINDOWS = 2;
+
+  function warmupRtf() {
+    var api = typeof globalThis !== "undefined" ? globalThis.PMPreempt : null;
+    return api && typeof api.WARMUP_RTF === "number" ? api.WARMUP_RTF : 1.5;
+  }
+
+  // What covering `uncoveredAheadS` costs before any measurement exists.
+  function coldEstimateS(uncoveredAheadS) {
+    var span = typeof uncoveredAheadS === "number" && uncoveredAheadS > 0 ? uncoveredAheadS : 0;
+    if (span <= 0) return 0;
+    // Two windows' worth of work at warm-up speed: the span itself, plus
+    // the second window that a fresh seek almost always needs before the
+    // margin ahead of the playhead is actually covered.
+    return span * warmupRtf() * COLD_WINDOWS;
+  }
+
+  // `isCold` is about the SITUATION, not the session's history. A seek into
+  // an unanalyzed region starts from a standing start even in a session
+  // that has been running for ten minutes, and quoting that session's
+  // settled throughput for it is how the field log promised 8s for
+  // something that took 15.2s. Defaults to "cold if nothing measured" for
+  // callers that do not distinguish.
+  function estimateSecondsToProtected(uncoveredAheadS, effectiveRtf, hasMeasuredRtf, isCold) {
     var rtf = typeof effectiveRtf === "number" && isFinite(effectiveRtf) && effectiveRtf > 0
       ? effectiveRtf
       : 0.3;
-    var raw = (typeof uncoveredAheadS === "number" && uncoveredAheadS > 0 ? uncoveredAheadS : 0) * rtf;
+    var span = typeof uncoveredAheadS === "number" && uncoveredAheadS > 0 ? uncoveredAheadS : 0;
+    var cold = typeof isCold === "boolean" ? isCold : !hasMeasuredRtf;
+    var raw = span * rtf;
+    if (cold) {
+      // Quote the cold arithmetic, never less. The ordinary estimate takes
+      // over as soon as this position has real coverage behind it, and the
+      // monotonic rules let the number fall from there.
+      raw = Math.max(raw, coldEstimateS(span));
+    }
     return clampEta(raw * PESSIMISM_FACTOR, hasMeasuredRtf);
   }
 
@@ -309,6 +359,8 @@
     PESSIMISM_FACTOR: PESSIMISM_FACTOR,
     RTF_EWMA_ALPHA: RTF_EWMA_ALPHA,
     updateEffectiveRtf: updateEffectiveRtf,
+    COLD_WINDOWS: COLD_WINDOWS,
+    coldEstimateS: coldEstimateS,
     estimateSecondsToProtected: estimateSecondsToProtected,
     passesJitterGate: passesJitterGate,
     advanceCountdown: advanceCountdown,

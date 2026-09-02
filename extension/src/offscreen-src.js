@@ -545,6 +545,7 @@ function getOrCreateSession(tabId, videoId) {
       languageGate: globalThis.PMLanguage ? globalThis.PMLanguage.newState() : null,
       // 0.1.42 preemption inputs.
       wallRtf: null, // EWMA of wall ms per second of audio
+      windowsDone: 0, // completed windows, for the cold-window estimate
       lastSeekWall: 0,
       lastPreemptWall: 0,
       preemptTimer: null,
@@ -896,6 +897,23 @@ function evaluateSeekPreemption(s) {
   const detail =
     'remaining=' + (verdict.remainingMs != null ? Math.round(verdict.remainingMs) + 'ms' : 'unknown') +
     ' respawnCost=' + Math.round(verdict.costMs) + 'ms';
+
+  if (verdict.action === 'cancel-queued') {
+    // Free: the window never reached the worker, so there is nothing to
+    // terminate and nothing to warm up again. Just tell it not to bother
+    // when its turn arrives.
+    const dropped = inFlightCompute;
+    if (dropped && dropped.token) dropped.token.cancelled = true;
+    notifyTab(
+      s,
+      '[PM-PREEMPT] dropped queued window ' +
+        (dropped ? '[' + dropped.start.toFixed(2) + ',' + dropped.end.toFixed(2) + ') ' : '') +
+        '(' + verdict.reason + ') ' + detail + ' - it had not reached the worker, so this cost nothing'
+    );
+    reportPreemptDecision(s, verdict, 0);
+    maybeProcess(s);
+    return;
+  }
 
   if (verdict.action === 'let-finish') {
     notifyTab(s, '[PM-PREEMPT] letting the in-flight window finish (' + verdict.reason + ') ' + detail);
@@ -1619,17 +1637,41 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // it starts computing. Queue wait is real elapsed time that a preemption
   // reclaims just as surely as compute time, and the field case spent
   // 3647ms of its 8410ms waiting for the mutex.
+  // 0.1.43: the entry now carries enough to tell QUEUED from COMPUTING,
+  // because those have completely different costs to abandon. A queued
+  // window can be dropped for free; a computing one needs the worker
+  // terminated. It also carries a cancel token, which is what makes the
+  // free path actually free.
+  const computeToken = { cancelled: false };
   inFlightCompute = {
     sessionKey: sessionKey(s.tabId, s.videoId),
     start: absStart,
     end: absEnd,
     startedWall: Date.now(),
-    audioS: absEnd - absStart
+    computeStartedWall: null, // set when the mutex is actually acquired
+    audioS: absEnd - absStart,
+    // A cold window runs at warm-up speed, several times slower than the
+    // session's settled average. Anything before the session has a couple
+    // of windows behind it counts.
+    isCold: s.windowsDone == null || s.windowsDone < 2,
+    token: computeToken
   };
   let workerResult;
   try {
     workerResult = await runSerialized(() => {
+      // Cancelled while waiting for the mutex: return immediately without
+      // touching the worker. This is the whole point of the free path, and
+      // it has to be checked HERE, at the moment the turn comes up, since
+      // that is the last instant before the work becomes expensive.
+      if (computeToken.cancelled) {
+        const err = new Error('window cancelled while queued');
+        err.isCancelledWhileQueued = true;
+        throw err;
+      }
       tTranscribeStart = performance.now();
+      if (inFlightCompute && inFlightCompute.token === computeToken) {
+        inFlightCompute.computeStartedWall = Date.now();
+      }
     return transcribeInWorker(effectiveModelId, float16k, {
       return_timestamps: 'word',
       chunk_length_s: 30,
@@ -1646,11 +1688,20 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       no_repeat_ngram_size: 3
     });
     });
+  } catch (e) {
+    if (e && e.isCancelledWhileQueued) {
+      // Not a failure: we dropped it on purpose because the user had
+      // moved on. Silent by design, and explicitly NOT counted against
+      // any error or hang threshold.
+      log('[PM-PREEMPT] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') dropped from the queue (playhead moved away)');
+      return false;
+    }
+    throw e;
   } finally {
     // Cleared whichever way the call ended, including a preemption
     // rejection: a stale entry here would let a later seek believe the
     // worker is busy with something it is not.
-    if (inFlightCompute && inFlightCompute.start === absStart && inFlightCompute.end === absEnd) {
+    if (inFlightCompute && inFlightCompute.token === computeToken) {
       inFlightCompute = null;
     }
   }
@@ -2131,6 +2182,7 @@ async function maybeProcess(s) {
         break;
       }
       s.hadFirstWindow = true; // cold-start window sizing only applies until the first one actually lands
+      s.windowsDone = (s.windowsDone || 0) + 1; // 0.1.43: coldness for the preemption estimator
       exitGate = null; // this iteration completed normally and is about to loop again - no exit to report yet
     }
   } catch (e) {

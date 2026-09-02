@@ -456,6 +456,67 @@ test("a displayed zero shows the numberless label, not '~0s'", () => {
   assert.strictEqual(out.label, "Analyzing…");
 });
 
+// ---- the cold-start quote (0.1.43) ---------------------------------------
+//
+// The 0.1.42 field log promised about 8s for a fresh seek that took 15.2s,
+// which breaks the pessimism rule in exactly the case the rule exists for.
+// The cause was that the cold case had no arithmetic at all: with no
+// measured throughput the estimate fell to a flat floor, and a floor is not
+// an estimate of anything. The user's experience was the countdown hitting
+// zero and lingering, which reads as broken.
+
+test("a cold quote is computed, not floored", () => {
+  // Two windows' worth of work at warm-up throughput, which is what
+  // covering a fresh seek actually costs.
+  const cold = P.coldEstimateS(5);
+  assert.ok(cold > P.ETA_FLOOR_COLD_S, "cold estimate " + cold + " must exceed the old flat floor");
+  assert.strictEqual(cold, 5 * 1.5 * P.COLD_WINDOWS, "span x warm-up rtf x windows");
+});
+
+test("the cold quote covers the field case rather than under-promising it", () => {
+  // Actual was 15.2s. Quoting less than that is the bug being fixed;
+  // quoting somewhat more is the pessimism rule working, because the
+  // number falls as real data arrives and snaps to Protected.
+  const quoted = P.estimateSecondsToProtected(5, null, false);
+  assert.ok(quoted >= 15, "quoted " + quoted + "s against a 15.2s actual");
+});
+
+test("coldness is about the POSITION, not the session's history", () => {
+  // A seek into an unanalyzed region starts from a standing start even ten
+  // minutes into a session. Quoting the settled throughput for it is how
+  // the badge promised 8s for something that took 15.2s.
+  const warmSession = 0.3;
+  const afterSeek = P.estimateSecondsToProtected(5, warmSession, true, true);
+  const settled = P.estimateSecondsToProtected(5, warmSession, true, false);
+  assert.ok(afterSeek > settled, "cold " + afterSeek + " vs settled " + settled);
+});
+
+test("the quote tightens as coverage builds at this position", () => {
+  // The whole point of quoting high: the number falls. 5s uncovered while
+  // cold, then 1s uncovered once most of the margin is covered.
+  const cold = P.estimateSecondsToProtected(5, 0.3, true, true);
+  const nearlyDone = P.estimateSecondsToProtected(1, 0.3, true, false);
+  assert.ok(nearlyDone < cold);
+  // And the monotonic ledger will only ever let the display move down.
+  let state = P.advanceCountdown(null, { candidateS: cold, now: 0 });
+  state = P.advanceCountdown(state, { candidateS: nearlyDone, now: 1000 });
+  assert.ok(state.displayedS < cold);
+});
+
+test("the warm-up constant has ONE source of truth", () => {
+  // shared/preempt.js owns it, because two modules disagreeing about how
+  // slow a cold pipeline is would mean one of them was wrong. Loaded here
+  // so the wiring is exercised rather than assumed.
+  const { PMPreemptCore } = require(path.join(__dirname, "..", "shared", "preempt.js"));
+  assert.strictEqual(P.coldEstimateS(10), 10 * PMPreemptCore.WARMUP_RTF * P.COLD_WINDOWS);
+});
+
+test("a cold quote for nothing uncovered is still nothing", () => {
+  assert.strictEqual(P.coldEstimateS(0), 0);
+  assert.strictEqual(P.coldEstimateS(-5), 0);
+  assert.strictEqual(P.coldEstimateS(null), 0);
+});
+
 // ---- summary -------------------------------------------------------------
 
 console.log("pill_test.js: " + passed + "/" + (passed + failed) + " passed");

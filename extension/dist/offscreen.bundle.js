@@ -14175,6 +14175,8 @@
         "use strict";
         var DEFAULT_RESPAWN_MS = 2500;
         var WARMUP_PENALTY_MS = 1500;
+        var WARMUP_RTF = 1.5;
+        var OVERDUE_REMAINING_RATIO = 0.5;
         var SETTLE_MS = 400;
         var MIN_PREEMPT_INTERVAL_MS = 5e3;
         var DEFAULT_RTF = 0.3;
@@ -14190,9 +14192,16 @@
           var audioS = typeof inFlight.audioS === "number" && inFlight.audioS > 0 ? inFlight.audioS : null;
           if (audioS == null) return null;
           var rtf = typeof effectiveRtf === "number" && isFinite(effectiveRtf) && effectiveRtf > 0 ? effectiveRtf : DEFAULT_RTF;
+          if (inFlight.isCold === true) rtf = Math.max(rtf, WARMUP_RTF);
+          var nowMs = typeof now === "number" ? now : Date.now();
           var expectedTotalMs = audioS * rtf * 1e3;
-          var elapsedMs = Math.max(0, (typeof now === "number" ? now : Date.now()) - inFlight.startedWall);
-          return Math.max(0, expectedTotalMs - elapsedMs);
+          if (typeof inFlight.computeStartedWall !== "number") {
+            return expectedTotalMs;
+          }
+          var computeElapsedMs = Math.max(0, nowMs - inFlight.computeStartedWall);
+          var remaining = expectedTotalMs - computeElapsedMs;
+          if (remaining > 0) return remaining;
+          return Math.max(0, computeElapsedMs * OVERDUE_REMAINING_RATIO);
         }
         function respawnCostMs(input) {
           var measured = typeof input.respawnMeasuredMs === "number" && input.respawnMeasuredMs > 0 ? input.respawnMeasuredMs : DEFAULT_RESPAWN_MS;
@@ -14217,11 +14226,19 @@
           if (stillUseful(inFlight, input.playheadT, input.protectMarginS)) {
             return { action: "let-finish", reason: "still-useful", remainingMs: null, costMs: cost };
           }
+          var remainingMs = estimateRemainingMs(inFlight, input.effectiveRtf, now);
+          if (typeof inFlight.computeStartedWall !== "number") {
+            return {
+              action: "cancel-queued",
+              reason: "queued-and-abandoned",
+              remainingMs,
+              costMs: 0
+            };
+          }
           var minInterval = typeof input.minPreemptIntervalMs === "number" ? input.minPreemptIntervalMs : MIN_PREEMPT_INTERVAL_MS;
           if (typeof input.lastPreemptWall === "number" && now - input.lastPreemptWall < minInterval) {
-            return { action: "let-finish", reason: "thrash-guard", remainingMs: null, costMs: cost };
+            return { action: "let-finish", reason: "thrash-guard", remainingMs, costMs: cost };
           }
-          var remainingMs = estimateRemainingMs(inFlight, input.effectiveRtf, now);
           if (remainingMs == null) {
             return { action: "let-finish", reason: "no-estimate", remainingMs: null, costMs: cost };
           }
@@ -14237,6 +14254,8 @@
           SETTLE_MS,
           MIN_PREEMPT_INTERVAL_MS,
           DEFAULT_RTF,
+          WARMUP_RTF,
+          OVERDUE_REMAINING_RATIO,
           MIN_NET_SAVING_MS,
           stillUseful,
           estimateRemainingMs,
@@ -14584,6 +14603,8 @@
             // 0.1.42 preemption inputs.
             wallRtf: null,
             // EWMA of wall ms per second of audio
+            windowsDone: 0,
+            // completed windows, for the cold-window estimate
             lastSeekWall: 0,
             lastPreemptWall: 0,
             preemptTimer: null,
@@ -14791,6 +14812,17 @@
         });
         if (verdict.action === "none") return;
         const detail = "remaining=" + (verdict.remainingMs != null ? Math.round(verdict.remainingMs) + "ms" : "unknown") + " respawnCost=" + Math.round(verdict.costMs) + "ms";
+        if (verdict.action === "cancel-queued") {
+          const dropped = inFlightCompute;
+          if (dropped && dropped.token) dropped.token.cancelled = true;
+          notifyTab(
+            s,
+            "[PM-PREEMPT] dropped queued window " + (dropped ? "[" + dropped.start.toFixed(2) + "," + dropped.end.toFixed(2) + ") " : "") + "(" + verdict.reason + ") " + detail + " - it had not reached the worker, so this cost nothing"
+          );
+          reportPreemptDecision(s, verdict, 0);
+          maybeProcess(s);
+          return;
+        }
         if (verdict.action === "let-finish") {
           notifyTab(s, "[PM-PREEMPT] letting the in-flight window finish (" + verdict.reason + ") " + detail);
           reportPreemptDecision(s, verdict, null);
@@ -15178,17 +15210,33 @@
         const effectiveModelId = s.multilingualEnabled && s.languageState === "resolved" && s.detectedLanguage && s.detectedLanguage !== "en" ? "multilingual" : s.modelId;
         const tBeforeQueue = performance.now();
         let tTranscribeStart = 0;
+        const computeToken = { cancelled: false };
         inFlightCompute = {
           sessionKey: sessionKey(s.tabId, s.videoId),
           start: absStart,
           end: absEnd,
           startedWall: Date.now(),
-          audioS: absEnd - absStart
+          computeStartedWall: null,
+          // set when the mutex is actually acquired
+          audioS: absEnd - absStart,
+          // A cold window runs at warm-up speed, several times slower than the
+          // session's settled average. Anything before the session has a couple
+          // of windows behind it counts.
+          isCold: s.windowsDone == null || s.windowsDone < 2,
+          token: computeToken
         };
         let workerResult;
         try {
           workerResult = await runSerialized(() => {
+            if (computeToken.cancelled) {
+              const err = new Error("window cancelled while queued");
+              err.isCancelledWhileQueued = true;
+              throw err;
+            }
             tTranscribeStart = performance.now();
+            if (inFlightCompute && inFlightCompute.token === computeToken) {
+              inFlightCompute.computeStartedWall = Date.now();
+            }
             return transcribeInWorker(effectiveModelId, float16k, {
               return_timestamps: "word",
               chunk_length_s: 30,
@@ -15205,8 +15253,14 @@
               no_repeat_ngram_size: 3
             });
           });
+        } catch (e) {
+          if (e && e.isCancelledWhileQueued) {
+            log("[PM-PREEMPT] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") dropped from the queue (playhead moved away)");
+            return false;
+          }
+          throw e;
         } finally {
-          if (inFlightCompute && inFlightCompute.start === absStart && inFlightCompute.end === absEnd) {
+          if (inFlightCompute && inFlightCompute.token === computeToken) {
             inFlightCompute = null;
           }
         }
@@ -15485,6 +15539,7 @@
               break;
             }
             s.hadFirstWindow = true;
+            s.windowsDone = (s.windowsDone || 0) + 1;
             exitGate = null;
           }
         } catch (e) {

@@ -49,6 +49,9 @@ function fieldCase(over) {
           start: 24,
           end: 26.5,
           startedWall: NOW - 900,
+          // 0.1.43 split queued from computing. These cases are about the
+          // respawn wager, so they describe a window that has the worker.
+          computeStartedWall: NOW - 900,
           audioS: 2.5,
           sessionKey: "tab1:vid"
         },
@@ -106,7 +109,8 @@ test("a window just inside the protect margin still counts as useful", () => {
 test("a nearly-finished compute is left alone", () => {
   // Killing work that is about to land pays the respawn for nothing.
   const v = fieldCase({ inFlight: {
-    start: 24, end: 26.5, startedWall: NOW - 8000, audioS: 2.5, sessionKey: "tab1:vid"
+    start: 24, end: 26.5, startedWall: NOW - 8000, computeStartedWall: NOW - 7900,
+    audioS: 2.5, sessionKey: "tab1:vid"
   } });
   assert.strictEqual(v.action, "let-finish");
   assert.strictEqual(v.reason, "cheaper-to-finish");
@@ -123,7 +127,8 @@ test("a marginal win is declined", () => {
 test("with no throughput measurement yet, nothing is abandoned", () => {
   // No basis for an estimate is no basis for a wager.
   const v = fieldCase({ inFlight: {
-    start: 24, end: 26.5, startedWall: NOW - 900, audioS: null, sessionKey: "tab1:vid"
+    start: 24, end: 26.5, startedWall: NOW - 900, computeStartedWall: NOW - 900,
+    audioS: null, sessionKey: "tab1:vid"
   } });
   assert.strictEqual(v.action, "let-finish");
   assert.strictEqual(v.reason, "no-estimate");
@@ -141,7 +146,8 @@ test("another TAB's compute is never abandoned to serve ours", () => {
   // Terminating it for our own seek would abandon someone else's window
   // mid-compute, a cost they never agreed to pay.
   const v = fieldCase({ inFlight: {
-    start: 24, end: 26.5, startedWall: NOW - 900, audioS: 2.5, sessionKey: "tab9:other"
+    start: 24, end: 26.5, startedWall: NOW - 900, computeStartedWall: NOW - 900,
+    audioS: 2.5, sessionKey: "tab9:other"
   } });
   assert.strictEqual(v.action, "none");
   assert.strictEqual(v.reason, "other-session-owns-worker");
@@ -183,7 +189,10 @@ test("repeated settled seeks cannot respawn the worker in a loop", () => {
   for (let i = 0; i < 20; i++) {
     const now = NOW + i * 1000; // a settled seek every second
     const v = P.decide({
-      inFlight: { start: 24, end: 26.5, startedWall: now - 900, audioS: 2.5, sessionKey: "k" },
+      inFlight: {
+        start: 24, end: 26.5, startedWall: now - 900, computeStartedWall: now - 900,
+        audioS: 2.5, sessionKey: "k"
+      },
       ownSessionKey: "k",
       playheadT: 1633.93,
       effectiveRtf: 3.36,
@@ -203,13 +212,17 @@ test("repeated settled seeks cannot respawn the worker in a loop", () => {
 // ---- estimation ----------------------------------------------------------
 
 test("remaining time counts elapsed work already done", () => {
-  const inFlight = { start: 0, end: 10, startedWall: NOW - 2000, audioS: 10 };
+  const inFlight = { start: 0, end: 10, startedWall: NOW - 2100, computeStartedWall: NOW - 2000, audioS: 10 };
   assert.strictEqual(P.estimateRemainingMs(inFlight, 1.0, NOW), 8000);
 });
 
 test("remaining time never goes negative", () => {
-  const inFlight = { start: 0, end: 10, startedWall: NOW - 60000, audioS: 10 };
-  assert.strictEqual(P.estimateRemainingMs(inFlight, 1.0, NOW), 0);
+  // 0.1.43: an overdue compute reports what the overrun implies, not zero.
+  const inFlight = { start: 0, end: 10, startedWall: NOW - 60000, computeStartedWall: NOW - 60000, audioS: 10 };
+  assert.strictEqual(
+    P.estimateRemainingMs(inFlight, 1.0, NOW),
+    60000 * P.OVERDUE_REMAINING_RATIO
+  );
 });
 
 test("a missing rtf falls back to the pipeline default rather than zero", () => {
@@ -232,6 +245,145 @@ test("stillUseful asks whether the window overlaps the protect span", () => {
 
 test("an unknown playhead is treated as still needing the work", () => {
   assert.strictEqual(P.stillUseful({ start: 10, end: 20 }, null, 5), true);
+});
+
+// ---- the 0.1.43 estimator bug -------------------------------------------
+//
+// The field log caught the policy doing the right thing on wrong data:
+//
+//   14:22:53.135  "let-finish (cheaper-to-finish) remaining=0ms"
+//   14:22:57.167  that window finished, 4.03 seconds later
+//
+// Reconstructed from its final numbers (wallMs=5518 queueMs=2270
+// computeMs=3209 decodeMs=39): it was queued at 51.688 and its compute did
+// not begin until 53.958. So at the moment of the decision it had not
+// touched the worker at all, and the entire compute still lay ahead.
+//
+// Two separate errors produced "0ms", and both made abandoned work look
+// free to wait for.
+
+test("a QUEUED window does not report zero remaining", () => {
+  // Error 1: the estimate subtracted queue time from a whole-window
+  // prediction, charging the wait against work that had not begun.
+  const remaining = P.estimateRemainingMs(
+    { startedWall: NOW - 1447, audioS: 2.5 }, // queued 1447ms ago, not computing
+    0.3,
+    NOW
+  );
+  assert.ok(remaining > 0, "reported " + remaining + "ms");
+  assert.strictEqual(remaining, 2.5 * 0.3 * 1000, "the whole compute is still ahead");
+});
+
+test("an overdue compute does not report zero either", () => {
+  // Error 2: max(0, expected - elapsed) says anything overdue is about to
+  // finish. Running past the prediction is evidence the prediction was
+  // wrong, never evidence of being nearly done.
+  const remaining = P.estimateRemainingMs(
+    { startedWall: NOW - 5000, computeStartedWall: NOW - 4000, audioS: 2.5 },
+    0.3, // predicts 750ms; it has already run 4000ms
+    NOW
+  );
+  assert.ok(remaining > 0, "reported " + remaining + "ms");
+  assert.strictEqual(remaining, 4000 * P.OVERDUE_REMAINING_RATIO);
+});
+
+test("a COLD window is estimated at warm-up speed, not the settled average", () => {
+  // The field window ran at an effective rtf of 2.2 while the session
+  // average was around 0.3, because it was the first at a fresh position.
+  const warm = P.estimateRemainingMs({ startedWall: NOW, audioS: 2.5 }, 0.3, NOW);
+  const cold = P.estimateRemainingMs({ startedWall: NOW, audioS: 2.5, isCold: true }, 0.3, NOW);
+  assert.ok(cold > warm, "cold " + cold + " vs warm " + warm);
+  assert.strictEqual(cold, 2.5 * P.WARMUP_RTF * 1000);
+});
+
+test("the field decision now recovers the time instead of waiting for it", () => {
+  // The whole point of the round. True remaining was 4032ms.
+  const v = P.decide({
+    inFlight: {
+      start: 24, end: 26.5,
+      startedWall: NOW - 1447,
+      computeStartedWall: null, // still queued, as it actually was
+      audioS: 2.5, isCold: true, sessionKey: "k"
+    },
+    ownSessionKey: "k",
+    playheadT: 1633.93,
+    protectMarginS: 5,
+    effectiveRtf: 0.3,
+    now: NOW,
+    sinceSeekMs: 500,
+    respawnMeasuredMs: 2500
+  });
+  assert.strictEqual(v.action, "cancel-queued");
+  assert.ok(v.remainingMs > 3000, "estimate near the true 4032ms: " + Math.round(v.remainingMs));
+});
+
+// ---- cancelling queued work is free -------------------------------------
+
+test("dropping a QUEUED window costs nothing", () => {
+  // It never reached the worker, so there is no terminate, no respawn and
+  // no warm-up to pay for. Not a wager: tidying up.
+  const v = fieldCase({ inFlight: {
+    start: 24, end: 26.5, startedWall: NOW - 100, computeStartedWall: null,
+    audioS: 2.5, sessionKey: "tab1:vid"
+  } });
+  assert.strictEqual(v.action, "cancel-queued");
+  assert.strictEqual(v.costMs, 0);
+});
+
+test("the free path ignores the thrash guard and the margin", () => {
+  // Both exist to price a respawn. With nothing to pay, there is nothing
+  // for them to protect against.
+  const v = fieldCase({
+    lastPreemptWall: NOW - 10, // would block a respawn
+    inFlight: {
+      start: 24, end: 26.5, startedWall: NOW - 10, computeStartedWall: null,
+      audioS: 0.1, sessionKey: "tab1:vid" // trivially small remaining
+    }
+  });
+  assert.strictEqual(v.action, "cancel-queued");
+});
+
+test("a window that HAS started computing is still a wager", () => {
+  const v = fieldCase({ inFlight: {
+    start: 24, end: 26.5, startedWall: NOW - 2000, computeStartedWall: NOW - 100,
+    audioS: 2.5, isCold: true, sessionKey: "tab1:vid"
+  } });
+  assert.ok(v.action === "preempt" || v.action === "let-finish", v.action);
+  assert.ok(v.costMs > 0, "a respawn is never free");
+});
+
+test("another tab's QUEUED window is still not ours to drop", () => {
+  // The free path must not become a loophole around the shared-worker rule.
+  const v = fieldCase({ inFlight: {
+    start: 24, end: 26.5, startedWall: NOW - 100, computeStartedWall: null,
+    audioS: 2.5, sessionKey: "tab9:other"
+  } });
+  assert.strictEqual(v.action, "none");
+  assert.strictEqual(v.reason, "other-session-owns-worker");
+});
+
+test("a queued window still covering the playhead is kept", () => {
+  const v = fieldCase({
+    playheadT: 25,
+    inFlight: {
+      start: 24, end: 26.5, startedWall: NOW - 100, computeStartedWall: null,
+      audioS: 2.5, sessionKey: "tab1:vid"
+    }
+  });
+  assert.strictEqual(v.action, "let-finish");
+  assert.strictEqual(v.reason, "still-useful");
+});
+
+test("an unsettled seek still does not drop queued work", () => {
+  const v = fieldCase({
+    sinceSeekMs: 50,
+    inFlight: {
+      start: 24, end: 26.5, startedWall: NOW - 100, computeStartedWall: null,
+      audioS: 2.5, sessionKey: "tab1:vid"
+    }
+  });
+  assert.strictEqual(v.action, "none");
+  assert.strictEqual(v.reason, "not-settled");
 });
 
 // ---- summary -------------------------------------------------------------

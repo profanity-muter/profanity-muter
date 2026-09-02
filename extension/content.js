@@ -1738,11 +1738,20 @@
       // throughput, biased pessimistic. Falls back to the old
       // per-window estimate only if the shared module is missing.
       var hasRtf = session.effectiveRtf != null || session.lastKnownRtf != null;
+      // 0.1.43: coldness is about THIS POSITION, not the session's history.
+      // A seek into an unanalyzed region starts from a standing start even
+      // ten minutes into a session, and quoting the settled throughput for
+      // it is how the badge promised 8s for something that took 15.2s.
+      // Nothing covered within the horizon means nothing to build on.
+      var horizonSpanS = Math.max(0, horizonEnd - t);
+      var coldHere = horizonSpanS > 0 && uncoveredAheadS >= horizonSpanS * 0.9;
+      trace.coldQuote = coldHere;
       var etaS = pillApi
         ? pillApi.estimateSecondsToProtected(
             uncoveredAheadS,
             session.effectiveRtf != null ? session.effectiveRtf : rtf,
-            hasRtf
+            hasRtf,
+            coldHere
           )
         : Math.min(30, Math.max(1, Math.ceil(uncoveredAheadS * rtf)));
 
