@@ -298,6 +298,15 @@ function closeRunStream(run) {
 // (Input, track, sink) become GC-eligible once nothing else references it.
 function closeRun(run) {
   closeRunStream(run);
+  // 0.1.34: flag the teardown BEFORE nulling. An in-flight transcribeWindow
+  // still holds this exact run object across its awaits, and nulling the
+  // fields under it produced the two crashes in the user's field log:
+  // "Cannot read properties of null (reading 'getPrimaryAudioTrack')" and
+  // "...(reading 'buffers')". Those were never real decode failures, they
+  // were a torn-down run being read by work that had not noticed yet. The
+  // flag lets that work abort quietly and, importantly, NOT count the abort
+  // against the hang/error thresholds that lead to markUnanalyzable.
+  run.closed = true;
   run.track = null;
   run.sink = null;
   run.input = null;
@@ -473,6 +482,14 @@ function getOrCreateSession(tabId, videoId) {
       // queued behind it. See PIPELINE_NOTES "0.1.18" for the live bug this
       // fixes (a page refresh's stale session blocking the new one for 7s+).
       generation: 0,
+      dropped: false, // set by dropSessionsForTab; a generation bump alone means a seek, which does NOT invalidate already-decoded audio
+      // Spans this session has given up decoding (0.1.34 hang escalation).
+      // Excluded from PICKING only, via coverageViewForPicking - never added
+      // to s.covered, because coverage means "analyzed" and claiming that
+      // for audio we failed to decode would silently unmute it in the
+      // mute/pause catch-up modes. The user stays protected; the picker just
+      // stops re-attempting a span that has already wedged the decoder.
+      skippedSpans: [],
       inFlightWindows: new Set(), // "start.toFixed(2),end.toFixed(2)" currently dispatched to transcribeWindow - prevents the picker from re-picking a span whose result hasn't landed yet
       lastKnownRtf: null, // rolling estimate (last computeMs-based rtf) used to size cold-start windows so they finish AHEAD of the playhead - see pickNextWindow
       // [PM-FIRST-COVERAGE] breakdown milestones (0.1.18) - set once each,
@@ -496,6 +513,7 @@ function dropSessionsForTab(tabId) {
   for (const key of Array.from(sessions.keys())) {
     if (key.startsWith(tabId + ':')) {
       const s = sessions.get(key);
+      s.dropped = true; // 0.1.34: distinguishes "this session is gone" from "the playhead moved" - see the stale-result handling in transcribeWindow
       s.generation++; // bump BEFORE deleting (0.1.18) - any in-flight closure still holding a reference to this exact object (a running maybeProcess loop or transcribeWindow call from before the reset) sees this and discards its own work instead of applying it to a session that's supposed to be gone
       for (const run of s.runs) closeRun(run); // close every run's demux state, not just prune - the whole session is going away
       sessions.delete(key);
@@ -675,6 +693,24 @@ const TAIL_STALL_MS = 3000;
 const WINDOW_LOOP_THRESHOLD = 3; // same exact [absStart,absEnd) attempted this many times without ever registering covered -> force-cover and alarm (see transcribeWindow)
 const ALL_WORDS_CAP = 2000; // trailing-window cap for s.allWords/s.emittedKeys - see the memory-leak note at the trim site
 const SINK_ERROR_THRESHOLD = 3; // same exact window THROWING a decode error this many times in a row -> DRM/undecodable, see markUnanalyzable
+// 0.1.34 hang escalation. The field log showed the same window hanging
+// twice at 25s each with no change of approach, and the old ladder would
+// have repeated it four more times: 150 seconds of a wedged decoder
+// producing nothing, with the pill still promising a result. Repeating an
+// identical doomed operation is not a retry strategy.
+//
+//   attempt HANG_REBUILD_AT: rebuild this run's decode pipeline (drop the
+//     cached track/sink so the next attempt constructs fresh ones over the
+//     same Input). A wedged AudioBufferSink generator is exactly the shape
+//     of failure that a rebuild can clear, and it is cheap.
+//   attempt HANG_SKIP_AT:  give up on this SPAN and advance. The span goes
+//     into s.skippedSpans (picker-only, never coverage) so the pipeline
+//     makes progress past it instead of wedging forever on it.
+//   HANG_THRESHOLD:        unchanged final fallback - if windows keep
+//     hanging even after rebuilding and advancing, the content itself is
+//     the problem and the session is marked unanalyzable.
+const HANG_REBUILD_AT = 2;
+const HANG_SKIP_AT = 3;
 const HANG_THRESHOLD = 6; // 0.1.23: same exact window HANGING (stage timeout, no thrown error) this many times in a row -> unanalyzable - higher than SINK_ERROR_THRESHOLD on purpose: after the 0.1.23 fed-data clamp + end-of-stream-flush fixes, a genuine hang should be much rarer, so a couple of stray timeouts shouldn't give up as fast as a confident thrown DRM-style error does
 
 // Stage-timeout guard (0.1.21) - a live user session on a LIVE STREAM
@@ -743,13 +779,34 @@ function markUnanalyzable(s, reason) {
 // TRUE, transcription-confirmed coverage) makes the picker skip past
 // anything already in flight, the same way it already skips past
 // genuinely-covered spans.
+// Is [start,end) already fully inside s.covered? Used by the 0.1.34
+// stale-result handling to tell "this decode is still worth keeping" from
+// "another window beat us to it". Tolerant by a hair, since coverage spans
+// come from float timestamps.
+function isCovered(s, start, end) {
+  const EPS = 0.05;
+  let cursor = start;
+  const spans = s.covered.slice().sort((a, b) => a.start - b.start);
+  for (const iv of spans) {
+    if (iv.end <= cursor + EPS) continue;
+    if (iv.start > cursor + EPS) return false; // a hole before this span
+    cursor = Math.max(cursor, iv.end);
+    if (cursor >= end - EPS) return true;
+  }
+  return cursor >= end - EPS;
+}
+
 function coverageViewForPicking(s) {
-  if (s.inFlightWindows.size === 0) return s.covered;
+  const skipped = s.skippedSpans || [];
+  if (s.inFlightWindows.size === 0 && skipped.length === 0) return s.covered;
   const extra = [];
   for (const key of s.inFlightWindows) {
     const idx = key.indexOf(',');
     extra.push({ start: parseFloat(key.slice(0, idx)), end: parseFloat(key.slice(idx + 1)) });
   }
+  // Skipped spans count as "do not pick again" but NOT as coverage - see
+  // the skippedSpans comment in the session initializer.
+  for (const sp of skipped) extra.push({ start: sp.start, end: sp.end });
   return s.covered.concat(extra).sort((a, b) => a.start - b.start);
 }
 
@@ -891,6 +948,32 @@ function pickNextWindow(s, run) {
   return { start, end, isColdStart };
 }
 
+// Why an in-flight transcribe should stop, or null to carry on (0.1.34).
+// Checked at every await boundary in transcribeWindow: the underlying run
+// can be torn down (closeRun) or the session dropped at any of them, and
+// reading a nulled field afterwards is what produced the field log's two
+// TypeErrors.
+function abortReasonFor(s, run, myGeneration) {
+  if (s.dropped) return 'session-dropped';
+  if (run && run.closed) return 'run-closed';
+  // A bare generation bump is a SEEK. That does not invalidate audio that
+  // has already been decoded, so it is deliberately not an abort here; the
+  // result handling further down decides whether to keep it.
+  return null;
+}
+
+// Rebuild a run's decode pipeline in place: drop the cached track/sink so
+// the next attempt constructs fresh ones over the SAME Input and the same
+// already-fed bytes. Cheap compared with rebuilding the Input, and it is
+// the layer the observed hang lives in.
+function rebuildRunDecodePipeline(run) {
+  if (!run) return;
+  run.track = null;
+  run.sink = null;
+  run.trackReadyPromise = null;
+  run.nativeRate = null;
+}
+
 async function transcribeWindow(s, run, absStart, absEnd) {
   const t0 = performance.now();
   // Generation guard (0.1.18) - captured at entry; checked again right
@@ -904,8 +987,27 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // primary audio track is cheap once resolved, but constructing a fresh
   // Input/re-parsing from scratch (the old approach) is not. See newRun().
   const windowKeyForErrors = absStart.toFixed(2) + ',' + absEnd.toFixed(2);
+
+  // 0.1.34: one shared abort path. Returns false WITHOUT touching the
+  // hang/error counters, because a torn-down run is not evidence that this
+  // window is undecodable, and letting teardown push a session toward
+  // markUnanalyzable would disable protection over a bookkeeping race.
+  const abortIfGone = (stage) => {
+    const why = abortReasonFor(s, run, myGeneration);
+    if (!why) return false;
+    log('[PM-ABORT] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') stopped at ' + stage + ': ' + why);
+    return true;
+  };
+
+  if (abortIfGone('entry')) return false;
+
   if (!run.track) {
     if (!run.trackReadyPromise) {
+      if (!run.input) {
+        // The exact crash from the field log, now a quiet abort.
+        log('[PM-ABORT] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') stopped at track-resolve: run input already released');
+        return false;
+      }
       notifyTab(s, '[PM-STAGE] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') resolving audio track for this run…');
       run.trackReadyPromise = run.input
         .getPrimaryAudioTrack()
@@ -931,6 +1033,9 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       // is bounded.
       track = await withStageTimeout(run.trackReadyPromise, 'track-ready');
     } catch (e) {
+      // Teardown during the await looks like a timeout to us; it is not a
+      // hang, so it must not be counted as one.
+      if (abortIfGone('track-ready')) return false;
       // 0.1.23: hangs get their OWN counter/threshold (s.hangAttempts /
       // HANG_THRESHOLD), separate from s.sinkErrorAttempts's fast
       // DRM-detection threshold - see HANG_THRESHOLD's own comment for why.
@@ -952,6 +1057,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     try {
       run.nativeRate = await withStageTimeout(run.track.getSampleRate(), 'get-sample-rate');
     } catch (e) {
+      if (abortIfGone('get-sample-rate')) return false;
       const hangCount = (s.hangAttempts.get(windowKeyForErrors) || 0) + 1;
       s.hangAttempts.set(windowKeyForErrors, hangCount);
       if (hangCount >= HANG_THRESHOLD) {
@@ -962,8 +1068,16 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       return false;
     }
   }
+  if (abortIfGone('pre-decode')) return false;
   const nativeRate = run.nativeRate;
   const sink = run.sink;
+  if (!sink) {
+    // The second field-log crash ("Cannot read properties of null (reading
+    // 'buffers')"), now a quiet abort rather than a thrown TypeError that
+    // surfaced as a scary [PM-ERROR] and a wasted skip count.
+    log('[PM-ABORT] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') stopped at decode: run sink already released');
+    return false;
+  }
   const wrapped = [];
   try {
     // Stage-timeout guard (0.1.21): the decode loop itself is the OTHER
@@ -994,16 +1108,37 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     // releasing safe-mode muting via `pm-unanalyzable` (see below) so
     // content that will never decode is never left permanently muted with
     // no way to actually protect it.
+    if (abortIfGone('decode')) return false;
     const isHang = !!(e && e.isStageTimeout);
     const attempts = isHang ? s.hangAttempts : s.sinkErrorAttempts;
     const threshold = isHang ? HANG_THRESHOLD : SINK_ERROR_THRESHOLD;
     const errCount = (attempts.get(windowKeyForErrors) || 0) + 1;
     attempts.set(windowKeyForErrors, errCount);
+    const span = 'window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ')';
     if (errCount >= threshold) {
-      markUnanalyzable(s, 'window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') failed to decode ' + errCount + 'x in a row (' + (isHang ? 'hang' : 'thrown error') + '): ' + String(e));
-    } else {
-      notifyTab(s, '[PM-SKIP] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') skipped: sink.buffers ' + (isHang ? 'hang' : 'error') + ' (' + errCount + '/' + threshold + '): ' + String(e && e.message ? e.message : e));
+      markUnanalyzable(s, span + ' failed to decode ' + errCount + 'x in a row (' + (isHang ? 'hang' : 'thrown error') + '): ' + String(e));
+      return false;
     }
+    // 0.1.34 escalation ladder for HANGS only. A thrown decode error is a
+    // fast, confident DRM-style signal and keeps its original short path;
+    // a hang is the wedged-decoder case, where repeating the identical
+    // request is what the field log showed being useless.
+    if (isHang && errCount === HANG_REBUILD_AT) {
+      rebuildRunDecodePipeline(run);
+      notifyTab(s, '[PM-REBUILD] ' + span + ' hung ' + errCount + 'x: rebuilding this run\'s decode pipeline before the next attempt');
+      return false;
+    }
+    if (isHang && errCount >= HANG_SKIP_AT) {
+      // Skip and advance. The span is excluded from PICKING only: it is
+      // never added to coverage, so content.js still treats this audio as
+      // unanalyzed and mute/pause catch-up still protects it. What changes
+      // is that the pipeline stops re-attempting it and gets on with the
+      // rest of the video.
+      s.skippedSpans.push({ start: absStart, end: absEnd });
+      notifyTab(s, '[PM-GIVEUP] ' + span + ' hung ' + errCount + 'x even after a pipeline rebuild: skipping this span and advancing (it stays UNANALYZED, not marked covered)');
+      return false;
+    }
+    notifyTab(s, '[PM-SKIP] ' + span + ' skipped: sink.buffers ' + (isHang ? 'hang' : 'error') + ' (' + errCount + '/' + threshold + '): ' + String(e && e.message ? e.message : e));
     return false;
   }
   s.sinkErrorAttempts.delete(windowKeyForErrors); // a successful decode clears any prior error/hang count for this exact span
@@ -1072,10 +1207,28 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   if (!s.firstCoverageLogged && s.firstWindowDecodedAt == null) s.firstWindowDecodedAt = Date.now();
 
   if (s.generation !== myGeneration) {
-    // Superseded (page reset or seek) while demuxing - don't even bother
-    // queuing the expensive worker call for a window nobody wants anymore.
-    log('[PM-STALE] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') abandoned after decode: generation changed (' + myGeneration + ' -> ' + s.generation + ')');
-    return false;
+    // 0.1.34: a generation bump is NOT automatically a reason to throw
+    // decoded audio away. The field log showed [0.00,2.50) decoded in full
+    // (computeMs=3613), discarded for a generation change, re-decoded, and
+    // discarded again: the same seconds of audio transcribed twice and used
+    // zero times, while the user waited.
+    //
+    // The distinction that matters is WHY the generation moved. A dropped
+    // session (page refresh, video change) means this audio belongs to a
+    // video nobody is watching any more, so it must go. A SEEK means the
+    // playhead moved within the same video: the audio at [absStart,absEnd)
+    // is exactly as valid as it was a second ago, and the only cost of
+    // keeping it is a worker call that has already been paid for. If the
+    // span is somehow covered by now, drop it as redundant instead.
+    if (s.dropped) {
+      log('[PM-STALE] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') abandoned after decode: session dropped');
+      return false;
+    }
+    if (isCovered(s, absStart, absEnd)) {
+      log('[PM-STALE] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') abandoned after decode: already covered by another window');
+      return false;
+    }
+    log('[PM-STALE-KEPT] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') generation changed (' + myGeneration + ' -> ' + s.generation + ') but the audio is unchanged and still uncovered: keeping the decoded result');
   }
 
   // Model-in-use is tab-visible exactly once per session (0.1.13) - per the
@@ -1196,17 +1349,39 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   const computeMs = transcribeMs;
 
   if (s.generation !== myGeneration) {
-    // Superseded while the (unabortable) worker call was in flight - the
-    // result is real, but for a playhead nobody's at anymore. Discard
-    // rather than apply/log it as a real window (this is exactly the
-    // near-duplicate-window symptom a live [PM-TIMELINE-ALARM] caught).
+    // 0.1.34: this is the exact line the user's field log hit twice on the
+    // SAME span - a full transcription (computeMs=3613) thrown away for a
+    // generation change, re-decoded, re-transcribed, thrown away again.
+    // Two rounds of the most expensive work in the extension, zero
+    // coverage produced, while the pill promised progress.
+    //
+    // A dropped session still discards: that audio belongs to a video
+    // nobody is watching. A SEEK does not, because seeking does not change
+    // what the audio at [absStart,absEnd) contains. The one thing worth
+    // re-checking is whether the span became covered while we were in the
+    // worker, in which case applying it would produce a duplicate window
+    // (the near-duplicate symptom [PM-TIMELINE-ALARM] once caught).
+    if (s.dropped) {
+      notifyTab(
+        s,
+        '[PM-STALE] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') result discarded: session dropped while transcribing - decodeMs=' +
+          Math.round(decodeMs) + ' queueMs=' + Math.round(queueMs) + ' computeMs=' + Math.round(computeMs)
+      );
+      return false;
+    }
+    if (isCovered(s, absStart, absEnd)) {
+      notifyTab(
+        s,
+        '[PM-STALE] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') result discarded: span already covered while transcribing - decodeMs=' +
+          Math.round(decodeMs) + ' queueMs=' + Math.round(queueMs) + ' computeMs=' + Math.round(computeMs)
+      );
+      return false;
+    }
     notifyTab(
       s,
-      '[PM-STALE] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') result discarded: generation changed (' +
-        myGeneration + ' -> ' + s.generation + ') while transcribing - decodeMs=' + Math.round(decodeMs) +
-        ' queueMs=' + Math.round(queueMs) + ' computeMs=' + Math.round(computeMs)
+      '[PM-STALE-KEPT] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') survived a generation change (' +
+        myGeneration + ' -> ' + s.generation + ') while transcribing: the audio is unchanged and still uncovered, so the result is applied instead of recomputed'
     );
-    return false;
   }
 
   // [PM-FIRST-COVERAGE] milestone (0.1.18): "words returned".

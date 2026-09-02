@@ -13995,6 +13995,7 @@
       }
       function closeRun(run) {
         closeRunStream(run);
+        run.closed = true;
         run.track = null;
         run.sink = null;
         run.input = null;
@@ -14137,6 +14138,15 @@
             // queued behind it. See PIPELINE_NOTES "0.1.18" for the live bug this
             // fixes (a page refresh's stale session blocking the new one for 7s+).
             generation: 0,
+            dropped: false,
+            // set by dropSessionsForTab; a generation bump alone means a seek, which does NOT invalidate already-decoded audio
+            // Spans this session has given up decoding (0.1.34 hang escalation).
+            // Excluded from PICKING only, via coverageViewForPicking - never added
+            // to s.covered, because coverage means "analyzed" and claiming that
+            // for audio we failed to decode would silently unmute it in the
+            // mute/pause catch-up modes. The user stays protected; the picker just
+            // stops re-attempting a span that has already wedged the decoder.
+            skippedSpans: [],
             inFlightWindows: /* @__PURE__ */ new Set(),
             // "start.toFixed(2),end.toFixed(2)" currently dispatched to transcribeWindow - prevents the picker from re-picking a span whose result hasn't landed yet
             lastKnownRtf: null,
@@ -14161,6 +14171,7 @@
         for (const key of Array.from(sessions.keys())) {
           if (key.startsWith(tabId + ":")) {
             const s = sessions.get(key);
+            s.dropped = true;
             s.generation++;
             for (const run of s.runs) closeRun(run);
             sessions.delete(key);
@@ -14269,6 +14280,8 @@
       var WINDOW_LOOP_THRESHOLD = 3;
       var ALL_WORDS_CAP = 2e3;
       var SINK_ERROR_THRESHOLD = 3;
+      var HANG_REBUILD_AT = 2;
+      var HANG_SKIP_AT = 3;
       var HANG_THRESHOLD = 6;
       var STAGE_TIMEOUT_MS = 25e3;
       function withStageTimeout(promise, label) {
@@ -14289,13 +14302,27 @@
         chrome.runtime.sendMessage({ type: "pm-unanalyzable", tabId: s.tabId, videoId: s.videoId }).catch(() => {
         });
       }
+      function isCovered(s, start, end) {
+        const EPS = 0.05;
+        let cursor = start;
+        const spans = s.covered.slice().sort((a, b) => a.start - b.start);
+        for (const iv of spans) {
+          if (iv.end <= cursor + EPS) continue;
+          if (iv.start > cursor + EPS) return false;
+          cursor = Math.max(cursor, iv.end);
+          if (cursor >= end - EPS) return true;
+        }
+        return cursor >= end - EPS;
+      }
       function coverageViewForPicking(s) {
-        if (s.inFlightWindows.size === 0) return s.covered;
+        const skipped = s.skippedSpans || [];
+        if (s.inFlightWindows.size === 0 && skipped.length === 0) return s.covered;
         const extra = [];
         for (const key of s.inFlightWindows) {
           const idx = key.indexOf(",");
           extra.push({ start: parseFloat(key.slice(0, idx)), end: parseFloat(key.slice(idx + 1)) });
         }
+        for (const sp of skipped) extra.push({ start: sp.start, end: sp.end });
         return s.covered.concat(extra).sort((a, b) => a.start - b.start);
       }
       var DECODE_FED_GUARD_S = 0.25;
@@ -14385,12 +14412,35 @@
         if (size <= 0) return null;
         return { start, end, isColdStart };
       }
+      function abortReasonFor(s, run, myGeneration) {
+        if (s.dropped) return "session-dropped";
+        if (run && run.closed) return "run-closed";
+        return null;
+      }
+      function rebuildRunDecodePipeline(run) {
+        if (!run) return;
+        run.track = null;
+        run.sink = null;
+        run.trackReadyPromise = null;
+        run.nativeRate = null;
+      }
       async function transcribeWindow(s, run, absStart, absEnd) {
         const t0 = performance.now();
         const myGeneration = s.generation;
         const windowKeyForErrors = absStart.toFixed(2) + "," + absEnd.toFixed(2);
+        const abortIfGone = (stage) => {
+          const why = abortReasonFor(s, run, myGeneration);
+          if (!why) return false;
+          log("[PM-ABORT] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") stopped at " + stage + ": " + why);
+          return true;
+        };
+        if (abortIfGone("entry")) return false;
         if (!run.track) {
           if (!run.trackReadyPromise) {
+            if (!run.input) {
+              log("[PM-ABORT] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") stopped at track-resolve: run input already released");
+              return false;
+            }
             notifyTab(s, "[PM-STAGE] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") resolving audio track for this run\u2026");
             run.trackReadyPromise = run.input.getPrimaryAudioTrack().then((t) => {
               run.track = t;
@@ -14406,6 +14456,7 @@
           try {
             track = await withStageTimeout(run.trackReadyPromise, "track-ready");
           } catch (e) {
+            if (abortIfGone("track-ready")) return false;
             const hangCount = (s.hangAttempts.get(windowKeyForErrors) || 0) + 1;
             s.hangAttempts.set(windowKeyForErrors, hangCount);
             if (hangCount >= HANG_THRESHOLD) {
@@ -14424,6 +14475,7 @@
           try {
             run.nativeRate = await withStageTimeout(run.track.getSampleRate(), "get-sample-rate");
           } catch (e) {
+            if (abortIfGone("get-sample-rate")) return false;
             const hangCount = (s.hangAttempts.get(windowKeyForErrors) || 0) + 1;
             s.hangAttempts.set(windowKeyForErrors, hangCount);
             if (hangCount >= HANG_THRESHOLD) {
@@ -14434,8 +14486,13 @@
             return false;
           }
         }
+        if (abortIfGone("pre-decode")) return false;
         const nativeRate = run.nativeRate;
         const sink = run.sink;
+        if (!sink) {
+          log("[PM-ABORT] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") stopped at decode: run sink already released");
+          return false;
+        }
         const wrapped = [];
         try {
           await withStageTimeout(
@@ -14445,16 +14502,28 @@
             "decode"
           );
         } catch (e) {
+          if (abortIfGone("decode")) return false;
           const isHang = !!(e && e.isStageTimeout);
           const attempts = isHang ? s.hangAttempts : s.sinkErrorAttempts;
           const threshold = isHang ? HANG_THRESHOLD : SINK_ERROR_THRESHOLD;
           const errCount = (attempts.get(windowKeyForErrors) || 0) + 1;
           attempts.set(windowKeyForErrors, errCount);
+          const span = "window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ")";
           if (errCount >= threshold) {
-            markUnanalyzable(s, "window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") failed to decode " + errCount + "x in a row (" + (isHang ? "hang" : "thrown error") + "): " + String(e));
-          } else {
-            notifyTab(s, "[PM-SKIP] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") skipped: sink.buffers " + (isHang ? "hang" : "error") + " (" + errCount + "/" + threshold + "): " + String(e && e.message ? e.message : e));
+            markUnanalyzable(s, span + " failed to decode " + errCount + "x in a row (" + (isHang ? "hang" : "thrown error") + "): " + String(e));
+            return false;
           }
+          if (isHang && errCount === HANG_REBUILD_AT) {
+            rebuildRunDecodePipeline(run);
+            notifyTab(s, "[PM-REBUILD] " + span + " hung " + errCount + "x: rebuilding this run's decode pipeline before the next attempt");
+            return false;
+          }
+          if (isHang && errCount >= HANG_SKIP_AT) {
+            s.skippedSpans.push({ start: absStart, end: absEnd });
+            notifyTab(s, "[PM-GIVEUP] " + span + " hung " + errCount + "x even after a pipeline rebuild: skipping this span and advancing (it stays UNANALYZED, not marked covered)");
+            return false;
+          }
+          notifyTab(s, "[PM-SKIP] " + span + " skipped: sink.buffers " + (isHang ? "hang" : "error") + " (" + errCount + "/" + threshold + "): " + String(e && e.message ? e.message : e));
           return false;
         }
         s.sinkErrorAttempts.delete(windowKeyForErrors);
@@ -14492,8 +14561,15 @@
         const tDecoded = performance.now();
         if (!s.firstCoverageLogged && s.firstWindowDecodedAt == null) s.firstWindowDecodedAt = Date.now();
         if (s.generation !== myGeneration) {
-          log("[PM-STALE] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") abandoned after decode: generation changed (" + myGeneration + " -> " + s.generation + ")");
-          return false;
+          if (s.dropped) {
+            log("[PM-STALE] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") abandoned after decode: session dropped");
+            return false;
+          }
+          if (isCovered(s, absStart, absEnd)) {
+            log("[PM-STALE] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") abandoned after decode: already covered by another window");
+            return false;
+          }
+          log("[PM-STALE-KEPT] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") generation changed (" + myGeneration + " -> " + s.generation + ") but the audio is unchanged and still uncovered: keeping the decoded result");
         }
         if (!s.loggedModel) {
           s.loggedModel = true;
@@ -14548,11 +14624,24 @@
         const queueMs = tTranscribeStart - tBeforeQueue;
         const computeMs = transcribeMs;
         if (s.generation !== myGeneration) {
+          if (s.dropped) {
+            notifyTab(
+              s,
+              "[PM-STALE] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") result discarded: session dropped while transcribing - decodeMs=" + Math.round(decodeMs) + " queueMs=" + Math.round(queueMs) + " computeMs=" + Math.round(computeMs)
+            );
+            return false;
+          }
+          if (isCovered(s, absStart, absEnd)) {
+            notifyTab(
+              s,
+              "[PM-STALE] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") result discarded: span already covered while transcribing - decodeMs=" + Math.round(decodeMs) + " queueMs=" + Math.round(queueMs) + " computeMs=" + Math.round(computeMs)
+            );
+            return false;
+          }
           notifyTab(
             s,
-            "[PM-STALE] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") result discarded: generation changed (" + myGeneration + " -> " + s.generation + ") while transcribing - decodeMs=" + Math.round(decodeMs) + " queueMs=" + Math.round(queueMs) + " computeMs=" + Math.round(computeMs)
+            "[PM-STALE-KEPT] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") survived a generation change (" + myGeneration + " -> " + s.generation + ") while transcribing: the audio is unchanged and still uncovered, so the result is applied instead of recomputed"
           );
-          return false;
         }
         if (!s.firstCoverageLogged && s.firstWindowWordsAt == null) s.firstWindowWordsAt = Date.now();
         const output = { text: workerResult.text, chunks: workerResult.chunks };
