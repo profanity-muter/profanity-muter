@@ -50,7 +50,27 @@ async function main() {
       '// loaded. When false, the full 0.1.25 multilingual behavior is active.\n' +
       'export const BUILD_CONFIG = { englishOnly: ' + String(englishOnly) + ' };\n'
   );
-  console.log('build-config.js: englishOnly=' + englishOnly + ' (PM_VARIANT=' + variant + ')');
+  // Classic-script twin of the above, for pages that cannot import the ESM
+  // module (the popup loads plain <script> tags). Attaches
+  // globalThis.PM_BUILD_CONFIG so popup.js can hide the multilingual-only
+  // affordances in the english build.
+  const globalConfigPath = path.join(ROOT, 'shared', 'build-config.global.js');
+  fs.writeFileSync(
+    globalConfigPath,
+    '// shared/build-config.global.js\n' +
+      '//\n' +
+      '// GENERATED at build time by build.js from PM_VARIANT. Do not hand-edit: a\n' +
+      '// build overwrites it. The committed copy is the english default.\n' +
+      '//\n' +
+      '// This is the CLASSIC-SCRIPT form of shared/build-config.js, for pages that\n' +
+      '// load plain <script> tags and cannot import the ESM module (the popup, and\n' +
+      '// the content-script world). It attaches globalThis.PM_BUILD_CONFIG so those\n' +
+      '// scripts can read the build variant. When englishOnly is true the popup\n' +
+      '// hides the multilingual-only affordances (the "Filter other languages"\n' +
+      '// toggle and the detected-language note), which are inert in that build.\n' +
+      'globalThis.PM_BUILD_CONFIG = { englishOnly: ' + String(englishOnly) + ' };\n'
+  );
+  console.log('build-config.js / build-config.global.js: englishOnly=' + englishOnly + ' (PM_VARIANT=' + variant + ')');
 
   // 2. Inject the store name into manifest.json. Targeted single-field
   // replace (not a JSON reformat) so the rest of the file is untouched; the

@@ -323,6 +323,9 @@
     <span id="pm-status" class="pm-status" role="status" aria-live="polite"></span>
   </section>
 
+  <!-- Build variant flag (generated). Must load before popup.js so the
+       english build can hide multilingual-only affordances. -->
+  <script src="../shared/build-config.global.js"></script>
   <script src="../shared/wordlist.js"></script>
   <script src="../shared/lock.js"></script>
   <script src="../shared/moments.js"></script>

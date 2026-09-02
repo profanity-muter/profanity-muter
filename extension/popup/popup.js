@@ -134,6 +134,22 @@
   var censorCaptionsEl = document.getElementById("pm-censor-captions");
   var multilingualEl = document.getElementById("pm-multilingual");
   var activeLanguageNoteEl = document.getElementById("pm-active-language-note");
+
+  // 0.1.46: in the english build the language-detection pipeline never runs,
+  // so the multilingual-only popup affordances (the "Filter other languages"
+  // toggle and the detected-language note) do nothing. Rather than show a
+  // toggle that has no effect, remove them entirely in that build. Gated on
+  // the generated build flag (shared/build-config.global.js); the
+  // multilingual build leaves PM_BUILD_CONFIG.englishOnly false, so the
+  // toggle and note render exactly as before. The remaining pm_multilingual
+  // read/write in load()/persistSettings still operates on the now-detached
+  // checkbox node, which is harmless: the english runtime ignores the value.
+  var englishOnly = !!(globalThis.PM_BUILD_CONFIG && globalThis.PM_BUILD_CONFIG.englishOnly);
+  if (englishOnly) {
+    var multilingualRow = multilingualEl && multilingualEl.closest(".pm-row");
+    if (multilingualRow) multilingualRow.remove();
+    if (activeLanguageNoteEl) activeLanguageNoteEl.remove();
+  }
   var catchupModeEls = document.getElementsByName("pm-catchup-mode");
   var debugOverlayEl = document.getElementById("pm-debug-overlay");
   var showStatusEl = document.getElementById("pm-show-status");
