@@ -742,6 +742,119 @@ of that file) - it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
+## FIX ROUND (2026-09-02, 0.1.34): what the first field test found
+
+Two devlogs from a real machine, and every item below is a defect they
+show rather than something anticipated. Worth recording as a group,
+because the theme connecting them is one thing: the extension was telling
+the user it was working while it was not.
+
+### A. Offscreen lifecycle
+
+**Two TypeErrors were never decode failures.** `closeRun()` nulls a run's
+`track`/`sink`/`input`, and an in-flight `transcribeWindow` still holds
+that same run object across its awaits. Reading a nulled field afterwards
+produced "Cannot read properties of null (reading 'getPrimaryAudioTrack')"
+and the same crash again in `sink.buffers` shape. Runs are now flagged
+closed before teardown, `transcribeWindow` checks at every await boundary,
+and an abort returns quietly **without touching the hang/error counters**.
+That last part matters more than the crash: those counters lead to
+`markUnanalyzable`, so a bookkeeping race could have switched protection
+off for a video that was perfectly decodable.
+
+**The decode hang repeated an identical doomed request.** The log shows the
+same window timing out at 25s twice, and the old ladder would have done it
+four more times: 150 seconds of a wedged decoder producing nothing while
+the pill promised results. Repeating an identical operation is not a retry
+strategy. Hangs now escalate: attempt 2 rebuilds the run's decode pipeline
+(a wedged `AudioBufferSink` generator is exactly the shape of failure a
+rebuild clears, and it is cheap), attempt 3 gives up on that SPAN and
+advances. Skipped spans go into `s.skippedSpans`, which is excluded from
+**picking only** and never added to `s.covered`, because coverage means
+"analyzed" and claiming it for audio we failed to decode would silently
+unmute it under mute/pause catch-up. The user stays protected; the pipeline
+stops beating its head against one span. `HANG_THRESHOLD` remains the final
+fallback.
+
+**A fully transcribed window was discarded, recomputed, and discarded
+again.** `[PM-STALE] window [0.00,2.50) ... computeMs=3613`, twice, for the
+same 2.5 seconds of audio, coverage produced: none. A generation bump was
+being treated as blanket invalidation, but the reason it moved is what
+matters: a dropped session (page refresh, video change) means the audio
+belongs to a video nobody is watching, while a SEEK does not change what
+the audio at `[absStart,absEnd)` contains. Sessions now carry `dropped`,
+and a seek keeps the decoded result unless the span became covered
+meanwhile.
+
+### B. The pill was lagging, and quoting a number it never checked
+
+**"Press play to load audio" appeared while the video was playing.**
+Capture growth stopping is not playback stopping: once YouTube has
+buffered far enough ahead it stops appending for a while and playback
+carries on regardless. The pill was telling users to do the thing they
+were already doing. It now requires `video.paused` to say that.
+
+**Updates are event-driven on top of the 2Hz poll**, refreshing on
+play/pause/seek/ratechange/ended and, most importantly, the instant a
+window completes, which is the single biggest change to what it should
+say. For a status indicator, lagging reality is the same as lying.
+
+**The ETA is now a promise with a ledger.** "Analyzing, safe to pause
+(~3s)" is a specific claim, and the field test caught it frozen on that
+exact wording for 30+ seconds. The cause was that every render recomputed
+a fresh estimate, so the pill said "~3s" forever, each time as a brand new
+and equally untested claim. A promise now holds its ORIGINAL clock and
+quote until a window completes, and at 2x the quote the label escalates to
+"Analyzing, taking longer than expected".
+
+### C. Health could not see the case that mattered most
+
+Every session in both logs had `health: []`, including the wedged one. The
+playback-only clock is right that pausing is not a fault, but combined
+with a pill that says "safe to pause", it produced the worst possible
+gap: the user pauses **because we told them to**, the pipeline is dead,
+and the one person least able to notice is the one we never warn.
+
+New reason code `stalled-analysis`, on a WALL clock: if a promise goes
+unfulfilled for longer than `max(3x the quote, 30s)`, the verdict is
+unhealthy. Deliberately placed **before the windowsCompleted branch**
+(the wedged session had four successful windows behind it, and past
+success does not make a currently dead pipeline healthy) and **before the
+playback gate** (so it fires while paused).
+
+Bypassing the playback clock is safe here precisely because it requires an
+outstanding promise: this can only fire where we said something specific
+and it did not come true. Every existing false-positive guard is intact,
+and any completed window retires the promise, so recovery needs no
+separate path.
+
+The ledger lives in `shared/health.js` rather than in the pill code
+because two surfaces act on the same fact and must not disagree about it:
+the pill escalates at 2x, the monitor at 3x. One definition, two
+consumers, both testable without a browser. It is also maintained when the
+pill is hidden, or `pm_showStatus=false` would suppress a warning that is
+explicitly not suppressible.
+
+The escalation now reads, end to end: "safe to pause (~3s)" at 0s,
+"taking longer than expected" at 6s, "Profanity Muter is NOT filtering
+this video" at 31s, back to normal the instant a window lands.
+
+### Preserved deliberately
+
+Log 2 showed **pause-until-ready working correctly**, holding and
+releasing as designed. Nothing in this round touches that path.
+
+No new storage keys: the ledger is per-session in-memory state, and the
+verdict it produces is recorded through the existing devlog health array.
+
+### Tests
+
+`health_test.js` 37 -> 54, covering the ledger (original clock and quote
+held, retirement on completion, late quote, negative clocks) and the
+verdict (fires while paused, outranks past success, 3x/30s allowance, no
+promise means no verdict, limits still outrank it, throttle never delays
+it, recovery). Suite: 240 node checks, 181 browser checks.
+
 ## FEATURE (2026-09-02, 0.1.33): Shorts, trademark, two-tier reports, growth surfaces
 
 ### 1. Shorts are an explicit state

@@ -128,6 +128,9 @@
 //                                mail client. Nothing about it is
 //                                persisted, and nothing is transmitted by
 //                                the extension itself.
+//   (0.1.34 adds no new storage keys: the promise ledger is per-session
+//   in-memory state on the content script, and the health verdict it
+//   produces is recorded in pm_devlog through the existing health array.)
 //   pm_milestoneShown {shownAt} | absent - one-shot latch for the
 //                                on-player milestone pill ("N videos
 //                                protected"), shown once ever. Owned by

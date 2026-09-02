@@ -3083,3 +3083,38 @@ trademark, two-tier reports, growth surfaces".
   the popup cannot disagree about what "eligible" means, and takes the
   `alarms` permission for a twice-daily recheck of the 7-day install gate,
   the one input that changes with no event to hook.
+
+## 0.1.34: field-test fixes (lifecycle, hang escalation, promise accountability)
+
+First real field test, two devlogs. Full write-up in CENSOR_NOTES.md "what
+the first field test found"; the pipeline-side specifics:
+
+- **`closeRun()` now sets `run.closed` before nulling.** The two crashes in
+  the log were an in-flight `transcribeWindow` reading fields that teardown
+  had nulled under it. `abortReasonFor()` + `abortIfGone()` check at every
+  await boundary (entry, track-ready, get-sample-rate, pre-decode, decode)
+  and return false WITHOUT touching `hangAttempts`/`sinkErrorAttempts`. A
+  teardown must never count toward `markUnanalyzable`, or a race turns
+  protection off for decodable content.
+- **Hang escalation ladder**, hangs only (a thrown decode error is still the
+  fast confident DRM signal and keeps its short path): `HANG_REBUILD_AT`=2
+  calls `rebuildRunDecodePipeline()` (drops cached track/sink/nativeRate so
+  the next attempt builds fresh ones over the same Input and the same fed
+  bytes), `HANG_SKIP_AT`=3 pushes the span to `s.skippedSpans` and advances,
+  `HANG_THRESHOLD`=6 unchanged as the final fallback.
+- **`s.skippedSpans` feeds `coverageViewForPicking` only.** Same mechanism
+  `inFlightWindows` already used: a picker-side view that is never
+  `s.covered`. Coverage means analyzed, and marking a failed decode as
+  covered would silently unmute it in mute/pause catch-up.
+- **`s.dropped`** distinguishes a session teardown from a seek. Both stale
+  checkpoints (post-decode and post-worker) now keep the result across a
+  seek unless `isCovered(s, absStart, absEnd)` says another window beat it.
+  The post-worker one is where the field log burned two full
+  transcriptions of the same 2.5s span.
+- **Content side**: `session.etaPromise` is the pill's ETA ledger, driven by
+  `PMHealth.openOrKeepPromise` / `promiseEscalated` / `promiseAgeMs`, and
+  fed into `evaluateHealth` as `promiseAgeMs`/`promiseEtaMs`. `needs-play`
+  now requires `video.paused`. `refreshPillSoon()` coalesces event-driven
+  renders through a microtask so a burst (play + seeking + a window
+  landing) is one render, and `addWords` calls it so coverage and the label
+  change in the same instant.
