@@ -742,6 +742,144 @@ of that file) - it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
+## FEATURE (2026-09-02, 0.1.33): Shorts, trademark, two-tier reports, growth surfaces
+
+### 1. Shorts are an explicit state
+
+The content script always RAN on /shorts/ pages; it just never said
+anything about them. Investigation first, before deciding to gate:
+
+- `videoId` falls back to `location.pathname` (capture.js
+  `currentVideoId`, content.js `currentVideoIdFromLocation`), so every
+  Short gets a distinct id and every swipe fires a RESET that discards all
+  accumulated coverage.
+- Transcription intentionally trails playback by seconds. A Short is
+  commonly 15-60s, starts instantly and LOOPS, so analysis has to win a
+  race it was never designed for, on every swipe.
+- `resolveRealVideo` prefers `#movie_player video.html5-main-video`, the
+  watch-page player; the Shorts player is a different container, so
+  element resolution falls back to a size heuristic.
+- The session model assumes one monotonic video per page.
+
+With the default catch-up mode now `play`, that adds up to unfiltered
+audio behind a pill implying otherwise. So Shorts is now a documented
+limit: reason code `shorts-unsupported`, the same calm treatment as
+livestreams, checked BEFORE live because a Short can also be a premiere
+and the Shorts answer is the more useful one there.
+
+The on-player notice is **page-scoped, not session-scoped**. Every swipe
+starts a new session, so a per-session flag would fire the notice on every
+Short in a scroll; the flag resets on leaving /shorts/ so a later visit
+informs once more rather than never again. The pill gains a matching
+`Shorts not supported` state and the devlog records the verdict through
+the existing health-transition path.
+
+### 2. Trademark hygiene
+
+`YouTube(TM)` on the first and most prominent mention per page (onboarding
+subtitle, report subtitle, popup master-switch line), which is the
+convention, rather than on every occurrence. The non-affiliation statement
+sits on the onboarding acknowledgment step at footer scale, where it
+belongs alongside the rest of what this is and is not. Both full-page
+surfaces gained the same quiet icon lockup: mark inline with the wordmark
+at text scale, so the page opens on its content rather than on a logo.
+
+### 3. Two-tier problem reports
+
+The critical change. The old flow put the entire diagnostic payload on the
+clipboard and asked the user to paste it into the mail draft. Most people
+will not: they hit send on a near-empty email, and every one of those
+reports is undiagnosable. Asking a frustrated non-technical user to
+perform a clipboard ritual correctly, at the moment they are annoyed
+enough to write in, was always going to fail most of the time.
+
+- **Tier 1, embedded.** The mail body now carries a compact summary:
+  version, shortened UA, a settings line, and per-video health verdict
+  plus window/match/mute/gap/error counts, newest first. Every report
+  arrives actionable whether or not anyone pastes anything.
+- **Tier 2, clipboard.** The full devlog JSON is still copied with
+  consent, now framed as an optional extra rather than the load-bearing
+  step.
+- **Privacy tier is deliberately poorer in email.** Counts only: no
+  transcripts, no matched words, no word-list contents. Mail bodies get
+  forwarded and quoted and sit in mailboxes for years, and a list of which
+  profanity a specific child said or heard is never needed to diagnose a
+  pipeline that is not running. Video ids stay, being public identifiers
+  that make a report reproducible.
+- **Consent governs BOTH tiers.** Unticking the box withholds per-video
+  data from the email as well as the clipboard, otherwise the checkbox
+  would be lying; version, browser and settings remain, since none of them
+  describe what was watched.
+- **Hard 1800-char budget** on the whole mailto URL, enforced by a shrink
+  loop that drops the oldest videos first and never truncates the user's
+  own text, which is the one thing only they can supply.
+
+`SUPPORT_EMAIL` is now the real project mailbox, pinned by a test so a
+change is deliberate. It stays a role address: it ships in the mailto of
+every report and lands in strangers' address books permanently.
+
+### 4. Completion view, and the review ask
+
+Finishing setup was a line of small print under a screen still titled "One
+last thing". It is now a fifth view, reached ONLY by finishing (never by
+Next/Back), with the header and progress rail hidden there: there is no
+step 5 of 4, and hiding the header also stops the stale-subtitle `:has()`
+rule resolving against a rail that no longer means anything.
+
+The completion page is the highest-traffic point in the product, so the
+review ask lives there and is designed rather than whispered. It asks for
+support of the project rather than a verdict on a product nobody has used
+yet: at minute zero "is it working well?" has no answer, and inviting a
+rating anyway produces uninformed reviews.
+
+Policy line, absolute: no incentive in copy or behaviour, nothing gated or
+delayed for declining, no fake social proof or pre-filled stars, and
+declining is one plain click with no second ask and no guilt copy.
+
+**Retirement semantics.** Clicking through writes `pm_reviewPrompt`, which
+retires every later review surface (milestone card, badge, pill) through
+the single existing definition of "already asked" rather than a second
+flag to keep in sync. "Maybe later" retires NOTHING: that person is
+exactly who the milestone surface exists for, once they have experience to
+draw on. Local-only `pm_growth` counters make the two surfaces comparable
+later; nothing is transmitted.
+
+The pin request is instructional only (Chrome has no programmatic pin) and
+its diagram is a schematic in the page's own system, never a mock of
+Chrome's UI, which ages badly and edges toward impersonation.
+
+### 5. Toolbar badge and milestone pill
+
+Both things the extension needs to say lived inside the popup, which most
+users never open. The badge is the only surface it owns that is visible
+without being asked for, and needs no permission.
+
+One mechanism, one pure decision function, strict priority: **health
+always outranks the review nudge**, because a nudge on top of a broken
+filter is useless and insulting. **Documented limits never badge**: a
+permanent mark for "this is a Short" would train users to ignore the badge
+and cost exactly the signal the health case depends on. Health is per tab;
+the review nudge is global. Opening the popup while the nudge is up clears
+it.
+
+The badge only reaches people who pinned the icon, so the on-player pill
+gets one bounded moment at the same milestone: "N videos protected", once
+ever, latched in `pm_milestoneShown`, stamped by the service worker as it
+hands the answer out so two tabs cannot both show it. It is product status
+and NOT review copy (no mention of reviews, ratings or the store), which
+is why `pm_showStatus=false` suppresses it, unlike the health warning;
+asking is skipped entirely in that case so the latch is not silently
+consumed for someone who would never see it.
+
+### Tests
+
+`moments_test.js` 56, `report_test.js` 38, `health_test.js` 37; suite
+totals 217 node checks plus 181 browser checks. The browser harness covers
+the completion view end to end (landing on it, header and rail standing
+down, the review module, declining retiring nothing, clicking retiring
+everything, share, Open YouTube), the badge clearing, and the report
+page's new copy and payload.
+
 ## FEATURE (2026-09-02, 0.1.32): Graceful failure (health monitor)
 
 Until now, if YouTube changed something and the pipeline broke, the

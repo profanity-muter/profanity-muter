@@ -3052,3 +3052,34 @@ monitor)"; the pipeline-side facts:
 - **A `chrome.runtime.onMessage` listener** answers the popup's
   `pm-health-query`. It is the first such listener in this file; it
   responds synchronously and returns undefined.
+
+## 0.1.33: Shorts gating, badge, milestone pill
+
+Pipeline-side notes only; the full round is in CENSOR_NOTES.md "Shorts,
+trademark, two-tier reports, growth surfaces".
+
+- **Shorts** are now a documented limit rather than a silent no-op. The
+  detection is `location.pathname.indexOf('/shorts/') === 0` in
+  `isShortsPage()`, fed to the health core as `isShorts` and checked
+  before `isLive`. Nothing in the capture or transcription path changed:
+  the finding was that the EXISTING behaviour cannot work there (pathname
+  -derived videoId means every swipe RESETs and discards coverage;
+  analysis trails playback by seconds against a 15-60s looping clip;
+  `resolveRealVideo` prefers the watch-page player container). The notice
+  flag is page-scoped, not on the session, precisely because every swipe
+  makes a new session.
+- **Badge messaging**: `evaluateHealth` now posts `{type:'pm-health',
+  status}` to the service worker on every transition, including recovery,
+  which is what clears the tab badge. Fire and forget, wrapped, since a
+  badge is never worth throwing into the mute pipeline for.
+- **Milestone pill**: one `pm-milestone-check` message per page, asked
+  from the health tick and skipped entirely when `pm_showStatus` is off so
+  the one-shot latch is not consumed for someone who would never see it.
+  The service worker owns the latch and stamps it as it answers.
+- **`setStatusPillActive` gained a third tone** (`milestone`) alongside
+  `normal` and `warning`; it still rebuilds the element on a tone change,
+  since a tone needs re-styling and not just a new label.
+- **background.js now `importScripts('shared/moments.js')`** so the SW and
+  the popup cannot disagree about what "eligible" means, and takes the
+  `alarms` permission for a twice-daily recheck of the 7-day install gate,
+  the one input that changes with no event to hook.

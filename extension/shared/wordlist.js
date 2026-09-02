@@ -128,6 +128,10 @@
 //                                mail client. Nothing about it is
 //                                persisted, and nothing is transmitted by
 //                                the extension itself.
+//   pm_milestoneShown {shownAt} | absent - one-shot latch for the
+//                                on-player milestone pill ("N videos
+//                                protected"), shown once ever. Owned by
+//                                shared/moments.js + background.js.
 //   pm_lock           {salt: string, hash: string} | absent - the
 //                                optional PARENTAL LOCK (0.1.29). When
 //                                present, the popup opens with every
