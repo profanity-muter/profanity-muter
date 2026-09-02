@@ -742,6 +742,133 @@ of that file) - it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
+## FEATURE (2026-09-02, 0.1.32): Graceful failure (health monitor)
+
+Until now, if YouTube changed something and the pipeline broke, the
+extension failed SILENTLY. The pill would sit on "Analyzing" forever, the
+popup would look normal, and a parent would believe their kid was
+protected while nothing was being filtered at all. For a parental filter
+that is the worst available outcome: believing you are protected when you
+are not is strictly worse than knowing you are not, because it removes
+the chance to do anything about it. The onboarding copy now promises the
+extension will say so rather than stay quiet. This makes that true.
+
+### The bar for saying "broken"
+
+Set high on purpose. A filter that cries wolf gets ignored or
+uninstalled, which produces the silent-failure outcome anyway by another
+route, and a false alarm on a slow laptop is far likelier than a genuine
+break. So the state machine (`shared/health.js`, pure, thresholds
+injected) treats these as NOT broken:
+
+- **Slow is not broken.** Transcription is designed to trail the
+  playhead. One completed analysis window, however late, means the
+  pipeline works. Only ZERO completed windows counts.
+- **Paused is not broken.** The clock that matters is accumulated
+  PLAYBACK time, not wall time since page load, so a paused video simply
+  never reaches the evaluation threshold. There is deliberately no
+  separate paused-check: the clock is the mechanism, and a check would
+  also throw away a verdict that 20 seconds of real playback had already
+  earned.
+- **A documented limit is not a break.** Livestreams and protected/DRM
+  audio get a calm, separate notice and must never produce the alarming
+  message.
+- **Lagging catch-up is not broken.** Coverage far behind the playhead
+  with windows still completing is the system working as designed.
+
+Thresholds: first verdict at **20 seconds of actual playback**,
+re-evaluated every **15 seconds**. Recovery is instant and unthrottled,
+because a stale warning misleads exactly as much as a missing one: one
+completed window and the verdict flips back, the pill returns to normal,
+and the recovery is recorded.
+
+### Reason codes
+
+| code | meaning |
+|---|---|
+| `no-audio-intercepted` | Playback ran but no audio ever reached the extension. The most likely casualty of a YouTube player change. |
+| `model-load-failed` | The speech model could not be loaded. |
+| `worker-dead` | The transcription worker crashed or stopped answering. |
+| `zero-windows-completed` | Audio arrived, nothing came back. |
+| `livestream-unsupported` | Live video, calm notice, not a fault. |
+| `content-unanalyzable` | Encrypted/undecodable audio, calm notice, not a fault. |
+
+The two specific fatal causes outrank the generic symptoms they produce,
+so a report says "the model could not load" rather than "nothing was
+analyzed". They are classified out of the existing offscreen `diag`
+relay by `classifyDiag`, which is deliberately NARROW: a skipped window,
+a stage timeout or a demux hiccup is routinely survivable, and treating
+survivable trouble as fatal is precisely how a warning system loses its
+credibility. Anything unrecognized stays unclassified and can only ever
+contribute to `zero-windows-completed`.
+
+### Where it surfaces
+
+**On the player.** The existing status pill gains a warning state:
+solid red, bold, no emoji, "Profanity Muter is NOT filtering this
+video". It shows **even when `pm_showStatus` is off**. Turning off the
+pill means "stop telling me things are fine"; it cannot reasonably be
+read as "don't tell me when the filter has stopped working".
+`pm_enabled` IS still respected: an extension the user switched off is
+not failing, it is off. Livestreams instead get a one-time neutral
+notice across the top of the player, via the same helper the protected
+content notice now uses.
+
+**In the popup.** A warning banner at the very top, above even the
+setup banner, because "your filter is not working right now" outranks
+everything else the popup has to say. It states the consequence in the
+title ("Audio is NOT being filtered"), the cause underneath ("No audio
+from this video reached the extension"), and offers a direct
+**Report a problem** link into the existing report page. It is not
+dismissable: it describes a live condition rather than a task, so it
+disappears when the condition does.
+
+**In `pm_devlog`.** A new `health` array per video entry, recording
+every transition in BOTH directions with the reason code, playback
+duration, window count and segment count. A warning that appeared and
+then cleared is a materially different story from one that never
+appeared, and only the log can tell them apart later.
+
+### Why there is no `pm_health` storage key
+
+A storage key was the obvious design and was rejected:
+
+- Health is **per tab and per video**. A single stored value gets
+  clobbered by whichever tab wrote last, so a popup opened over a
+  working video could show a warning earned by a different tab. Keying
+  by tabId would fix that, but a content script does not know its own
+  tabId without asking the service worker for it.
+- It is **transient**. Persisting a verdict means it can outlive the
+  thing it describes, so the popup would then need staleness rules for a
+  value that is only interesting while that tab is open.
+
+Instead the popup asks the active tab directly
+(`chrome.tabs.sendMessage` with `pm-health-query`; content.js answers
+synchronously). Always fresh, inherently per-tab, and the absence of an
+answer is itself the right answer: no content script means this is not a
+YouTube tab, and the popup shows nothing. No new permission is needed
+(`tabs.create`/`sendMessage` are unprivileged, `tabs.query` returns the
+id without the `tabs` permission, and only the id is used). The durable
+record stays in `pm_devlog`, which is where a verdict belongs for later
+diagnosis.
+
+### Tests
+
+`test/health_test.js` (33) is the state-machine matrix: healthy, each
+reason code, precedence between causes, every false-alarm guard (slow,
+paused, lagging, throttled, below threshold), both unsupported paths,
+recovery, transition detection, and the classifier's refusal to treat
+survivable trouble as fatal. It matters more than most suites here
+because the failures it covers cannot be reproduced on demand: nobody
+can make YouTube break audio interception on a test machine, so this is
+the only place the logic is ever exercised before a user depends on it.
+
+`verify/popup_check.mjs` grew 137 -> 161 with the banner: hidden when no
+tab answers, hidden when healthy, shown with message plus cause when
+unhealthy, its report link opening the report page, no emoji, correct
+stacking above the setup banner, still shown while the settings are
+locked, and NOT shown for an `unsupported` verdict.
+
 ## FEATURE (2026-09-02, 0.1.31): "Report a problem"
 
 A user-facing path from "it didn't mute the swearing" to something a
@@ -1466,6 +1593,10 @@ Avoiding self-triggered observer loops:
 | `pm_ackNotPerfect`  | `{version, timestamp}` or absent | absent -> the popup shows the "Finish setup" banner and hides the share row. Written by the onboarding page's final step |
 | `pm_installedAt`    | `number` (epoch ms) or absent | stamped once by `background.js`; gates the review prompt's 7-day rule |
 | `pm_reviewPrompt`   | `{shownAt, dismissed}` or absent | absent -> the review prompt may still be shown. Its existence alone disqualifies forever |
+
+Note there is deliberately **no** `pm_health` key for the 0.1.32 health
+monitor: the popup asks the active tab directly instead. See "Graceful
+failure (health monitor)" above for why a stored value was rejected.
 | `pm_lock`           | `{salt, hash}` or absent  | absent -> no lock. Optional parental lock over the popup's settings; `hash` = SHA-256(salt + password), hex. Owned by `shared/lock.js` + `popup/popup.js`; NOT in `STORAGE_KEYS`, NOT in the `PMWordlist.settings` contract. A deterrent, not security |
 | `pm_padding`        | `"tight"\|"normal"\|"wide"` | `"normal"` - how much surrounding audio the mute interval pads around a matched word; consumed entirely by the audio pipeline's `content.js` for its interval math |
 | `pm_multilingual`   | `boolean`                 | `true` - "Filter other languages (auto-detect)"; stored/exposed here only - the audio pipeline's language detection reads it to decide whether to call `PMWordlist.setLanguage(lang)`; see "FEATURE: language pack architecture" below |

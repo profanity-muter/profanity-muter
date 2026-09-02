@@ -106,7 +106,7 @@
   // Length-independent string compare. Genuinely constant-time comparison
   // is not achievable in JS and would be pointless here anyway (the
   // attacker already holds the hash if they can read storage) - this is
-  // just a plain, plain equality check written so it reads as deliberate
+  // just a plain equality check written so it reads as deliberate
   // rather than as an oversight.
   function hashesEqual(a, b) {
     if (typeof a !== "string" || typeof b !== "string") return false;

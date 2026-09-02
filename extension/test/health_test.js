@@ -139,8 +139,8 @@ test("re-evaluation is throttled", () => {
 });
 
 test("the throttle never delays a HEALTHY verdict", () => {
-  // Recovery has to be instant: a stale warning is exactly as dishonest as
-  // a missing one.
+  // Recovery has to be instant: a stale warning misleads the user exactly
+  // as much as a missing one.
   const v = evaluate({ lastEvalAt: NOW, windowsCompleted: 1 });
   assert.strictEqual(v.status, S.OK);
   assert.strictEqual(v.due, true);
@@ -232,7 +232,7 @@ test("a livestream is judged immediately, without waiting out the clock", () => 
 
 test("a livestream that somehow analyzed windows is still reported as unsupported", () => {
   // Best-effort transcription against a DVR buffer does happen; the
-  // guarantee still does not hold, so the honest label wins.
+  // guarantee still does not hold, so the accurate label wins.
   const v = evaluate({ isLive: true, windowsCompleted: 5 });
   assert.strictEqual(v.reason, R.LIVESTREAM);
 });

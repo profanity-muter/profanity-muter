@@ -13957,18 +13957,18 @@
           track: null,
           sink: null,
           trackReadyPromise: null,
-          // 0.1.23 — see PIPELINE_NOTES "0.1.23": a live session requested
+          // 0.1.23 - see PIPELINE_NOTES "0.1.23": a live session requested
           // sink.buffers(2.51,19.60) while this run's stream had actually only
           // been fed bytes through 5.06s, hanging forever (ReadableStreamSource
           // waits indefinitely for bytes that haven't arrived instead of
-          // erroring — it has no way to know "no more is coming yet" vs. "no
+          // erroring - it has no way to know "no more is coming yet" vs. "no
           // more will EVER come"). `fedEnd` is the ground truth for what THIS
           // run's stream has actually been fed (updated only from bytes really
-          // appended to it — see the pm-segment handler), decoupled from
+          // appended to it - see the pm-segment handler), decoupled from
           // s.bufferedRanges (session-level, can legitimately be ahead of any
           // one specific run). `streamClosed` is set once we've explicitly
           // closed this run's stream (end-of-stream flush, or superseded by a
-          // new run) — once true, the fed-data clamp in pickNextWindow is no
+          // new run) - once true, the fed-data clamp in pickNextWindow is no
           // longer needed, since a genuinely closed stream reports "no more
           // data" cleanly instead of hanging.
           fedEnd: null,
@@ -14083,65 +14083,65 @@
             covered: [],
             // merged [{start,end}] in ABSOLUTE video time, session-wide (spans run boundaries)
             allWords: [],
-            // every word ever emitted, absolute video time — for resync after a port drop
+            // every word ever emitted, absolute video time - for resync after a port drop
             emittedKeys: /* @__PURE__ */ new Set(),
             lastWindowGrams: null,
             // this run's previous window's word 4-grams, for the timeline-shift self-check (see transcribeWindow)
             lastWindowSpan: null,
             lastSegWallTime: Date.now(),
             lastBufferedGrowthWall: Date.now(),
-            // last time s.bufferedRanges actually grew — used by pickNextWindow's tiny-tail deferral to detect "run has gone quiet, this really is the end"
+            // last time s.bufferedRanges actually grew - used by pickNextWindow's tiny-tail deferral to detect "run has gone quiet, this really is the end"
             hadFirstWindow: false,
-            // cold-start detection in pickNextWindow — cleared per session, not per run (a seek into a new run is still "cold" relative to session-level coverage)
+            // cold-start detection in pickNextWindow - cleared per session, not per run (a seek into a new run is still "cold" relative to session-level coverage)
             disabled: false,
-            // pm_enabled=false (0.1.13) — see pm-disable/pm-enable handlers
+            // pm_enabled=false (0.1.13) - see pm-disable/pm-enable handlers
             bufferedRanges: [],
-            // merged [{start,end}] in ABSOLUTE video time — real interval set of what our hook has actually captured (see pickNextWindow); 0.1.15 deleted the old single-scalar bufferedEndS entirely
+            // merged [{start,end}] in ABSOLUTE video time - real interval set of what our hook has actually captured (see pickNextWindow); 0.1.15 deleted the old single-scalar bufferedEndS entirely
             windowAttempts: /* @__PURE__ */ new Map(),
-            // rounded-start-location key -> attempt count, for the stuck-location loop-breaker (0.1.14, made location-based in 0.1.20 — see transcribeWindow's loop-breaker section for why exact-span keying stopped catching this)
+            // rounded-start-location key -> attempt count, for the stuck-location loop-breaker (0.1.14, made location-based in 0.1.20 - see transcribeWindow's loop-breaker section for why exact-span keying stopped catching this)
             sinkErrorAttempts: /* @__PURE__ */ new Map(),
-            // "start.toFixed(2),end.toFixed(2)" -> consecutive THROWN sink.buffers() decode-error count, for DRM/undecodable detection (0.1.15) — a fast, confident signal, unchanged threshold
+            // "start.toFixed(2),end.toFixed(2)" -> consecutive THROWN sink.buffers() decode-error count, for DRM/undecodable detection (0.1.15) - a fast, confident signal, unchanged threshold
             hangAttempts: /* @__PURE__ */ new Map(),
-            // "start.toFixed(2),end.toFixed(2)" -> consecutive stage-TIMEOUT (no thrown error at all) count, separate map/threshold from sinkErrorAttempts (0.1.21, split out 0.1.23) — a hang is now a much rarer signal after the fed-data clamp + end-of-stream-flush fixes (see pickNextWindow/maybeCloseRunAtEndOfStream), so it gets a higher threshold before giving up rather than sharing the DRM-detection map's fast one
+            // "start.toFixed(2),end.toFixed(2)" -> consecutive stage-TIMEOUT (no thrown error at all) count, separate map/threshold from sinkErrorAttempts (0.1.21, split out 0.1.23) - a hang is now a much rarer signal after the fed-data clamp + end-of-stream-flush fixes (see pickNextWindow/maybeCloseRunAtEndOfStream), so it gets a higher threshold before giving up rather than sharing the DRM-detection map's fast one
             videoDurationS: null,
-            // 0.1.23 — video.duration, relayed from capture.js; used ONLY for end-of-stream run-close detection (maybeCloseRunAtEndOfStream), never for timestamp construction
+            // 0.1.23 - video.duration, relayed from capture.js; used ONLY for end-of-stream run-close detection (maybeCloseRunAtEndOfStream), never for timestamp construction
             unanalyzable: false,
-            // set true once DRM/undecodable content is detected — maybeProcess stops entirely, content.js releases safe-mode muting for this session
+            // set true once DRM/undecodable content is detected - maybeProcess stops entirely, content.js releases safe-mode muting for this session
             processing: false,
             pendingRerun: false,
             modelId: DEFAULT_MODEL,
-            // the user's configured ENGLISH model (tiny/base/small/multilingual) — unaffected by auto language-switching below; the model actually used for a given window is resolved fresh each time (see transcribeWindow's effectiveModelId)
-            // MULTILINGUAL SUPPORT (0.1.25) — see PIPELINE_NOTES "0.1.25".
+            // the user's configured ENGLISH model (tiny/base/small/multilingual) - unaffected by auto language-switching below; the model actually used for a given window is resolved fresh each time (see transcribeWindow's effectiveModelId)
+            // MULTILINGUAL SUPPORT (0.1.25) - see PIPELINE_NOTES "0.1.25".
             // `multilingualEnabled` mirrors pm_multilingual (default true, set via
-            // pm-config); when false, this session behaves exactly as before —
+            // pm-config); when false, this session behaves exactly as before -
             // always `modelId`, detection never runs. `languageState` starts
             // 'pending' (detection not yet attempted); the FIRST window of a
             // session (before any real coverage exists) triggers a cheap,
             // separate-model language-ID probe (never delaying that window's own
             // transcription, which still runs on `modelId` as normal) and moves
             // to 'detecting', then 'resolved' once the probe's result lands.
-            // Detection is pinned for the WHOLE video once resolved — a mid-video
+            // Detection is pinned for the WHOLE video once resolved - a mid-video
             // language switch is a known, accepted limitation (see PIPELINE_NOTES).
             multilingualEnabled: true,
             languageState: "pending",
             detectedLanguage: null,
-            // e.g. 'en', 'es' — null until languageState becomes 'resolved'
-            // Generation counter (0.1.18) — bumped on a page-load reset (dropped
-            // entirely, see dropSessionsForTab) or a seek (pm-seek, in place —
+            // e.g. 'en', 'es' - null until languageState becomes 'resolved'
+            // Generation counter (0.1.18) - bumped on a page-load reset (dropped
+            // entirely, see dropSessionsForTab) or a seek (pm-seek, in place -
             // coverage/state untouched). maybeProcess's loop and transcribeWindow
             // both capture their OWN generation at start and compare against the
             // session's CURRENT value before picking further windows / applying
-            // results — a stale in-flight WASM call (can't be aborted mid-call)
+            // results - a stale in-flight WASM call (can't be aborted mid-call)
             // still runs to completion, but its result is discarded rather than
             // applied once superseded, and no further old-generation windows get
             // queued behind it. See PIPELINE_NOTES "0.1.18" for the live bug this
             // fixes (a page refresh's stale session blocking the new one for 7s+).
             generation: 0,
             inFlightWindows: /* @__PURE__ */ new Set(),
-            // "start.toFixed(2),end.toFixed(2)" currently dispatched to transcribeWindow — prevents the picker from re-picking a span whose result hasn't landed yet
+            // "start.toFixed(2),end.toFixed(2)" currently dispatched to transcribeWindow - prevents the picker from re-picking a span whose result hasn't landed yet
             lastKnownRtf: null,
-            // rolling estimate (last computeMs-based rtf) used to size cold-start windows so they finish AHEAD of the playhead — see pickNextWindow
-            // [PM-FIRST-COVERAGE] breakdown milestones (0.1.18) — set once each,
+            // rolling estimate (last computeMs-based rtf) used to size cold-start windows so they finish AHEAD of the playhead - see pickNextWindow
+            // [PM-FIRST-COVERAGE] breakdown milestones (0.1.18) - set once each,
             // guarded by !firstCoverageLogged; logged as one line the moment the
             // first window's coverage is applied. See the call sites below.
             firstSegCapturedAt: null,
@@ -14285,7 +14285,7 @@
       function markUnanalyzable(s, reason) {
         if (s.unanalyzable) return;
         s.unanalyzable = true;
-        notifyTab(s, "[PM-UNANALYZABLE] " + reason + " \u2014 giving up on transcription for this video; releasing safe-mode protection rather than leaving it muted forever with no way to actually analyze it");
+        notifyTab(s, "[PM-UNANALYZABLE] " + reason + " - giving up on transcription for this video; releasing safe-mode protection rather than leaving it muted forever with no way to actually analyze it");
         chrome.runtime.sendMessage({ type: "pm-unanalyzable", tabId: s.tabId, videoId: s.videoId }).catch(() => {
         });
       }
@@ -14330,7 +14330,7 @@
           logNoWindowReason(
             s,
             fedClampActive ? "not-yet-fed-to-run" : "not-enough-buffered",
-            fedClampActive ? "session-level buffered range reaches " + bufferedHigh.toFixed(2) + " but this run has only actually been fed audio through " + (run.fedEnd != null ? run.fedEnd.toFixed(2) : "nothing yet") + ' \u2014 deferring rather than requesting a decode range beyond fed data (would hang forever, see PIPELINE_NOTES "0.1.23")' : "range [" + targetRange.start.toFixed(2) + "," + targetRange.end.toFixed(2) + ") at the playhead not far enough ahead yet (currentTimeS=" + ct.toFixed(2) + ")"
+            fedClampActive ? "session-level buffered range reaches " + bufferedHigh.toFixed(2) + " but this run has only actually been fed audio through " + (run.fedEnd != null ? run.fedEnd.toFixed(2) : "nothing yet") + ' - deferring rather than requesting a decode range beyond fed data (would hang forever, see PIPELINE_NOTES "0.1.23")' : "range [" + targetRange.start.toFixed(2) + "," + targetRange.end.toFixed(2) + ") at the playhead not far enough ahead yet (currentTimeS=" + ct.toFixed(2) + ")"
           );
           return null;
         }
@@ -14343,7 +14343,7 @@
           }
           start = Math.max(maxCoveredInRange, lowBound);
           if (start >= high) {
-            logNoWindowReason(s, "fully-covered", "fully covered (or in flight) up to the available buffer in range [" + lowBound.toFixed(2) + "," + high.toFixed(2) + ") \u2014 nothing new to transcribe right now");
+            logNoWindowReason(s, "fully-covered", "fully covered (or in flight) up to the available buffer in range [" + lowBound.toFixed(2) + "," + high.toFixed(2) + ") - nothing new to transcribe right now");
             return null;
           }
         }
@@ -14355,7 +14355,7 @@
             logNoWindowReason(
               s,
               "cold-behind-playhead",
-              "captured range [" + targetRange.start.toFixed(2) + "," + targetRange.end.toFixed(2) + ") is entirely behind the playhead (currentTimeS=" + ct.toFixed(2) + ") \u2014 deferring rather than wasting a cold window on already-passed audio"
+              "captured range [" + targetRange.start.toFixed(2) + "," + targetRange.end.toFixed(2) + ") is entirely behind the playhead (currentTimeS=" + ct.toFixed(2) + ") - deferring rather than wasting a cold window on already-passed audio"
             );
             return null;
           }
@@ -14378,7 +14378,7 @@
         if (size < MIN_TAIL_S && end >= high) {
           const stalledLongEnough = Date.now() - (s.lastBufferedGrowthWall || 0) > TAIL_STALL_MS;
           if (!stalledLongEnough) {
-            logNoWindowReason(s, "tiny-tail-deferred", "tail window only " + size.toFixed(2) + "s (< MIN_TAIL_S=" + MIN_TAIL_S + "s) \u2014 deferring until more audio batches in or the run appears finished");
+            logNoWindowReason(s, "tiny-tail-deferred", "tail window only " + size.toFixed(2) + "s (< MIN_TAIL_S=" + MIN_TAIL_S + "s) - deferring until more audio batches in or the run appears finished");
             return null;
           }
         }
@@ -14477,16 +14477,16 @@
         if (coverEnd < absEnd - COVERAGE_GAP_SLACK_S || coverStart > absStart + COVERAGE_GAP_SLACK_S) {
           notifyTab(
             s,
-            "[PM-COVERAGE-GAP] requested window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") but decoded audio only actually spans [" + coverStart.toFixed(2) + "," + coverEnd.toFixed(2) + ") \u2014 treating the shortfall as a real gap (will be revisited), not marking the full requested window covered"
+            "[PM-COVERAGE-GAP] requested window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") but decoded audio only actually spans [" + coverStart.toFixed(2) + "," + coverEnd.toFixed(2) + ") - treating the shortfall as a real gap (will be revisited), not marking the full requested window covered"
           );
         }
         const decodedDurationSum = wrapped.reduce((acc, wb) => acc + wb.buffer.duration, 0);
         const claimedSpan = wrapped.length ? wrapped[wrapped.length - 1].timestamp + wrapped[wrapped.length - 1].duration - wrapped[0].timestamp : 0;
         if (nativeRate !== 48e3) {
-          log("[PM-RESAMPLE-WARN] unexpected nativeRate=" + nativeRate + " (Opus/WebM is normally 48000Hz) \u2014 a wrong rate here would silently corrupt the WebAudio resample and shift every timestamp downstream");
+          log("[PM-RESAMPLE-WARN] unexpected nativeRate=" + nativeRate + " (Opus/WebM is normally 48000Hz) - a wrong rate here would silently corrupt the WebAudio resample and shift every timestamp downstream");
         }
         if (Math.abs(decodedDurationSum - claimedSpan) > 0.5) {
-          log("[PM-RESAMPLE-WARN] decoded buffer durations do not sum to their own claimed timestamp span (gap/overlap in decode) \u2014 decodedDurationSum=" + decodedDurationSum.toFixed(3) + " claimedSpan=" + claimedSpan.toFixed(3));
+          log("[PM-RESAMPLE-WARN] decoded buffer durations do not sum to their own claimed timestamp span (gap/overlap in decode) - decodedDurationSum=" + decodedDurationSum.toFixed(3) + " claimedSpan=" + claimedSpan.toFixed(3));
         }
         const float16k = await windowToFloat16k(wrapped, absStart, absEnd, nativeRate);
         const tDecoded = performance.now();
@@ -14536,7 +14536,7 @@
             // (transformers.js's ASR pipeline doesn't expose a direct
             // condition_on_previous_text toggle to set this explicitly). A SINGLE
             // window's own decode can still degenerate into a repetition loop on
-            // ambiguous/quiet audio (the "it's him" x40 case) — no_repeat_ngram_size
+            // ambiguous/quiet audio (the "it's him" x40 case) - no_repeat_ngram_size
             // is passed through in case the underlying generate() call honors it;
             // NOT verified against this exact transformers.js version, so the
             // guaranteed defense is collapseHallucinationLoops() below, not this.
@@ -14550,7 +14550,7 @@
         if (s.generation !== myGeneration) {
           notifyTab(
             s,
-            "[PM-STALE] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") result discarded: generation changed (" + myGeneration + " -> " + s.generation + ") while transcribing \u2014 decodeMs=" + Math.round(decodeMs) + " queueMs=" + Math.round(queueMs) + " computeMs=" + Math.round(computeMs)
+            "[PM-STALE] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") result discarded: generation changed (" + myGeneration + " -> " + s.generation + ") while transcribing - decodeMs=" + Math.round(decodeMs) + " queueMs=" + Math.round(queueMs) + " computeMs=" + Math.round(computeMs)
           );
           return false;
         }
@@ -14593,7 +14593,7 @@
         if (hallucination) {
           notifyTab(
             s,
-            "[PM-HALLUCINATION] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ') repeated "' + hallucination.phrase + '" ' + hallucination.repeats + "x consecutively \u2014 kept the first couple, dropped the rest (Whisper decoder degeneration, not real speech)"
+            "[PM-HALLUCINATION] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ') repeated "' + hallucination.phrase + '" ' + hallucination.repeats + "x consecutively - kept the first couple, dropped the rest (Whisper decoder degeneration, not real speech)"
           );
         }
         const windowWordTexts = sanitizedTokens.map((t) => t.text);
@@ -14606,7 +14606,7 @@
           if (similarity > 0.6) {
             notifyTab(
               s,
-              "[PM-TIMELINE-ALARM] consecutive windows are " + Math.round(similarity * 100) + "% overlapping by 4-gram (prevWindow=[" + s.lastWindowSpan + "] thisWindow=[" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ")) \u2014 almost certainly the SAME audio decoded twice under a shifted timeline, not real repeated dialogue"
+              "[PM-TIMELINE-ALARM] consecutive windows are " + Math.round(similarity * 100) + "% overlapping by 4-gram (prevWindow=[" + s.lastWindowSpan + "] thisWindow=[" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ")) - almost certainly the SAME audio decoded twice under a shifted timeline, not real repeated dialogue"
             );
           }
         }
@@ -14644,7 +14644,7 @@
             tabId: s.tabId,
             videoId: s.videoId,
             words,
-            // Send the ACTUALLY-decoded span, not the requested [absStart,absEnd) —
+            // Send the ACTUALLY-decoded span, not the requested [absStart,absEnd) -
             // content.js's own coveredIntervals (which gates safe-mode muting)
             // is built directly from these; reporting the full requested window
             // regardless of what was really decoded is exactly the "silent
@@ -14659,7 +14659,7 @@
             computeMs,
             lagMs,
             // 0.1.25: current detected language (null until resolved, 'en' or a
-            // real code thereafter — pinned per video, see languageState above)
+            // real code thereafter - pinned per video, see languageState above)
             // and the model THIS window actually ran on, so content.js/the pill
             // always has the latest without needing a separate message to have
             // landed first (the dedicated 'pm-language' push, sent once right
@@ -14703,7 +14703,7 @@
           if (attempts >= WINDOW_LOOP_THRESHOLD) {
             notifyTab(
               s,
-              "[PM-WINDOW-LOOP] location near " + absStart.toFixed(2) + " attempted " + attempts + "x (latest span [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ")) without ever registering as covered (likely a decoded-timestamp mismatch at this exact position) \u2014 force-marking covered to break the loop"
+              "[PM-WINDOW-LOOP] location near " + absStart.toFixed(2) + " attempted " + attempts + "x (latest span [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ")) without ever registering as covered (likely a decoded-timestamp mismatch at this exact position) - force-marking covered to break the loop"
             );
             mergeRangeInto(s.covered, absStart, anchorEnd);
             s.windowAttempts.delete(locKey);
@@ -14752,7 +14752,7 @@
         try {
           for (; ; ) {
             exitGate = "unknown-gate";
-            exitDetail = "(a loop-exit path did not name itself \u2014 see maybeProcess source)";
+            exitDetail = "(a loop-exit path did not name itself - see maybeProcess source)";
             if (s.disabled) {
               exitGate = "disabled";
               exitDetail = "pm_enabled=false";
@@ -14760,7 +14760,7 @@
             }
             if (s.unanalyzable) {
               exitGate = "unanalyzable";
-              exitDetail = "DRM/undecodable content \u2014 transcription given up for this session";
+              exitDetail = "DRM/undecodable content - transcription given up for this session";
               break;
             }
             if (s.generation !== loopGeneration) {
@@ -14771,7 +14771,7 @@
             }
             const run = s.currentRun;
             if (!run) {
-              logNoWindowReason(s, "no-run", "no active byte run yet for this session (no init segment captured) \u2014 nothing to transcribe until one arrives");
+              logNoWindowReason(s, "no-run", "no active byte run yet for this session (no init segment captured) - nothing to transcribe until one arrives");
               exitGate = "no-run";
               exitDetail = "no active byte run yet for this session";
               break;
@@ -14823,7 +14823,7 @@
         closeRunStream(run);
         notifyTab(
           s,
-          "[PM-EOF-FLUSH] run stream closed (fed through " + run.fedEnd.toFixed(2) + "s, duration=" + s.videoDurationS.toFixed(2) + "s, quiet " + Math.round((Date.now() - s.lastBufferedGrowthWall) / 1e3) + "s) \u2014 letting mediabunny flush trailing samples for the tail window"
+          "[PM-EOF-FLUSH] run stream closed (fed through " + run.fedEnd.toFixed(2) + "s, duration=" + s.videoDurationS.toFixed(2) + "s, quiet " + Math.round((Date.now() - s.lastBufferedGrowthWall) / 1e3) + "s) - letting mediabunny flush trailing samples for the tail window"
         );
         maybeProcess(s);
       }
@@ -14886,7 +14886,7 @@
             return;
           }
           if (s.processing) {
-            log("[PM-STALL] restart requested for", key, "but a transcription attempt is genuinely in progress (heartbeating) \u2014 ignoring, not killing live work");
+            log("[PM-STALL] restart requested for", key, "but a transcription attempt is genuinely in progress (heartbeating) - ignoring, not killing live work");
             return;
           }
           notifyTab(s, "[PM-STALL] restart requested for " + key + " - no attempt in progress, forcing maybeProcess re-run");

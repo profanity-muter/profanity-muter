@@ -11,19 +11,6 @@
     <button id="pm-open-onboarding" class="pm-link-button" type="button">Setup guide</button>
   </header>
 
-  <!-- Slim, persistent until acknowledged. Not a modal and not dismissable:
-       the acknowledgment is the one thing we want every user to have
-       actually seen, so it stays until they do it - but it takes one line
-       and blocks nothing. -->
-  <button
-    id="pm-finish-setup"
-    class="pm-banner pm-hidden"
-    type="button"
-    aria-hidden="true"
-  >
-    Finish setup - 1 minute
-  </button>
-
   <!-- Health warning (0.1.32). Shown when the content script on the ACTIVE
        tab reports that nothing is being analyzed on the video playing
        there. Sits above everything, including the setup banner: "your
@@ -36,6 +23,19 @@
     <p class="pm-health-detail" id="pm-health-detail"></p>
     <button id="pm-health-report" class="pm-link-button" type="button">Report a problem</button>
   </section>
+
+  <!-- Slim, persistent until acknowledged. Not a modal and not dismissable:
+       the acknowledgment is the one thing we want every user to have
+       actually seen, so it stays until they do it - but it takes one line
+       and blocks nothing. -->
+  <button
+    id="pm-finish-setup"
+    class="pm-banner pm-hidden"
+    type="button"
+    aria-hidden="true"
+  >
+    Finish setup - 1 minute
+  </button>
 
   <!-- Review prompt. Rendered only when PMMoments.reviewPromptEligibility
        says so; see shared/moments.js for the Chrome Web Store policy rules

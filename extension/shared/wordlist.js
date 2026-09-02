@@ -111,6 +111,16 @@
 //                                of the PMWordlist.settings contract:
 //                                nothing in the matching path or the
 //                                content scripts consults any of them.
+//                                Note there is likewise NO storage key for
+//                                the 0.1.32 health monitor: health is
+//                                per-tab, per-video and transient, so the
+//                                popup asks the active tab's content
+//                                script directly rather than reading a
+//                                value that a second tab could clobber or
+//                                that could outlive what it describes.
+//                                The durable record is the `health` array
+//                                in each pm_devlog entry. See
+//                                shared/health.js and CENSOR_NOTES.md.
 //                                Note there is NO storage key for problem
 //                                reports (0.1.31's "Report a problem"):
 //                                a report is assembled in memory, put on

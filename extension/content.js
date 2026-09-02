@@ -1284,9 +1284,21 @@
     session.playbackMs += Math.min(deltaMs, HEALTH_SAMPLE_CLAMP_MS);
   }
 
+  // Called from the rAF tick, so it must not allocate 60 times a second.
+  // PMHealth.evaluate throttles the VERDICT, but it still builds an input
+  // object and a result object on every call, and this is the hottest loop
+  // in the extension. Gate the call itself to ~1Hz. One second is far
+  // inside human reaction time for a warning that only becomes relevant
+  // after 20 seconds of playback, and recovery stays effectively instant.
+  var HEALTH_CALL_INTERVAL_MS = 1000;
+  var lastHealthCallWall = 0;
+
   function evaluateHealth(video) {
     var api = healthApi();
     if (!api || !session) return;
+    var nowWall = Date.now();
+    if (nowWall - lastHealthCallWall < HEALTH_CALL_INTERVAL_MS) return;
+    lastHealthCallWall = nowWall;
     var verdict = api.evaluate({
       now: Date.now(),
       playbackMs: session.playbackMs,

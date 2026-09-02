@@ -44,9 +44,13 @@ function check(name, cond, extra) {
   else { fail++; console.error('FAIL:', name, extra === undefined ? '' : JSON.stringify(extra)); }
 }
 
-const stub = (initialSync, initialLocal) => `
+const stub = (initialSync, initialLocal, health) => `
   window.__pmSync = ${JSON.stringify(initialSync)};
   window.__pmLocal = ${JSON.stringify(initialLocal || {})};
+  // Injected reply for the popup's 'pm-health-query' to the active tab.
+  // null means "no content script answered", i.e. not a YouTube tab.
+  window.__pmHealth = ${JSON.stringify(health === undefined ? null : health)};
+  window.__pmHealthQueries = 0;
   window.__pmWrites = [];
   function area(bag, label) {
     return {
@@ -75,7 +79,24 @@ const stub = (initialSync, initialLocal) => `
       getManifest: () => ({ version: '${MANIFEST_VERSION}' }),
       getURL: (p) => 'chrome-extension://stub/' + p
     },
-    tabs: { create: (opts) => { window.__pmTabs.push(opts.url); } },
+    tabs: {
+      create: (opts) => { window.__pmTabs.push(opts.url); },
+      query: (q, cb) => { setTimeout(() => cb([{ id: 7 }]), 0); },
+      sendMessage: (tabId, msg, cb) => {
+        window.__pmHealthQueries++;
+        setTimeout(() => {
+          if (window.__pmHealth === null) {
+            // Mirror Chrome: no receiver sets lastError and calls back
+            // with undefined.
+            window.chrome.runtime.lastError = { message: 'Could not establish connection.' };
+            cb(undefined);
+            window.chrome.runtime.lastError = undefined;
+            return;
+          }
+          cb(window.__pmHealth);
+        }, 0);
+      }
+    },
     storage: {
       sync: area(window.__pmSync, 'sync'),
       local: area(window.__pmLocal, 'local'),
@@ -99,12 +120,12 @@ const stub = (initialSync, initialLocal) => `
   HTMLAnchorElement.prototype.click = function () { window.__pmMailto = this.href; };
 `;
 
-async function open(browser, sync, local) {
+async function open(browser, sync, local, health) {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
-  await page.addInitScript(stub(sync, local));
+  await page.addInitScript(stub(sync, local, health));
   await page.goto(URL);
   await page.waitForTimeout(150);
   return { page, errors };
@@ -130,6 +151,9 @@ const snapshot = () => ({
   shareHidden: document.getElementById('pm-share-row').classList.contains('pm-hidden'),
   shareDisabled: document.getElementById('pm-share').disabled,
   setupGuideDisabled: document.getElementById('pm-open-onboarding').disabled,
+  healthHidden: document.getElementById('pm-health').classList.contains('pm-hidden'),
+  healthMessage: document.getElementById('pm-health-message').textContent.trim(),
+  healthDetail: document.getElementById('pm-health-detail').textContent.trim(),
   reportDisabled: document.getElementById('pm-report-problem').disabled,
   reportHidden: !document.getElementById('pm-report-problem').offsetParent &&
                 getComputedStyle(document.getElementById('pm-report-problem')).display === 'none'
@@ -775,6 +799,98 @@ const devlogFixture = {
   await page.waitForTimeout(60);
   const tabs = await page.evaluate(() => window.__pmTabs);
   check('onboarding: final screen links to the report page', tabs.length === 1 && /report\/report\.html$/.test(tabs[0]), tabs);
+  await page.close();
+}
+
+// ===== 0.1.32: health warning banner =====
+//
+// The popup asks the active tab's content script how it is doing, so the
+// harness injects that reply (third argument to open()). null means no
+// content script answered, which is the not-a-YouTube-tab case.
+
+// ---- 26. no answer from the tab: show nothing ----
+{
+  const { page, errors } = await open(browser, { pm_ackNotPerfect: ACK }, {}, null);
+  const s = await page.evaluate(snapshot);
+  check('health: no page errors when no tab answers', errors.length === 0, errors);
+  check('health: banner hidden when no content script answers', s.healthHidden === true);
+  const queried = await page.evaluate(() => window.__pmHealthQueries);
+  check('health: the popup did ask', queried === 1, queried);
+  await page.close();
+}
+
+// ---- 27. healthy tab: still nothing ----
+{
+  const { page } = await open(browser, { pm_ackNotPerfect: ACK }, {}, { status: 'ok', reason: null, message: '', detail: '' });
+  const s = await page.evaluate(snapshot);
+  check('health: banner hidden when the pipeline is ok', s.healthHidden === true);
+  await page.close();
+}
+
+// ---- 28. unhealthy tab: the warning appears ----
+{
+  const unhealthy = {
+    status: 'unhealthy',
+    reason: 'no-audio-intercepted',
+    message: "Profanity Muter isn't working on this video. Audio is NOT being filtered.",
+    detail: 'No audio from this video reached the extension.'
+  };
+  const { page, errors } = await open(browser, { pm_ackNotPerfect: ACK }, {}, unhealthy);
+  const s = await page.evaluate(snapshot);
+  check('health: no page errors', errors.length === 0, errors);
+  check('health: banner shown', s.healthHidden === false);
+  check('health: states the consequence, not just the cause', /Audio is NOT being filtered/.test(s.healthMessage), s.healthMessage);
+  check('health: shows the cause underneath', s.healthDetail === unhealthy.detail, s.healthDetail);
+  const noEmoji = await page.evaluate(() => {
+    const t = document.getElementById('pm-health').innerText;
+    return !/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/u.test(t);
+  });
+  check('health: no emoji in the warning', noEmoji === true);
+
+  await page.click('#pm-health-report');
+  await page.waitForTimeout(50);
+  const tabs = await page.evaluate(() => window.__pmTabs);
+  check('health: its Report a problem link opens the report page', tabs.length === 1 && /report\/report\.html$/.test(tabs[0]), tabs);
+  await page.close();
+}
+
+// ---- 29. the warning outranks the setup banner, and survives the lock ----
+{
+  const unhealthy = {
+    status: 'unhealthy',
+    reason: 'model-load-failed',
+    message: "Profanity Muter isn't working on this video. Audio is NOT being filtered.",
+    detail: 'The speech model could not be loaded.'
+  };
+  // Unacknowledged (so the setup banner is also up) AND locked.
+  const { page: p0 } = await open(browser, {});
+  const record = await p0.evaluate(() => window.PMLock.create('hunter2'));
+  await p0.close();
+
+  const { page } = await open(browser, { pm_lock: record }, {}, unhealthy);
+  const s = await page.evaluate(snapshot);
+  check('health: shown alongside the setup banner', s.healthHidden === false && s.bannerHidden === false);
+  check('health: shown while settings are locked', s.healthHidden === false && s.saveDisabled === true);
+  const order = await page.evaluate(() => {
+    const h = document.getElementById('pm-health');
+    const b = document.getElementById('pm-finish-setup');
+    return (h.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  });
+  check('health: sits above the setup banner', order === true);
+  await page.close();
+}
+
+// ---- 30. an unsupported verdict is NOT the alarming banner ----
+{
+  const live = {
+    status: 'unsupported',
+    reason: 'livestream-unsupported',
+    message: "Livestreams aren't supported. Audio is not filtered on this video.",
+    detail: "Live video can't be analyzed ahead of playback."
+  };
+  const { page } = await open(browser, { pm_ackNotPerfect: ACK }, {}, live);
+  const s = await page.evaluate(snapshot);
+  check('health: a livestream does not raise the broken-filter banner', s.healthHidden === true);
   await page.close();
 }
 

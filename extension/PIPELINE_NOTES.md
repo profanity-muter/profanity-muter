@@ -3014,3 +3014,41 @@ side of the codebase:
 
 Nothing in the audio path, the offscreen document, or the word-matching
 path changed.
+
+## 0.1.32: health monitor (graceful failure)
+
+The pipeline's silent-failure mode is now surfaced. Full reasoning and
+the reason-code table are in CENSOR_NOTES.md "Graceful failure (health
+monitor)"; the pipeline-side facts:
+
+- **Three inputs, all of which this file already had.** `windowsCompleted`
+  increments in `addWords` (a window coming back at all is THE evidence
+  the pipeline works end to end, counted even when it matched nothing),
+  `audioSegments` increments at the capture relay (so it means exactly
+  "audio reached the extension", which is what `no-audio-intercepted` is
+  about), and fatal causes are classified out of the existing offscreen
+  `diag` relay by `PMHealth.classifyDiag`. The fourth input, accumulated
+  playback, is measured in `samplePlayback`.
+- **Playback time, not wall time.** A video paused for ten minutes has
+  had no chance to be analyzed, and judging it on wall time is the most
+  obvious false alarm available. The per-sample clamp
+  (`HEALTH_SAMPLE_CLAMP_MS`) matters for the same reason the backgrounded
+  -tab backstop exists: rAF stops entirely while the tab is hidden, so an
+  unclamped delta would book an hour of "playback" in one sample on
+  return, crossing the threshold on evidence never collected.
+- **Evaluation runs before the enabled-gate** in `runTickLogic` so the
+  clock and the verdict stay current independently of the mute/pause
+  decisions; `evaluateHealth` throttles itself, so the per-frame cost is
+  one comparison until a verdict is due. While disabled, the playback
+  sample baseline is reset so re-enabling does not instantly trip the
+  threshold on time the pipeline never had.
+- **The pill's warning state ignores `pm_showStatus`** (but not
+  `pm_enabled`). `setStatusPillActive` now takes a tone and rebuilds the
+  element when it changes, since a tone change needs re-styling and not
+  just a new label.
+- **`showPlayerNotice(text, kind)`** was factored out of the old
+  unanalyzable-only notice so the livestream notice is the same code
+  rather than a second near-copy.
+- **A `chrome.runtime.onMessage` listener** answers the popup's
+  `pm-health-query`. It is the first such listener in this file; it
+  responds synchronously and returns undefined.
