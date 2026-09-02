@@ -247,28 +247,55 @@ chrome.tabs.onRemoved.addListener(function (tabId) {
 
 refreshReviewNudge();
 
-function openExtensionUi(plan, index) {
-  if (!plan || index >= plan.length) return;
+// 0.1.37: every rung reports its outcome back to the tab that asked, so a
+// field log distinguishes "the user opened settings three times" from "the
+// button did nothing three times". The first field log could not tell those
+// apart and cost a round of speculation; the ladder itself turned out to be
+// working fine.
+function reportUiOutcome(tabId, outcome, detail) {
+  if (tabId == null) return;
+  var port = portsByTabId.get(tabId);
+  if (!port) return;
+  try {
+    port.postMessage({ type: 'open-ui-outcome', outcome: outcome, detail: detail || '' });
+  } catch (e) {}
+}
+
+function openExtensionUi(plan, index, tabId) {
+  if (!plan || index >= plan.length) {
+    reportUiOutcome(tabId, 'exhausted', 'no rung could open the UI');
+    return;
+  }
   var step = plan[index];
-  var next = function () { openExtensionUi(plan, index + 1); };
+  var next = function (why) {
+    reportUiOutcome(tabId, 'rung-failed', step + ': ' + (why || 'unavailable'));
+    openExtensionUi(plan, index + 1, tabId);
+  };
 
   if (step === 'action-popup') {
     try {
       var p = chrome.action.openPopup();
-      if (p && typeof p.then === 'function') p.then(function () {}, next);
-      else next(); // no promise returned: assume unsupported and fall through
+      if (p && typeof p.then === 'function') {
+        p.then(
+          function () { reportUiOutcome(tabId, 'opened-popup', 'chrome.action.openPopup'); },
+          function (e) { next(String(e && e.message ? e.message : e)); }
+        );
+      } else {
+        next('no promise returned (unsupported build)');
+      }
     } catch (e) {
-      next();
+      next(String(e && e.message ? e.message : e));
     }
     return;
   }
   var url = step === 'popup-tab' ? 'popup/popup.html' : 'onboarding/onboarding.html';
   try {
     chrome.tabs.create({ url: chrome.runtime.getURL(url) }, function () {
-      if (chrome.runtime.lastError) next();
+      if (chrome.runtime.lastError) next(chrome.runtime.lastError.message);
+      else reportUiOutcome(tabId, 'opened-tab', url);
     });
   } catch (e) {
-    next();
+    next(String(e && e.message ? e.message : e));
   }
 }
 
@@ -414,7 +441,7 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     var plan = typeof PMPill !== 'undefined' && PMPill.openUiPlan
       ? PMPill.openUiPlan({})
       : ['action-popup', 'popup-tab', 'onboarding-tab'];
-    openExtensionUi(plan, 0);
+    openExtensionUi(plan, 0, sender && sender.tab ? sender.tab.id : null);
     return;
   }
   if (msg.type === 'pm-milestone-check') {
@@ -482,6 +509,26 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
       } catch (e) {
         /* stale port; next heartbeat or coverage growth will resolve it */
       }
+    }
+  } else if (msg.type === 'pm-language-decision') {
+    // 0.1.37: every language decision, including the ones that declined to
+    // act, relayed to the tab so it lands in the devlog. See
+    // shared/language.js for why a wrong switch is a protection failure
+    // and not just a slower model.
+    var langPort = portsByTabId.get(msg.tabId);
+    if (langPort) {
+      try {
+        langPort.postMessage({
+          type: 'language-decision',
+          videoId: msg.videoId,
+          observed: msg.observed,
+          score: msg.score,
+          action: msg.action,
+          reason: msg.reason,
+          active: msg.active,
+          model: msg.model
+        });
+      } catch (e) {}
     }
   } else if (msg.type === 'pm-diag') {
     // Tab-visible diagnostics: anything offscreen determined could block

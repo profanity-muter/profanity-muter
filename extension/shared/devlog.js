@@ -216,6 +216,12 @@
       // small records, and it is the single most useful thing in the file
       // when the question is "was the extension even working".
       health: [],
+      // 0.1.37: language decisions, including the ones that declined to
+      // act. A wrong switch swaps the active word list to another
+      // language's pack and stops English profanity matching entirely, so
+      // "why did it think this was Korean" has to be answerable from a
+      // pasted log rather than reproduced.
+      language: [],
       truncated: false
     };
   }
@@ -621,6 +627,25 @@
     markDirty();
   }
 
+  function logLanguage(entry) {
+    if (!current || !entry) return;
+    pushCapped(
+      current.language,
+      {
+        t: mediaTime(),
+        wall: now(),
+        observed: entry.observed == null ? null : String(entry.observed),
+        score: typeof entry.score === "number" ? entry.score : null,
+        action: String(entry.action || "unknown"),
+        reason: entry.reason == null ? null : String(entry.reason),
+        active: entry.active == null ? null : String(entry.active),
+        model: entry.model == null ? null : String(entry.model)
+      },
+      MAX_HEALTH
+    );
+    markDirty();
+  }
+
   function logError(text) {
     var ev = { t: mediaTime(), wall: now(), text: String(text) };
     if (!current) {
@@ -679,6 +704,7 @@
     logCaptionCensor: logCaptionCensor,
     logError: logError,
     logHealth: logHealth,
+    logLanguage: logLanguage,
     setTimeSource: setTimeSource,
     flushNow: flushNow,
     // exposed for tests/inspection; not part of the contract consumers use

@@ -199,7 +199,10 @@ test("the badge clears YouTube's hover title band", () => {
   // fades in on mouse-over, which is where it was originally put and why
   // it had to move.
   assert.ok(P.BADGE_TOP_PX >= 40, "must clear the hover chrome: " + P.BADGE_TOP_PX);
-  assert.strictEqual(P.BADGE_LEFT_PX, 8);
+  // 0.1.37 moved this from 8 to 12: with the badge now riding up to the
+  // corner when the player is idle, a slightly larger inset keeps it from
+  // looking wedged against the frame.
+  assert.strictEqual(P.BADGE_LEFT_PX, 12);
 });
 
 test("the dev overlay is anchored below the badge, never overlapping it", () => {
@@ -265,6 +268,60 @@ test("content.js injects exactly one interactive on-player surface", () => {
     -1,
     "the notice banner should be folded into the badge"
   );
+});
+
+// ---- no language suffix, ever (0.1.37) -----------------------------------
+
+test("no presented label ever carries a language code", () => {
+  // The badge read "Protected · ko" to a user watching an English video,
+  // who had no idea what "ko" meant. A two-letter code is dev information;
+  // the badge is the one surface a non-technical user reads.
+  ["protected", "off", "shorts", "live", "needs-play"]
+    .concat(P.PROCESSING_KINDS)
+    .forEach(function (kind) {
+      const out = P.present({ kind: kind }, { promise: { issuedWall: 0, etaS: 5 }, now: 1000 });
+      assert.ok(out, kind);
+      assert.strictEqual(/ · [a-z]{2}$/.test(out.label), false, kind + ": " + out.label);
+    });
+});
+
+test("content.js no longer appends a language suffix on any path", () => {
+  // There were two label paths (the collapsed one and a legacy fallback)
+  // and both did it.
+  const src = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
+  assert.strictEqual(
+    src.indexOf("' · ' + session.language"),
+    -1,
+    "the language suffix must not be appended to any label"
+  );
+});
+
+// ---- adaptive badge position (0.1.37) ------------------------------------
+
+test("the badge has two resting places, corner and below-title", () => {
+  assert.ok(P.BADGE_TOP_IDLE_PX < P.BADGE_TOP_PX, "idle sits higher than chrome-visible");
+  assert.ok(P.BADGE_TOP_IDLE_PX >= 8, "still inside the player, not flush to the edge");
+  assert.ok(P.BADGE_TOP_PX >= 40, "must clear the hover title band");
+});
+
+test("position is driven by the player's own idle class, not polling", () => {
+  // ytp-autohide is what YouTube already publishes for chrome-hidden, so
+  // the rule tracks the real state instead of our guess at it, and needs
+  // no observer or timer.
+  const src = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
+  assert.ok(src.indexOf(".ytp-autohide .pm-badge") !== -1, "idle rule missing");
+  assert.ok(src.indexOf("transition:top") !== -1, "must glide rather than jump");
+  assert.ok(src.indexOf("pm-badge") !== -1);
+});
+
+test("the DEFAULT position is the safe one", () => {
+  // If ytp-autohide ever stops existing the rule simply never matches, so
+  // the default has to be the offset that clears the title band rather
+  // than the corner that would sit under it.
+  const src = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
+  const defaultRule = src.indexOf(".pm-badge{top:' + chromeTop");
+  const idleRule = src.indexOf(".ytp-autohide .pm-badge{top:' + idleTop");
+  assert.ok(defaultRule > 0 && idleRule > defaultRule, "idle rule must override the safe default");
 });
 
 // ---- summary -------------------------------------------------------------

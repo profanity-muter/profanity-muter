@@ -1813,10 +1813,13 @@
     // modes.
     if (presented) {
       {
+        // 0.1.37: NO language suffix. The badge showed "Protected · ko" to
+        // a user watching an English video, who had no idea what "ko"
+        // meant. A two-letter code is dev information, and the badge is the
+        // one surface a non-technical user reads: countdown, Protected,
+        // warnings, nothing else. The language still appears in the
+        // [PM-LANG] traces and the devlog, where it belongs.
         var presentedLabel = presented.label;
-        if (status.kind !== 'off' && session && session.language && session.language !== 'en') {
-          presentedLabel += ' · ' + session.language;
-        }
         var mutedCount = session ? session.mutedCount || 0 : 0;
         if (mutedCount > 0) presentedLabel += ' · ' + mutedCount + ' muted';
         setPillContent(presentedLabel);
@@ -1833,14 +1836,10 @@
     else if (status.kind === 'analyzing-slow') label = 'Analyzing - taking longer than expected';
     else if (status.kind === 'needs-play') label = 'Press play to load audio';
     else label = 'Analyzing…';
-    // Multilingual support (0.1.25): show the detected language once known,
-    // whenever it's not English - e.g. "Protected · es" (with the logo mark prefixed). Omitted for
-    // English (the default/common case needs no extra label) and for the
-    // 'off' state (transcription has been given up on entirely; language
-    // isn't meaningful there).
-    if (status.kind !== 'off' && session && session.language && session.language !== 'en') {
-      label += ' · ' + session.language;
-    }
+    // 0.1.37: the language suffix is gone from this legacy fallback path
+    // too, for the same reason it left the main one. A user shown
+    // "Protected · ko" on an English video learns nothing from the suffix
+    // and mistrusts the word in front of it.
     var count = session ? session.mutedCount || 0 : 0;
     if (count > 0) label += ' · ' + count + ' muted';
     setPillContent(label);
@@ -1871,6 +1870,37 @@
   }
   var statusPillTone = null;
 
+  // 0.1.37: the adaptive position, as a stylesheet rather than JS.
+  //
+  // The badge's resting place depends on whether the player is showing its
+  // chrome. YouTube already publishes that as `ytp-autohide` on the player
+  // element, so a descendant rule tracks the real state with no polling and
+  // no observer, and a transition makes it glide rather than jump.
+  //
+  // The inline style still sets `top`, so these rules carry !important:
+  // that is the price of the badge being built in JS, and it is worth
+  // paying to keep the position logic declarative. The DEFAULT is the
+  // chrome-visible offset, so if `ytp-autohide` ever disappears the rule
+  // simply never matches and the badge stays where it is safe rather than
+  // flapping or sitting under the title text.
+  var badgeStyleEl = null;
+  function ensureBadgeStyle() {
+    if (badgeStyleEl && badgeStyleEl.isConnected) return;
+    var api = globalThis.PMPill;
+    var chromeTop = (api && api.BADGE_TOP_PX) || 56;
+    var idleTop = (api && api.BADGE_TOP_IDLE_PX) || 12;
+    try {
+      badgeStyleEl = document.createElement('style');
+      badgeStyleEl.textContent =
+        '.pm-badge{top:' + chromeTop + 'px !important;' +
+        'transition:top 180ms cubic-bezier(0.4,0,0.2,1) !important;}' +
+        '.ytp-autohide .pm-badge{top:' + idleTop + 'px !important;}';
+      (document.head || document.documentElement).appendChild(badgeStyleEl);
+    } catch (e) {
+      badgeStyleEl = null; // inline top remains, which is the safe offset
+    }
+  }
+
   // Clicking the badge opens the extension UI. The service worker owns the
   // attempt ladder (see background.js): chrome.action.openPopup() needs a
   // user gesture and has shipped and unshipped across Chrome versions, so
@@ -1900,9 +1930,10 @@
       if (!container) return;
       statusPillEl = document.createElement('div');
       statusPillTone = tone;
+      ensureBadgeStyle();
       var pillGeom = globalThis.PMPill;
       var topPx = pillGeom ? pillGeom.BADGE_TOP_PX : 56;
-      var leftPx = pillGeom ? pillGeom.BADGE_LEFT_PX : 8;
+      var leftPx = pillGeom ? pillGeom.BADGE_LEFT_PX : 12;
       // 0.1.36 addendum: ONE badge, top-left, clickable.
       //
       // The vertical offset clears YouTube's hover chrome. The player fades
@@ -1927,6 +1958,7 @@
         'padding:3px 8px;' +
         'border-radius:3px;pointer-events:auto;cursor:pointer;white-space:nowrap;' +
         'user-select:none;transition:filter 120ms ease;';
+      statusPillEl.className = 'pm-badge';
       statusPillEl.setAttribute('role', 'button');
       statusPillEl.setAttribute('tabindex', '0');
       statusPillEl.setAttribute('aria-label', 'Profanity Muter - open settings');
@@ -2720,6 +2752,26 @@
         // source (applyDetectedLanguage is idempotent past the first
         // real change either way).
         applyDetectedLanguage(msg.videoId, msg.language);
+      } else if (msg.type === 'language-decision') {
+        // 0.1.37: recorded whatever the outcome, including holds.
+        TLOG(
+          TAG,
+          '[PM-LANG] observed=' + (msg.observed || 'none') +
+            (msg.score != null ? ' score=' + msg.score.toFixed(2) : '') +
+            ' action=' + msg.action + ' (' + msg.reason + ') active=' + msg.active
+        );
+        devlog('logLanguage', {
+          observed: msg.observed,
+          score: msg.score,
+          action: msg.action,
+          reason: msg.reason,
+          active: msg.active,
+          model: msg.model
+        });
+      } else if (msg.type === 'open-ui-outcome') {
+        // 0.1.37: the badge click ladder reporting what actually happened,
+        // so a field log distinguishes deliberate use from a dead button.
+        TLOG(TAG, '[PM-BADGE] outcome=' + msg.outcome + (msg.detail ? ' (' + msg.detail + ')' : ''));
       } else if (msg.type === 'heartbeat') {
         if (session && session.videoId === msg.videoId) session.lastHeartbeatWall = Date.now();
       } else if (msg.type === 'diag') {

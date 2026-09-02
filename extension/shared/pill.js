@@ -138,8 +138,22 @@
   // a title gradient across the top on mouse-over, and a badge at top:8px
   // sits underneath that text. 56px puts it below the band while staying in
   // the corner people look at first.
+  // Two resting places, not one (0.1.37). 56px clears the title gradient
+  // the player fades in on hover, and is correct WHILE that chrome is
+  // showing. With the chrome hidden there is no title band to clear, and a
+  // badge sitting 56px down floats in the middle of the picture looking
+  // detached from everything. So it rides up to the corner when the player
+  // is idle and glides back down when the chrome appears.
+  //
+  // YouTube marks the idle state with `ytp-autohide` on the player element,
+  // so this is a pure CSS descendant rule with a transition: no polling, no
+  // observers, and it tracks the real player state rather than our guess at
+  // it. If that class ever stops existing the rule simply never matches and
+  // the badge stays at the safe 56px, which is why the default is the
+  // chrome-visible offset rather than the corner.
   var BADGE_TOP_PX = 56;
-  var BADGE_LEFT_PX = 8;
+  var BADGE_TOP_IDLE_PX = 12;
+  var BADGE_LEFT_PX = 12;
   // The dev overlay is anchored directly beneath, so the two can never
   // overlap regardless of badge width.
   var DEBUG_OVERLAY_TOP_PX = 86;
@@ -174,6 +188,7 @@
 
   var PMPillCore = {
     BADGE_TOP_PX: BADGE_TOP_PX,
+    BADGE_TOP_IDLE_PX: BADGE_TOP_IDLE_PX,
     BADGE_LEFT_PX: BADGE_LEFT_PX,
     DEBUG_OVERLAY_TOP_PX: DEBUG_OVERLAY_TOP_PX,
     OPEN_UI_MESSAGE_TYPE: OPEN_UI_MESSAGE_TYPE,

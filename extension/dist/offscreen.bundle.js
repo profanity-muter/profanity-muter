@@ -1,5 +1,10 @@
 (() => {
+  var __create = Object.create;
+  var __defProp = Object.defineProperty;
+  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
   var __getOwnPropNames = Object.getOwnPropertyNames;
+  var __getProtoOf = Object.getPrototypeOf;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
   var __esm = (fn, res, err) => function __init() {
     if (err) throw err[0];
     try {
@@ -15,6 +20,22 @@
       throw mod = 0, e;
     }
   };
+  var __copyProps = (to, from, except, desc2) => {
+    if (from && typeof from === "object" || typeof from === "function") {
+      for (let key of __getOwnPropNames(from))
+        if (!__hasOwnProp.call(to, key) && key !== except)
+          __defProp(to, key, { get: () => from[key], enumerable: !(desc2 = __getOwnPropDesc(from, key)) || desc2.enumerable });
+    }
+    return to;
+  };
+  var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(
+    // If the importer is in node compatibility mode or this is not an ESM
+    // file that has been converted to a CommonJS file using a Babel-
+    // compatible transform (i.e. "__esModule" has not been set), then set
+    // "default" to the CommonJS "module.exports" for node compatibility.
+    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,
+    mod
+  ));
 
   // node_modules/mediabunny/dist/modules/src/misc.js
   function assert(x) {
@@ -13839,10 +13860,108 @@
     }
   });
 
+  // shared/language.js
+  var require_language = __commonJS({
+    "shared/language.js"(exports, module) {
+      (function(root) {
+        "use strict";
+        var MIN_SWITCH_SCORE = 16;
+        var MIN_REVERT_SCORE = 12;
+        var CONSECUTIVE_REQUIRED = 2;
+        var DEFAULT_LANGUAGE = "en";
+        function newState() {
+          return {
+            active: DEFAULT_LANGUAGE,
+            // what the pipeline is currently using
+            streakLang: null,
+            // the language currently accumulating agreement
+            streakCount: 0,
+            observations: 0
+          };
+        }
+        function decide(state, observation) {
+          var s = state && typeof state === "object" ? state : newState();
+          var next = {
+            active: s.active || DEFAULT_LANGUAGE,
+            streakLang: s.streakLang || null,
+            streakCount: s.streakCount || 0,
+            observations: (s.observations || 0) + 1
+          };
+          var obs = observation || {};
+          var lang = typeof obs.language === "string" && obs.language ? obs.language : null;
+          var score = typeof obs.score === "number" && isFinite(obs.score) ? obs.score : null;
+          if (!lang) {
+            next.streakLang = null;
+            next.streakCount = 0;
+            return { state: next, action: "hold", language: next.active, reason: "no-detection", score };
+          }
+          if (lang === DEFAULT_LANGUAGE) {
+            next.streakLang = null;
+            next.streakCount = 0;
+            if (next.active === DEFAULT_LANGUAGE) {
+              return { state: next, action: "hold", language: DEFAULT_LANGUAGE, reason: "already-english", score };
+            }
+            if (score == null || score < MIN_REVERT_SCORE) {
+              return { state: next, action: "hold", language: next.active, reason: "revert-low-confidence", score };
+            }
+            next.active = DEFAULT_LANGUAGE;
+            return { state: next, action: "revert", language: DEFAULT_LANGUAGE, reason: "confident-english", score };
+          }
+          if (score == null || score < MIN_SWITCH_SCORE) {
+            next.streakLang = null;
+            next.streakCount = 0;
+            return { state: next, action: "hold", language: next.active, reason: "low-confidence", score };
+          }
+          if (lang === next.active) {
+            next.streakLang = null;
+            next.streakCount = 0;
+            return { state: next, action: "hold", language: next.active, reason: "already-active", score };
+          }
+          next.streakCount = next.streakLang === lang ? next.streakCount + 1 : 1;
+          next.streakLang = lang;
+          if (next.streakCount < CONSECUTIVE_REQUIRED) {
+            return {
+              state: next,
+              action: "hold",
+              language: next.active,
+              reason: "awaiting-corroboration",
+              score
+            };
+          }
+          next.active = lang;
+          next.streakLang = null;
+          next.streakCount = 0;
+          return { state: next, action: "switch", language: lang, reason: "confirmed", score };
+        }
+        var MAX_PROBES = 3;
+        function shouldProbe(state, maxProbes) {
+          var s = state || newState();
+          var limit = typeof maxProbes === "number" ? maxProbes : MAX_PROBES;
+          return (s.observations || 0) < limit;
+        }
+        var PMLanguageCore = {
+          MIN_SWITCH_SCORE,
+          MIN_REVERT_SCORE,
+          CONSECUTIVE_REQUIRED,
+          MAX_PROBES,
+          DEFAULT_LANGUAGE,
+          newState,
+          decide,
+          shouldProbe
+        };
+        root.PMLanguage = PMLanguageCore;
+        if (typeof module !== "undefined" && module.exports) {
+          module.exports = { PMLanguageCore };
+        }
+      })(typeof globalThis !== "undefined" ? globalThis : exports);
+    }
+  });
+
   // src/offscreen-src.js
   var require_offscreen_src = __commonJS({
     "src/offscreen-src.js"() {
       init_src();
+      var import_language = __toESM(require_language());
       var MODEL_IDS = {
         tiny: "Xenova/whisper-tiny.en",
         base: "Xenova/whisper-base.en",
@@ -14127,6 +14246,10 @@
             languageState: "pending",
             detectedLanguage: null,
             // e.g. 'en', 'es' - null until languageState becomes 'resolved'
+            // 0.1.37: the gate's accumulating state (confidence + consecutive
+            // agreement). See shared/language.js for why a single confident-
+            // looking probe is not enough to leave English.
+            languageGate: globalThis.PMLanguage ? globalThis.PMLanguage.newState() : null,
             // Generation counter (0.1.18) - bumped on a page-load reset (dropped
             // entirely, see dropSessionsForTab) or a seek (pm-seek, in place -
             // coverage/state untouched). maybeProcess's loop and transcribeWindow
@@ -14590,26 +14713,47 @@
           const resolvedId = MODEL_IDS[s.modelId] ? s.modelId : DEFAULT_MODEL;
           notifyTab(s, '[PM-MODEL] using model="' + resolvedId + '" (' + MODEL_IDS[resolvedId] + '), default="' + DEFAULT_MODEL + '"' + (resolvedId !== DEFAULT_MODEL ? " [overridden via pm_model]" : ""));
         }
-        if (s.multilingualEnabled && s.languageState === "pending" && s.modelId !== "multilingual") {
+        const langApi = globalThis.PMLanguage;
+        const wantsProbe = s.multilingualEnabled && s.modelId !== "multilingual" && s.languageState !== "detecting" && (!langApi || langApi.shouldProbe(s.languageGate));
+        if (wantsProbe) {
           s.languageState = "detecting";
           runSerialized(() => detectLanguageInWorker(float16k)).then((res) => {
-            const lang = res && res.language ? res.language : "en";
-            s.detectedLanguage = lang;
+            const observed = res && res.language ? res.language : null;
+            const score = res && res.score != null ? res.score : null;
+            const verdict = langApi ? langApi.decide(s.languageGate, { language: observed, score }) : { state: null, action: observed && observed !== "en" ? "switch" : "hold", language: observed || "en", reason: "no-gate" };
+            if (verdict.state) s.languageGate = verdict.state;
             s.languageState = "resolved";
+            const acted = verdict.action === "switch" || verdict.action === "revert";
+            if (acted) s.detectedLanguage = verdict.language;
+            const lang = s.detectedLanguage || "en";
             const usingModel = lang === "en" ? s.modelId : "multilingual";
             notifyTab(
               s,
-              "[PM-LANG] detected=" + lang + (res && res.score != null ? " score=" + res.score.toFixed(2) : "") + " model=" + usingModel + (lang === "en" ? " (staying on the English default)" : " (switching subsequent windows to the multilingual model)")
+              "[PM-LANG] observed=" + (observed || "none") + (score != null ? " score=" + score.toFixed(2) : "") + " action=" + verdict.action + " (" + verdict.reason + ") active=" + lang + " model=" + usingModel
             );
-            if (lang !== "en") {
+            chrome.runtime.sendMessage({
+              type: "pm-language-decision",
+              tabId: s.tabId,
+              videoId: s.videoId,
+              observed,
+              score,
+              action: verdict.action,
+              reason: verdict.reason,
+              active: lang,
+              model: usingModel
+            }).catch(() => {
+            });
+            if (acted && lang !== "en") {
               whisperWorker.postMessage({ type: "preload", modelId: "multilingual" });
             }
-            chrome.runtime.sendMessage({ type: "pm-language", tabId: s.tabId, videoId: s.videoId, language: lang }).catch(() => {
-            });
+            if (acted) {
+              chrome.runtime.sendMessage({ type: "pm-language", tabId: s.tabId, videoId: s.videoId, language: lang }).catch(() => {
+              });
+            }
           }).catch((e) => {
             notifyTab(s, "[PM-LANG] detection failed, staying on English default: " + String(e && e.message ? e.message : e));
             s.languageState = "resolved";
-            s.detectedLanguage = "en";
+            if (s.languageGate) s.languageGate.observations = (s.languageGate.observations || 0) + 1;
           });
         }
         const effectiveModelId = s.multilingualEnabled && s.languageState === "resolved" && s.detectedLanguage && s.detectedLanguage !== "en" ? "multilingual" : s.modelId;

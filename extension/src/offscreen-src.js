@@ -36,6 +36,10 @@
 // header for the full diagnosis (popup paint starvation) and why the split
 // is exactly at the transcribe step.
 import { Input, ReadableStreamSource, AudioBufferSink, WEBM, MP4, ADTS } from 'mediabunny';
+// 0.1.37: the language-switch gate. Plain script attaching globalThis
+// .PMLanguage; imported for its side effect so the bundle carries one
+// implementation of the rule rather than a second copy of it here.
+import '../shared/language.js';
 
 // 'small' added 0.1.13 as an opt-in accuracy tier (per the quiet-speech-
 // recall investigation) - Xenova/whisper-small.en is confirmed on the Hub to
@@ -471,6 +475,10 @@ function getOrCreateSession(tabId, videoId) {
       multilingualEnabled: true,
       languageState: 'pending',
       detectedLanguage: null, // e.g. 'en', 'es' - null until languageState becomes 'resolved'
+      // 0.1.37: the gate's accumulating state (confidence + consecutive
+      // agreement). See shared/language.js for why a single confident-
+      // looking probe is not enough to leave English.
+      languageGate: globalThis.PMLanguage ? globalThis.PMLanguage.newState() : null,
       // Generation counter (0.1.18) - bumped on a page-load reset (dropped
       // entirely, see dropSessionsForTab) or a seek (pm-seek, in place -
       // coverage/state untouched). maybeProcess's loop and transcribeWindow
@@ -1286,20 +1294,55 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // covering every language). Routed through the SAME `runSerialized`
   // worker mutex as every transcribe call (see below) since it shares the
   // same single-threaded worker.
-  if (s.multilingualEnabled && s.languageState === 'pending' && s.modelId !== 'multilingual') {
+  const langApi = globalThis.PMLanguage;
+  const wantsProbe =
+    s.multilingualEnabled &&
+    s.modelId !== 'multilingual' &&
+    s.languageState !== 'detecting' &&
+    (!langApi || langApi.shouldProbe(s.languageGate));
+  if (wantsProbe) {
     s.languageState = 'detecting';
     runSerialized(() => detectLanguageInWorker(float16k))
       .then((res) => {
-        const lang = res && res.language ? res.language : 'en';
-        s.detectedLanguage = lang;
+        const observed = res && res.language ? res.language : null;
+        const score = res && res.score != null ? res.score : null;
+        // 0.1.37: a probe is now an OBSERVATION, not a verdict. The gate
+        // decides whether it is enough to act on. See shared/language.js:
+        // the field log switched this session to Korean on one probe at
+        // score 13.18, which swapped the word list to a 66-entry Korean
+        // pack and stopped every English profanity from matching.
+        const verdict = langApi
+          ? langApi.decide(s.languageGate, { language: observed, score: score })
+          : { state: null, action: observed && observed !== 'en' ? 'switch' : 'hold', language: observed || 'en', reason: 'no-gate' };
+        if (verdict.state) s.languageGate = verdict.state;
         s.languageState = 'resolved';
+
+        const acted = verdict.action === 'switch' || verdict.action === 'revert';
+        if (acted) s.detectedLanguage = verdict.language;
+        const lang = s.detectedLanguage || 'en';
         const usingModel = lang === 'en' ? s.modelId : 'multilingual';
         notifyTab(
           s,
-          '[PM-LANG] detected=' + lang + (res && res.score != null ? ' score=' + res.score.toFixed(2) : '') +
-            ' model=' + usingModel + (lang === 'en' ? ' (staying on the English default)' : ' (switching subsequent windows to the multilingual model)')
+          '[PM-LANG] observed=' + (observed || 'none') +
+            (score != null ? ' score=' + score.toFixed(2) : '') +
+            ' action=' + verdict.action + ' (' + verdict.reason + ')' +
+            ' active=' + lang + ' model=' + usingModel
         );
-        if (lang !== 'en') {
+        // Every decision reaches the devlog, including the holds: the whole
+        // problem with the field case was one line saying what happened and
+        // nothing saying why.
+        chrome.runtime.sendMessage({
+          type: 'pm-language-decision',
+          tabId: s.tabId,
+          videoId: s.videoId,
+          observed: observed,
+          score: score,
+          action: verdict.action,
+          reason: verdict.reason,
+          active: lang,
+          model: usingModel
+        }).catch(() => {});
+        if (acted && lang !== 'en') {
           // Lazy load (per spec): only pull in the FULL multilingual model
           // once we actually know we need it - fired here so window 2
           // doesn't have to pay the load cost fully inline (may still
@@ -1308,7 +1351,12 @@ async function transcribeWindow(s, run, absStart, absEnd) {
           // way, it just awaits the same in-flight load).
           whisperWorker.postMessage({ type: 'preload', modelId: 'multilingual' });
         }
-        chrome.runtime.sendMessage({ type: 'pm-language', tabId: s.tabId, videoId: s.videoId, language: lang }).catch(() => {});
+        // Only a real switch or revert is pushed to the tab: a hold means
+        // nothing changed, and telling content.js otherwise would swap its
+        // word list on a decision this module declined to make.
+        if (acted) {
+          chrome.runtime.sendMessage({ type: 'pm-language', tabId: s.tabId, videoId: s.videoId, language: lang }).catch(() => {});
+        }
       })
       .catch((e) => {
         // Detection failing must never block or break transcription itself
@@ -1317,7 +1365,10 @@ async function transcribeWindow(s, run, absStart, absEnd) {
         // mode worth knowing about, not something to silently swallow).
         notifyTab(s, '[PM-LANG] detection failed, staying on English default: ' + String(e && e.message ? e.message : e));
         s.languageState = 'resolved';
-        s.detectedLanguage = 'en';
+        // Deliberately does NOT pin detectedLanguage to 'en': leaving it
+        // null keeps the English default active while allowing a later
+        // probe to still find a genuinely non-English video.
+        if (s.languageGate) s.languageGate.observations = (s.languageGate.observations || 0) + 1;
       });
   }
   // Resolve which model THIS window actually transcribes with. Window 1
