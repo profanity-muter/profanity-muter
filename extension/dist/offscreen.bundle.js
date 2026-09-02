@@ -14284,14 +14284,19 @@
       var HANG_SKIP_AT = 3;
       var HANG_THRESHOLD = 6;
       var STAGE_TIMEOUT_MS = 25e3;
-      function withStageTimeout(promise, label) {
+      var STAGE_TIMEOUT_FIRST_MS = 1e4;
+      function stageTimeoutMsFor(attemptsSoFar) {
+        return attemptsSoFar > 0 ? STAGE_TIMEOUT_MS : STAGE_TIMEOUT_FIRST_MS;
+      }
+      function withStageTimeout(promise, label, timeoutMs) {
+        const limitMs = typeof timeoutMs === "number" ? timeoutMs : STAGE_TIMEOUT_MS;
         let timer;
         const timeout = new Promise((_, reject) => {
           timer = setTimeout(() => {
-            const err = new Error('stage "' + label + '" did not settle within ' + STAGE_TIMEOUT_MS + "ms (hung promise, not a thrown error)");
+            const err = new Error('stage "' + label + '" did not settle within ' + limitMs + "ms (hung promise, not a thrown error)");
             err.isStageTimeout = true;
             reject(err);
-          }, STAGE_TIMEOUT_MS);
+          }, limitMs);
         });
         return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
       }
@@ -14454,7 +14459,11 @@
           }
           let track;
           try {
-            track = await withStageTimeout(run.trackReadyPromise, "track-ready");
+            track = await withStageTimeout(
+              run.trackReadyPromise,
+              "track-ready",
+              stageTimeoutMsFor(s.hangAttempts.get(windowKeyForErrors) || 0)
+            );
           } catch (e) {
             if (abortIfGone("track-ready")) return false;
             const hangCount = (s.hangAttempts.get(windowKeyForErrors) || 0) + 1;
@@ -14473,7 +14482,11 @@
         }
         if (run.nativeRate == null) {
           try {
-            run.nativeRate = await withStageTimeout(run.track.getSampleRate(), "get-sample-rate");
+            run.nativeRate = await withStageTimeout(
+              run.track.getSampleRate(),
+              "get-sample-rate",
+              stageTimeoutMsFor(s.hangAttempts.get(windowKeyForErrors) || 0)
+            );
           } catch (e) {
             if (abortIfGone("get-sample-rate")) return false;
             const hangCount = (s.hangAttempts.get(windowKeyForErrors) || 0) + 1;
@@ -14499,7 +14512,8 @@
             (async () => {
               for await (const wb of sink.buffers(absStart, absEnd)) wrapped.push(wb);
             })(),
-            "decode"
+            "decode",
+            stageTimeoutMsFor(s.hangAttempts.get(windowKeyForErrors) || 0)
           );
         } catch (e) {
           if (abortIfGone("decode")) return false;

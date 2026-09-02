@@ -33,6 +33,7 @@
         "shared/wordlist.js",
         "shared/devlog.js",
         "shared/health.js",
+        "shared/session_binding.js",
         "content.js",
         "captions.js"
       ],

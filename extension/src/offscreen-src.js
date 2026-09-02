@@ -733,14 +733,29 @@ const HANG_THRESHOLD = 6; // 0.1.23: same exact window HANGING (stage timeout, n
 // visible and recoverable rather than fully root-causing mediabunny's
 // internals (which would need a live AAC/fMP4 repro this pass didn't have).
 const STAGE_TIMEOUT_MS = 25000; // generously above any legitimate stage per the measured RTF table (steady-state well under 1x realtime)
-function withStageTimeout(promise, label) {
+// 0.1.35: the FIRST attempt gets a much shorter leash. The 25s figure was
+// chosen when a timeout meant "give up on this window", so it had to be
+// generous enough never to punish a slow machine. Since 0.1.34 the second
+// attempt rebuilds the decode pipeline, which is cheap and is the thing
+// most likely to actually clear a wedged decoder, so waiting 25s before
+// trying the one repair we have is pure dead time: the user's worst-case
+// stall was 25s + 25s before anything changed. Ten seconds is still far
+// above any legitimate decode of a sub-20s window (measured RTF is well
+// under 1x realtime), and post-rebuild attempts keep the full 25s so a
+// genuinely slow machine is never penalized for being slow.
+const STAGE_TIMEOUT_FIRST_MS = 10000;
+function stageTimeoutMsFor(attemptsSoFar) {
+  return attemptsSoFar > 0 ? STAGE_TIMEOUT_MS : STAGE_TIMEOUT_FIRST_MS;
+}
+function withStageTimeout(promise, label, timeoutMs) {
+  const limitMs = typeof timeoutMs === 'number' ? timeoutMs : STAGE_TIMEOUT_MS;
   let timer;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
-      const err = new Error('stage "' + label + '" did not settle within ' + STAGE_TIMEOUT_MS + 'ms (hung promise, not a thrown error)');
+      const err = new Error('stage "' + label + '" did not settle within ' + limitMs + 'ms (hung promise, not a thrown error)');
       err.isStageTimeout = true; // 0.1.23: lets callers route a genuine hang to a SEPARATE counter/threshold than a real thrown decode error - see HANG_THRESHOLD
       reject(err);
-    }, STAGE_TIMEOUT_MS);
+    }, limitMs);
   });
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
@@ -1031,7 +1046,11 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       // untouched on timeout (not nulled) - if it genuinely resolves later,
       // the NEXT attempt picks it up for free; only our own wait on it here
       // is bounded.
-      track = await withStageTimeout(run.trackReadyPromise, 'track-ready');
+      track = await withStageTimeout(
+        run.trackReadyPromise,
+        'track-ready',
+        stageTimeoutMsFor(s.hangAttempts.get(windowKeyForErrors) || 0)
+      );
     } catch (e) {
       // Teardown during the await looks like a timeout to us; it is not a
       // hang, so it must not be counted as one.
@@ -1055,7 +1074,11 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   }
   if (run.nativeRate == null) {
     try {
-      run.nativeRate = await withStageTimeout(run.track.getSampleRate(), 'get-sample-rate');
+      run.nativeRate = await withStageTimeout(
+        run.track.getSampleRate(),
+        'get-sample-rate',
+        stageTimeoutMsFor(s.hangAttempts.get(windowKeyForErrors) || 0)
+      );
     } catch (e) {
       if (abortIfGone('get-sample-rate')) return false;
       const hangCount = (s.hangAttempts.get(windowKeyForErrors) || 0) + 1;
@@ -1091,7 +1114,8 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       (async () => {
         for await (const wb of sink.buffers(absStart, absEnd)) wrapped.push(wb);
       })(),
-      'decode'
+      'decode',
+      stageTimeoutMsFor(s.hangAttempts.get(windowKeyForErrors) || 0)
     );
   } catch (e) {
     // DRM/undecodable-content detection (0.1.15) vs. silent-hang detection

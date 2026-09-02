@@ -247,9 +247,16 @@
   // Persists across seeks; only replaced on an actual video-id change
   // (RESET from capture.js), per the "seek keeps everything" requirement.
   var session = null;
+  // Monotonic per-page counter (0.1.35). Purely diagnostic, but the thing it
+  // makes visible is exactly the class of bug this round chased: two code
+  // paths reading DIFFERENT session objects, where every field looks
+  // plausible and only the identity is wrong.
+  var sessionInstanceSeq = 0;
 
   function newSession(videoId) {
+    sessionInstanceSeq++;
     return {
+      instanceId: sessionInstanceSeq,
       videoId: videoId,
       intervals: [], // merged mute intervals [{start,end,word}]
       coveredIntervals: [], // merged transcribed coverage [{start,end}]
@@ -1495,6 +1502,67 @@
     return !!(api && h && h.status === api.STATUS.UNHEALTHY);
   }
 
+  // ---- [PM-PILL] input tracing (0.1.35) ------------------------------------
+  //
+  // The 0.1.34 field re-test had the pill showing states that were
+  // impossible on fresh inputs: "Press play to load audio" while paused
+  // with captured audio at the playhead, and "Analyzing" with 28 seconds of
+  // coverage past the playhead. When a state machine is provably correct and
+  // its output is provably wrong, the answer is always in its INPUTS, and
+  // guessing at those from the outside cost this round a lot of time.
+  //
+  // So every state CHANGE (not every tick, which would drown the log) emits
+  // the entire input vector that produced it. The session identity is in
+  // there deliberately: the actual bug turned out to be two code paths
+  // holding different session objects, where every value looks plausible
+  // and only the identity is wrong.
+  //
+  // Gated on pm_debugOverlay, and routed through TLOG so it lands in the
+  // ring buffer that "Copy logs" pastes: the point is that the user's next
+  // paste reconstructs the pill's whole history without another round trip.
+  var lastTracedPillKind = null;
+
+  function tracePillState(state) {
+    if (!debugSettings.debugOverlay) return;
+    var kind = state ? state.kind : 'none';
+    if (kind === lastTracedPillKind) return;
+    var prev = lastTracedPillKind;
+    lastTracedPillKind = kind;
+    var d = (state && state.trace) || {};
+    TLOG(
+      TAG,
+      '[PM-PILL] ' + (prev || 'none') + ' -> ' + kind +
+        ' wall=' + new Date().toISOString().slice(11, 23) +
+        ' session=#' + (session ? session.instanceId : 'none') + '/' + (session ? session.videoId : 'none') +
+        ' t=' + (d.t != null ? d.t.toFixed(2) : 'NA') +
+        ' paused=' + (d.paused != null ? d.paused : 'NA') +
+        ' capturedAtPlayhead=' + (d.capturedAtPlayhead != null ? d.capturedAtPlayhead : 'NA') +
+        ' nearestCaptured=' + (d.nearestCaptured || 'none') +
+        ' bufferedRanges=' + (d.bufferedRangesCount != null ? d.bufferedRangesCount : 'NA') +
+        ' coverageEnd=' + (d.coverageEnd != null ? d.coverageEnd.toFixed(2) : 'NA') +
+        ' horizonEnd=' + (d.horizonEnd != null ? d.horizonEnd.toFixed(2) : 'NA') +
+        ' uncoveredInMargin=' + (d.uncoveredInMargin != null ? d.uncoveredInMargin.toFixed(2) : 'NA') +
+        ' growthMs=' + (d.growthMs != null ? Math.round(d.growthMs) : 'NA') +
+        ' windows=' + (session ? session.windowsCompleted : 'NA') +
+        ' promise=' + (d.promise || 'none') +
+        (state && state.etaS != null ? ' etaS=' + state.etaS : '')
+    );
+  }
+
+  // The coverage end that actually matters for the playhead: the end of the
+  // covered interval containing (or immediately following) t. Reporting a
+  // global max would hide exactly the gap-before-the-playhead case.
+  function coverageEndNear(intervals, t) {
+    var best = null;
+    for (var i = 0; i < intervals.length; i++) {
+      var iv = intervals[i];
+      if (iv.end <= t) continue;
+      if (iv.start <= t + COVERAGE_EPS) return iv.end; // contains the playhead
+      if (best == null) best = iv.end; // first one ahead of it
+    }
+    return best;
+  }
+
   function computeStatusState() {
     if (!session) return null;
 
@@ -1504,12 +1572,32 @@
     if (isShortsPage()) return { kind: 'shorts' };
     if (isLiveStream(video)) return { kind: 'live' };
     var t = video.currentTime;
+    // Built once, attached to whichever state is returned below, so the
+    // trace can never disagree with the decision it is explaining.
+    var trace = {
+      t: t,
+      paused: video.paused,
+      bufferedRangesCount: session.bufferedRanges.length,
+      coverageEnd: coverageEndNear(session.coveredIntervals, t),
+      growthMs: Date.now() - (session.lastBufferedGrowthWall || 0)
+    };
+    function withTrace(state) {
+      trace.promise = session.etaPromise
+        ? 'eta=' + session.etaPromise.etaS + 's age=' +
+          Math.round((Date.now() - session.etaPromise.issuedWall) / 1000) + 's@w' +
+          session.etaPromise.windowsAtIssue
+        : 'none';
+      state.trace = trace;
+      return state;
+    }
     var horizonEnd = clampedHorizonEnd(video, t);
     // "Protected" means the whole [t, t+margin] window is covered, not just
     // its two endpoints - a gap in the middle (real, given how transcription
     // windows land) must not read as protected.
-    if (uncoveredDurationWithin(session.coveredIntervals, t, horizonEnd) <= COVERAGE_EPS) {
-      return { kind: 'protected' };
+    trace.horizonEnd = horizonEnd;
+    trace.uncoveredInMargin = uncoveredDurationWithin(session.coveredIntervals, t, horizonEnd);
+    if (trace.uncoveredInMargin <= COVERAGE_EPS) {
+      return withTrace({ kind: 'protected' });
     }
 
     var playheadRange = null;
@@ -1519,6 +1607,17 @@
         playheadRange = r;
         break;
       }
+    }
+    trace.capturedAtPlayhead = !!playheadRange;
+    if (playheadRange) {
+      trace.nearestCaptured = '[' + playheadRange.start.toFixed(2) + ',' + playheadRange.end.toFixed(2) + ')';
+    } else if (session.bufferedRanges.length) {
+      var nearest = session.bufferedRanges[0];
+      for (var ni = 1; ni < session.bufferedRanges.length; ni++) {
+        var cand = session.bufferedRanges[ni];
+        if (Math.abs(cand.start - t) < Math.abs(nearest.start - t)) nearest = cand;
+      }
+      trace.nearestCaptured = '[' + nearest.start.toFixed(2) + ',' + nearest.end.toFixed(2) + ')';
     }
 
     if (playheadRange) {
@@ -1538,7 +1637,7 @@
       // render is exactly how the pill stayed plausible for 30+ seconds
       // while nothing at all progressed.
       var api = healthApi();
-      if (!api) return { kind: 'analyzing-safe', etaS: etaS };
+      if (!api) return withTrace({ kind: 'analyzing-safe', etaS: etaS });
       session.etaPromise = api.openOrKeepPromise(session.etaPromise, {
         now: Date.now(),
         windowsCompleted: session.windowsCompleted,
@@ -1550,13 +1649,13 @@
       // expected", which is true and might still resolve; the monitor's own
       // slower check is what escalates to "not filtering" if it never does.
       if (api.promiseEscalated(session.etaPromise, Date.now())) {
-        return { kind: 'analyzing-slow' };
+        return withTrace({ kind: 'analyzing-slow' });
       }
-      return { kind: 'analyzing-safe', etaS: session.etaPromise.etaS };
+      return withTrace({ kind: 'analyzing-safe', etaS: session.etaPromise.etaS });
     }
 
     var sinceGrowthMs = Date.now() - (session.lastBufferedGrowthWall || 0);
-    if (sinceGrowthMs < STATUS_GROWTH_RECENT_MS) return { kind: 'buffering' };
+    if (sinceGrowthMs < STATUS_GROWTH_RECENT_MS) return withTrace({ kind: 'buffering' });
     // 0.1.34: "Press play to load audio" told the user to do something they
     // were already doing. The field test showed it while the video was
     // PLAYING, because capture growth stopping is not the same fact as
@@ -1565,8 +1664,8 @@
     // is only true if the video is actually paused, so it now says so only
     // then. A playing video with no growth is simply waiting on the
     // pipeline, which is what "analyzing" means.
-    if (sinceGrowthMs >= STATUS_GROWTH_STALLED_MS && video.paused) return { kind: 'needs-play' };
-    return { kind: 'buffering' }; // brief in-between window (recent < x < stalled) - still assume progress, avoid label flicker
+    if (sinceGrowthMs >= STATUS_GROWTH_STALLED_MS && video.paused) return withTrace({ kind: 'needs-play' });
+    return withTrace({ kind: 'buffering' }); // brief in-between window (recent < x < stalled) - still assume progress, avoid label flicker
   }
 
   function renderStatusPill() {
@@ -1579,6 +1678,9 @@
     // that is not supposed to be suppressible. Displaying is gated below;
     // knowing is not.
     var status = settings.enabled ? computeStatusState() : null;
+    // Traced on CHANGE only, so a paste reconstructs the pill's history
+    // without a line per tick. See tracePillState.
+    tracePillState(status);
     // Leaving the analyzing states retires any outstanding promise, so a
     // later re-entry starts a fresh clock rather than inheriting a stale one.
     if (session && (!status || (status.kind !== 'analyzing-safe' && status.kind !== 'analyzing-slow'))) {
@@ -2420,6 +2522,11 @@
   // unavailable), the public path remains the fallback rather than a
   // hardening measure becoming a single point of failure for the entire
   // extension.
+  // Missed-reset backstop counters for the segment guard above. The
+  // threshold itself lives in shared/session_binding.js.
+  var staleSegmentCount = 0;
+  var lastStaleSegmentVideoId = null;
+
   var securePort = null;
   window.addEventListener('message', function (ev) {
     if (ev.source !== window || !ev.data || ev.data.__pm !== 'PM_CAPTURE') return;
@@ -2464,7 +2571,55 @@
       // invisible), but content.js must not spend any further CPU/messaging
       // on it while disabled.
       if (!currentSettings().enabled) return;
-      if (!session || session.videoId !== data.videoId) {
+      // 0.1.35 - THE staleness bug. This used to read:
+      //
+      //     if (!session || session.videoId !== data.videoId) {
+      //       session = newSession(data.videoId);
+      //     }
+      //
+      // which means one late segment carrying the PREVIOUS video's id,
+      // arriving just after a video-change reset, silently replaced the
+      // live session with an empty one bound to the old video. Everything
+      // went with it: coverage, the mute schedule, bufferedRanges. Worse,
+      // every subsequent 'words' message for the CURRENT video was then
+      // dropped by addWords' own `session.videoId !== videoId` guard, so
+      // coverage could never be rebuilt and the pill was left reading an
+      // empty session forever. That is both reported symptoms at once:
+      // "Press play to load audio" (no bufferedRanges, so no captured range
+      // at the playhead) and "Analyzing" (no coverage), while the console
+      // showed the pipeline happily producing both.
+      //
+      // capture.js sends an explicit 'reset' on a real video change, and
+      // that path (resetSession) is authoritative. A segment is data, not a
+      // navigation event, and must never be allowed to redefine which video
+      // this tab is on.
+      // The rule itself lives in shared/session_binding.js, pure and unit
+      // tested, because getting it wrong silently disables filtering and it
+      // stayed wrong for two rounds while looking like a display bug.
+      var binding = globalThis.PMSessionBinding;
+      var decision = binding
+        ? binding.segmentAction({
+            hasSession: !!session,
+            sessionVideoId: session ? session.videoId : null,
+            incomingVideoId: data.videoId,
+            staleCount: staleSegmentCount,
+            lastStaleVideoId: lastStaleSegmentVideoId
+          })
+        : { action: session ? 'use' : 'create', staleCount: 0, staleVideoId: null };
+      staleSegmentCount = decision.staleCount;
+      lastStaleSegmentVideoId = decision.staleVideoId;
+
+      if (decision.action === 'ignore') {
+        TLOG(TAG, '[PM-SESSION] ignoring segment for videoId=' + data.videoId +
+          ' (session is ' + session.videoId + ' #' + session.instanceId +
+          ') - a segment never redefines the current video');
+        return;
+      }
+      if (decision.action === 'reset') {
+        TWARN(TAG, '[PM-SESSION] repeated segments for videoId=' + data.videoId +
+          ' while session is ' + session.videoId + ' - treating as a missed reset');
+        resetSession(data.videoId);
+      } else if (decision.action === 'create') {
         session = newSession(data.videoId);
       }
       // Health monitor (0.1.32): counted here, at the relay, rather than
