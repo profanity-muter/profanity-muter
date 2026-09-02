@@ -44,6 +44,10 @@ import '../shared/language.js';
 // Imported for its side effect (it attaches globalThis.PMDecode) so the
 // shipped path is the same code the Node tests exercise.
 import '../shared/decode.js';
+// 0.1.41: run topology (boundary classification, playhead-aware
+// retirement). Imported for its side effect, like the others, so the
+// shipped decision is the tested one.
+import '../shared/runs.js';
 
 // 'small' added 0.1.13 as an opt-in accuracy tier (per the quiet-speech-
 // recall investigation) - Xenova/whisper-small.en is confirmed on the Hub to
@@ -266,6 +270,11 @@ function newRun() {
     // new run) - once true, the fed-data clamp in pickNextWindow is no
     // longer needed, since a genuinely closed stream reports "no more
     // data" cleanly instead of hanging.
+    // 0.1.41: the START of what this run has been fed. fedEnd alone could
+    // say how far a run reached but never where it began, so nothing could
+    // ask the question that matters after a seek storm: can this run serve
+    // the playhead at all?
+    fedStart: null,
     fedEnd: null,
     streamClosed: false
   };
@@ -2100,6 +2109,56 @@ chrome.runtime.onMessage.addListener((msg) => {
       log('[PM-STALL] restart requested for', key, 'but a transcription attempt is genuinely in progress (heartbeating) - ignoring, not killing live work');
       return;
     }
+    // 0.1.41: a re-run of the picker cannot fix a wrong run mapping.
+    //
+    // The field case: the storm backstop fed audio from ~1560 into a run
+    // anchored around 1590. Window [1565.73,1572.39) skipped forever with
+    // "no decodable audio in this run at that time yet". The stall detector
+    // fired correctly at 15s and asked for a restart, and the restart re-ran
+    // maybeProcess against the same poisoned mapping, so it skipped
+    // identically. Toothless for this failure class, because waiting helps a
+    // slow pipeline and can never help a run that does not hold the audio.
+    //
+    // So: ask first whether the current run can serve the playhead at all.
+    // If it cannot, the repair is a NEW RUN for that region, which only
+    // capture.js can start (it holds the cached init bytes). Requesting one
+    // is the difference between a restart that re-reads the same wrong map
+    // and one that redraws it.
+    const runsApi = globalThis.PMRuns;
+    const cur = s.currentRun;
+    const curSpan = cur && cur.fedStart != null && cur.fedEnd != null
+      ? { start: cur.fedStart, end: cur.fedEnd }
+      : null;
+    const canServe = runsApi && s.currentTimeS != null
+      ? runsApi.runCanServe(curSpan, s.currentTimeS)
+      : true;
+    const servedByAnotherRun = runsApi && s.currentTimeS != null
+      ? s.runs.some((r) => r !== cur && runsApi.runCanServe(
+          r.fedStart != null && r.fedEnd != null ? { start: r.fedStart, end: r.fedEnd } : null,
+          s.currentTimeS
+        ))
+      : false;
+
+    if (!canServe && !servedByAnotherRun) {
+      notifyTab(
+        s,
+        '[PM-STALL] no run can decode the playhead at ' +
+          (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : 'unknown') +
+          ' (current run ' + (curSpan ? '[' + curSpan.start.toFixed(2) + ',' + curSpan.end.toFixed(2) + ')' : 'has been fed nothing') +
+          ') - requesting a fresh run for this region rather than re-running the picker over the same mapping'
+      );
+      chrome.runtime.sendMessage({
+        type: 'pm-request-run-rebuild',
+        tabId: s.tabId,
+        videoId: s.videoId,
+        atS: s.currentTimeS
+      }).catch(() => {});
+      // Still re-kick: if capture.js cannot oblige (no cached init bytes
+      // yet, say) the picker at least gets its chance.
+      maybeProcess(s);
+      return;
+    }
+
     notifyTab(s, '[PM-STALL] restart requested for ' + key + ' - no attempt in progress, forcing maybeProcess re-run');
     maybeProcess(s);
     return;
@@ -2154,8 +2213,38 @@ chrome.runtime.onMessage.addListener((msg) => {
       // one (a backward seek shortly after a run switch can still
       // legitimately want the previous run's still-cached bytes); close
       // and drop anything older.
-      const KEEP_RUNS = 2;
-      while (s.runs.length > KEEP_RUNS) closeRun(s.runs.shift());
+      // 0.1.41: retire by distance from the playhead, not by age. FIFO was
+      // right when runs arrived one at a time; after a seek storm the
+      // OLDEST run can be exactly the one holding the region the playhead
+      // just came back to, and dropping it recreates the undecodable-audio
+      // outage from the other direction. The run serving the playhead, and
+      // the run currently being fed, are never candidates.
+      const runsApi = globalThis.PMRuns;
+      const keepRuns = runsApi ? runsApi.KEEP_RUNS : 2;
+      while (s.runs.length > keepRuns) {
+        let victimIdx = 0;
+        if (runsApi) {
+          victimIdx = runsApi.selectRunToRetire({
+            runs: s.runs.map((r) => ({
+              span: r.fedStart != null && r.fedEnd != null ? { start: r.fedStart, end: r.fedEnd } : null,
+              isCurrent: r === s.currentRun
+            })),
+            playheadT: s.currentTimeS,
+            maxRuns: keepRuns
+          });
+        }
+        if (victimIdx < 0) break; // everything left is playhead-relevant
+        const victim = s.runs[victimIdx];
+        notifyTab(
+          s,
+          '[PM-RUN-RETIRE] closing run ' + (victim.fedStart != null
+            ? '[' + victim.fedStart.toFixed(2) + ',' + (victim.fedEnd != null ? victim.fedEnd.toFixed(2) : '?') + ')'
+            : '(nothing fed)') + ' - furthest from the playhead at ' +
+            (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : 'unknown')
+        );
+        s.runs.splice(victimIdx, 1);
+        closeRun(victim);
+      }
     }
     if (s.currentRun) {
       appendToRun(s.currentRun, bytes);
@@ -2170,6 +2259,11 @@ chrome.runtime.onMessage.addListener((msg) => {
       // only the real segment that follows it does.
       if (typeof msg.growthAbsEnd === 'number' && !Number.isNaN(msg.growthAbsEnd)) {
         s.currentRun.fedEnd = s.currentRun.fedEnd == null ? msg.growthAbsEnd : Math.max(s.currentRun.fedEnd, msg.growthAbsEnd);
+      }
+      if (typeof msg.growthAbsStart === 'number' && !Number.isNaN(msg.growthAbsStart)) {
+        s.currentRun.fedStart = s.currentRun.fedStart == null
+          ? msg.growthAbsStart
+          : Math.min(s.currentRun.fedStart, msg.growthAbsStart);
       }
       // Cross-check ONLY (never an input to any timestamp): does the
       // container's own EBML Cluster>Timecode (capture.js's localTimeSec)

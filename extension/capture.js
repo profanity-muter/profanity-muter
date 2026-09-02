@@ -583,12 +583,32 @@
   // Registry for the on-demand eviction check request from content.js (see
   // the 'message' listener below) - normally at most one audio SourceBuffer
   // is live at a time; the most recently instrumented one is "active".
+  // 0.1.41: registered by instrumentAudioSourceBuffer so the content-script
+  // bridge can ask for a fresh demux run at the playhead. Same shape as the
+  // activeEviction* hooks below.
+  var activeForceRunBoundary = null;
   var activeEvictionSB = null;
   var activeEvictionState = null;
   var activeEvictionVideoId = null;
 
   window.addEventListener('message', function (ev) {
     if (ev.source !== window || !ev.data || ev.data.__pmToCapture !== 'PM_CONTENT') return;
+    if (ev.data.type === 'force-run-boundary') {
+      // 0.1.41: offscreen found that no run can decode the playhead, which
+      // a picker re-run can never fix. The repair needs the cached init
+      // bytes, which live in the instrumentation closure, so it registers a
+      // hook the same way the eviction check already does.
+      if (typeof activeForceRunBoundary !== 'function') {
+        logLine('[PM-RUN-REBUILD] requested but no instrumented SourceBuffer is active yet');
+        return;
+      }
+      try {
+        activeForceRunBoundary(typeof ev.data.atS === 'number' ? ev.data.atS : null);
+      } catch (e) {
+        logLine('[PM-RUN-REBUILD] failed: ' + String(e));
+      }
+      return;
+    }
     if (ev.data.type === 'check-eviction' && activeEvictionSB && activeEvictionState) {
       try {
         detectAndEvictCaptureMisses(activeEvictionSB, activeEvictionState, activeEvictionVideoId, 'stall-watchdog');
@@ -684,6 +704,21 @@
     var runBoundaryRateLimited = false;
     var RUN_BOUNDARY_RATE_LIMIT_WINDOW_MS = 10000;
     var RUN_BOUNDARY_RATE_LIMIT_MAX = 3;
+    // 0.1.41: the span the CURRENT run has actually been fed. The storm
+    // backstop needs it to tell a misclassified contiguous boundary (safe
+    // to suppress, since the run holds that audio anyway) from a genuinely
+    // disjoint one (suppressing it feeds the run audio it can never
+    // decode). Reset whenever a new run is opened.
+    var currentRunSpan = null;
+    function noteFedSpan(gs, ge) {
+      if (typeof gs !== 'number' || typeof ge !== 'number') return;
+      if (!currentRunSpan) {
+        currentRunSpan = { start: gs, end: ge };
+        return;
+      }
+      currentRunSpan.start = Math.min(currentRunSpan.start, gs);
+      currentRunSpan.end = Math.max(currentRunSpan.end, ge);
+    }
     var evictionState = { captured: [], recentEvictions: [], queue: [], pending: [] };
     sb.addEventListener('updateend', function () { pumpEvictionQueue(sb, evictionState); });
     // Registered as the "active" audio SourceBuffer for the on-demand
@@ -692,6 +727,42 @@
     // only one at a time; the most recently instrumented one wins, matching
     // how videoIdAtInit-style "current" tracking already works elsewhere in
     // this file.
+    activeForceRunBoundary = function (atS) {
+      if (!cachedInitBytes) {
+        logLine('[PM-RUN-REBUILD] requested but no cached init bytes yet - cannot open a run');
+        return;
+      }
+      logLine('[PM-RUN-REBUILD] opening a fresh demux run at the playhead on request from offscreen');
+      currentRunSpan = null;
+      // The churn cap must not block a repair: it exists to stop runaway
+      // run creation, and this path only fires when the pipeline is
+      // already stalled and producing nothing.
+      runBoundaryRateLimited = false;
+      runBoundaryTimestamps = [];
+      post({
+        type: 'segment',
+        videoId: currentVideoId(),
+        mime: mime,
+        isInit: true,
+        segIndex: segmentCount,
+        bytes: cachedInitBytes,
+        currentTime: atS,
+        localTimeSec: null,
+        growthAbsStart: null,
+        growthAbsEnd: null,
+        growthIsNewRange: null,
+        wallTime: Date.now(),
+        isSyntheticRunBoundary: true
+      });
+      post({
+        type: 'run-topology',
+        videoId: currentVideoId(),
+        event: 'rebuilt',
+        reason: 'stall-recovery',
+        spanStart: atS,
+        spanEnd: null
+      });
+    };
     activeEvictionSB = sb;
     activeEvictionState = evictionState;
     activeEvictionVideoId = videoIdAtInit;
@@ -799,25 +870,46 @@
       }
 
       var isDiscontinuity = !!(growth && growth.isNewRange) && !item.isInit;
-      if (isDiscontinuity && !runBoundaryRateLimited) {
+      // 0.1.41: the decision moved into shared/runs.js so it is testable and
+      // so both sides of the pipeline agree on what "disjoint" means. The
+      // rate limiter still exists, but it can no longer suppress a boundary
+      // whose audio the current run cannot decode: see the module header
+      // for the seek-storm outage that rule caused.
+      var runsApi = globalThis.PMRuns;
+      var verdict = runsApi && isDiscontinuity
+        ? runsApi.classifyBoundary({
+            isNewRange: true,
+            growthStart: growth ? growth.absStart : null,
+            growthEnd: growth ? growth.absEnd : null,
+            currentRunSpan: currentRunSpan,
+            boundaryWalls: runBoundaryTimestamps,
+            now: Date.now(),
+            windowMs: RUN_BOUNDARY_RATE_LIMIT_WINDOW_MS,
+            maxBoundaries: RUN_BOUNDARY_RATE_LIMIT_MAX
+          })
+        : { action: isDiscontinuity ? 'new-run' : 'feed-existing', reason: 'no-runs-module' };
+
+      if (isDiscontinuity && verdict.action === 'new-run') {
         var nowRB = Date.now();
         runBoundaryTimestamps.push(nowRB);
         runBoundaryTimestamps = runBoundaryTimestamps.filter(function (t) { return nowRB - t < RUN_BOUNDARY_RATE_LIMIT_WINDOW_MS; });
-        if (runBoundaryTimestamps.length > RUN_BOUNDARY_RATE_LIMIT_MAX) {
+        if (!runBoundaryRateLimited && runBoundaryTimestamps.length > RUN_BOUNDARY_RATE_LIMIT_MAX) {
           runBoundaryRateLimited = true;
           logLine(
             '[PM-RUN-BOUNDARY-STORM] ' + runBoundaryTimestamps.length + ' run boundaries fired within ' +
-              (RUN_BOUNDARY_RATE_LIMIT_WINDOW_MS / 1000) + 's -- something is misclassifying growth as disjoint; ' +
-              'giving up on opening further new runs for this SourceBuffer (degraded but alive beats churn death) -- see PIPELINE_NOTES "0.1.24"'
+              (RUN_BOUNDARY_RATE_LIMIT_WINDOW_MS / 1000) + 's -- contiguous boundaries will now be suppressed ' +
+              '(disjoint ones still open a run, because the existing run cannot decode that audio) -- see PIPELINE_NOTES "0.1.24" and "0.1.41"'
           );
         }
       }
-      if (isDiscontinuity && runBoundaryRateLimited) {
+      if (isDiscontinuity && verdict.action === 'suppressed') {
         logLine(
           '[PM-RUN-BOUNDARY-SUPPRESSED] would have opened a new run for NEW-RANGE growth=[' + growth.absStart.toFixed(2) + ',' + growth.absEnd.toFixed(2) +
-            ') but the sanity backstop above suppressed it -- feeding into the existing run instead'
+            ') but it is contiguous with what this run already holds (' + verdict.reason + ') -- feeding into the existing run instead'
         );
-      } else if (isDiscontinuity && cachedInitBytes) {
+        post({ type: 'run-topology', videoId: item.vid, event: 'suppressed', reason: verdict.reason,
+               spanStart: growth.absStart, spanEnd: growth.absEnd });
+      } else if (isDiscontinuity && verdict.action === 'new-run' && cachedInitBytes) {
         logLine(
           '[PM-RUN-BOUNDARY] NEW-RANGE growth=[' + growth.absStart.toFixed(2) + ',' + growth.absEnd.toFixed(2) +
             ') with no fresh init segment of its own -- opening a new demux run (resending cached init bytes)'
@@ -837,12 +929,21 @@
           wallTime: Date.now(),
           isSyntheticRunBoundary: true
         });
+        // A new run starts with an empty span, so the next contiguity test
+        // is made against what THIS run has been fed, not the last one.
+        currentRunSpan = null;
+        post({ type: 'run-topology', videoId: item.vid, event: 'opened', reason: verdict.reason,
+               spanStart: growth.absStart, spanEnd: growth.absEnd });
       } else if (isDiscontinuity) {
         // Should not happen once the first real init segment has landed -
         // surfaced loudly rather than silently falling back to feeding the
         // discontinuous bytes into the existing (sequentially-stuck) run.
         logLine('[PM-RUN-BOUNDARY] NEW-RANGE growth detected but no cached init segment bytes available yet -- cannot open a clean new run');
       }
+
+      // Whatever run this segment ends up feeding, record its span so the
+      // next boundary decision knows what that run can actually serve.
+      if (growth) noteFedSpan(growth.absStart, growth.absEnd);
 
       // Log collapse (0.1.15): an unconditional per-segment [PM-CHAIN] line
       // was pure noise at normal append rates. Only log on an actual STATE
@@ -932,7 +1033,10 @@
         // timeline discontinuity (NEW-RANGE growth with no init segment of
         // its own) can be turned into a synthetic run-boundary reusing this
         // exact codec/track header - see finishAppendProcessing above.
-        if (isInit) cachedInitBytes = ab;
+        if (isInit) {
+          cachedInitBytes = ab;
+          currentRunSpan = null; // a real init segment opens a run of its own (0.1.41)
+        }
 
         pendingAppends.push({
           rangesBefore: rangesBefore,

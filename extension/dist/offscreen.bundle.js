@@ -14058,12 +14058,123 @@
     }
   });
 
+  // shared/runs.js
+  var require_runs = __commonJS({
+    "shared/runs.js"(exports, module) {
+      (function(root) {
+        "use strict";
+        var DISJOINT_GAP_S = 3;
+        var BOUNDARY_WINDOW_MS = 1e4;
+        var BOUNDARY_MAX = 3;
+        var KEEP_RUNS = 4;
+        function spansOverlapOrAdjoin(aStart, aEnd, bStart, bEnd, gapS) {
+          var gap = typeof gapS === "number" ? gapS : DISJOINT_GAP_S;
+          return aStart <= bEnd + gap && bStart <= aEnd + gap;
+        }
+        function isContiguousWith(span, growthStart, growthEnd, gapS) {
+          if (!span || typeof span.start !== "number" || typeof span.end !== "number") return true;
+          return spansOverlapOrAdjoin(span.start, span.end, growthStart, growthEnd, gapS);
+        }
+        function classifyBoundary(input) {
+          input = input || {};
+          var gapS = typeof input.gapS === "number" ? input.gapS : DISJOINT_GAP_S;
+          var growthStart = input.growthStart;
+          var growthEnd = input.growthEnd;
+          var hasGrowth = typeof growthStart === "number" && typeof growthEnd === "number";
+          if (!input.isNewRange) {
+            return { action: "feed-existing", reason: "contiguous-growth" };
+          }
+          if (!hasGrowth) {
+            return recentCount(input) > maxOf(input) ? { action: "suppressed", reason: "storm-no-growth-span" } : { action: "new-run", reason: "boundary-no-growth-span" };
+          }
+          var contiguous = isContiguousWith(input.currentRunSpan, growthStart, growthEnd, gapS);
+          if (contiguous) {
+            if (recentCount(input) > maxOf(input)) {
+              return { action: "suppressed", reason: "storm-contiguous" };
+            }
+            return { action: "new-run", reason: "boundary-contiguous" };
+          }
+          return { action: "new-run", reason: "disjoint-requires-run" };
+        }
+        function recentCount(input) {
+          var walls = input.boundaryWalls || [];
+          var now = typeof input.now === "number" ? input.now : Date.now();
+          var windowMs = typeof input.windowMs === "number" ? input.windowMs : BOUNDARY_WINDOW_MS;
+          var n = 0;
+          for (var i = 0; i < walls.length; i++) {
+            if (now - walls[i] < windowMs) n++;
+          }
+          return n;
+        }
+        function maxOf(input) {
+          return typeof input.maxBoundaries === "number" ? input.maxBoundaries : BOUNDARY_MAX;
+        }
+        function selectRunToRetire(input) {
+          input = input || {};
+          var runs = input.runs || [];
+          var keep = typeof input.maxRuns === "number" ? input.maxRuns : KEEP_RUNS;
+          if (runs.length <= keep) return -1;
+          var playheadT = typeof input.playheadT === "number" ? input.playheadT : null;
+          var gapS = typeof input.gapS === "number" ? input.gapS : DISJOINT_GAP_S;
+          var worstIdx = -1;
+          var worstDistance = -1;
+          for (var i = 0; i < runs.length; i++) {
+            var r = runs[i] || {};
+            if (r.isCurrent) continue;
+            var d = distanceFromPlayhead(r.span, playheadT);
+            if (d === 0) continue;
+            if (playheadT != null && r.span && isContiguousWith(r.span, playheadT, playheadT, gapS)) {
+              continue;
+            }
+            if (d > worstDistance) {
+              worstDistance = d;
+              worstIdx = i;
+            }
+          }
+          if (worstIdx === -1) {
+            for (var j = 0; j < runs.length; j++) {
+              if (!runs[j] || !runs[j].isCurrent) return j;
+            }
+          }
+          return worstIdx;
+        }
+        function distanceFromPlayhead(span, playheadT) {
+          if (playheadT == null) return Infinity;
+          if (!span || typeof span.start !== "number" || typeof span.end !== "number") return Infinity;
+          if (playheadT >= span.start && playheadT <= span.end) return 0;
+          return playheadT < span.start ? span.start - playheadT : playheadT - span.end;
+        }
+        function runCanServe(span, t, gapS) {
+          if (!span || typeof span.start !== "number" || typeof span.end !== "number") return false;
+          var gap = typeof gapS === "number" ? gapS : DISJOINT_GAP_S;
+          return t >= span.start - gap && t <= span.end + gap;
+        }
+        var PMRunsCore = {
+          DISJOINT_GAP_S,
+          BOUNDARY_WINDOW_MS,
+          BOUNDARY_MAX,
+          KEEP_RUNS,
+          isContiguousWith,
+          classifyBoundary,
+          selectRunToRetire,
+          distanceFromPlayhead,
+          runCanServe
+        };
+        root.PMRuns = PMRunsCore;
+        if (typeof module !== "undefined" && module.exports) {
+          module.exports = { PMRunsCore };
+        }
+      })(typeof globalThis !== "undefined" ? globalThis : exports);
+    }
+  });
+
   // src/offscreen-src.js
   var require_offscreen_src = __commonJS({
     "src/offscreen-src.js"() {
       init_src();
       var import_language = __toESM(require_language());
       var import_decode = __toESM(require_decode());
+      var import_runs = __toESM(require_runs());
       var MODEL_IDS = {
         tiny: "Xenova/whisper-tiny.en",
         base: "Xenova/whisper-base.en",
@@ -14192,6 +14303,11 @@
           // new run) - once true, the fed-data clamp in pickNextWindow is no
           // longer needed, since a genuinely closed stream reports "no more
           // data" cleanly instead of hanging.
+          // 0.1.41: the START of what this run has been fed. fedEnd alone could
+          // say how far a run reached but never where it began, so nothing could
+          // ask the question that matters after a seek storm: can this run serve
+          // the playhead at all?
+          fedStart: null,
           fedEnd: null,
           streamClosed: false
         };
@@ -15256,6 +15372,29 @@
             log("[PM-STALL] restart requested for", key, "but a transcription attempt is genuinely in progress (heartbeating) - ignoring, not killing live work");
             return;
           }
+          const runsApi = globalThis.PMRuns;
+          const cur = s.currentRun;
+          const curSpan = cur && cur.fedStart != null && cur.fedEnd != null ? { start: cur.fedStart, end: cur.fedEnd } : null;
+          const canServe = runsApi && s.currentTimeS != null ? runsApi.runCanServe(curSpan, s.currentTimeS) : true;
+          const servedByAnotherRun = runsApi && s.currentTimeS != null ? s.runs.some((r) => r !== cur && runsApi.runCanServe(
+            r.fedStart != null && r.fedEnd != null ? { start: r.fedStart, end: r.fedEnd } : null,
+            s.currentTimeS
+          )) : false;
+          if (!canServe && !servedByAnotherRun) {
+            notifyTab(
+              s,
+              "[PM-STALL] no run can decode the playhead at " + (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : "unknown") + " (current run " + (curSpan ? "[" + curSpan.start.toFixed(2) + "," + curSpan.end.toFixed(2) + ")" : "has been fed nothing") + ") - requesting a fresh run for this region rather than re-running the picker over the same mapping"
+            );
+            chrome.runtime.sendMessage({
+              type: "pm-request-run-rebuild",
+              tabId: s.tabId,
+              videoId: s.videoId,
+              atS: s.currentTimeS
+            }).catch(() => {
+            });
+            maybeProcess(s);
+            return;
+          }
           notifyTab(s, "[PM-STALL] restart requested for " + key + " - no attempt in progress, forcing maybeProcess re-run");
           maybeProcess(s);
           return;
@@ -15283,13 +15422,37 @@
             s.runs.push(run);
             s.currentRun = run;
             log("new byte run #" + s.runs.length);
-            const KEEP_RUNS = 2;
-            while (s.runs.length > KEEP_RUNS) closeRun(s.runs.shift());
+            const runsApi = globalThis.PMRuns;
+            const keepRuns = runsApi ? runsApi.KEEP_RUNS : 2;
+            while (s.runs.length > keepRuns) {
+              let victimIdx = 0;
+              if (runsApi) {
+                victimIdx = runsApi.selectRunToRetire({
+                  runs: s.runs.map((r) => ({
+                    span: r.fedStart != null && r.fedEnd != null ? { start: r.fedStart, end: r.fedEnd } : null,
+                    isCurrent: r === s.currentRun
+                  })),
+                  playheadT: s.currentTimeS,
+                  maxRuns: keepRuns
+                });
+              }
+              if (victimIdx < 0) break;
+              const victim = s.runs[victimIdx];
+              notifyTab(
+                s,
+                "[PM-RUN-RETIRE] closing run " + (victim.fedStart != null ? "[" + victim.fedStart.toFixed(2) + "," + (victim.fedEnd != null ? victim.fedEnd.toFixed(2) : "?") + ")" : "(nothing fed)") + " - furthest from the playhead at " + (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : "unknown")
+              );
+              s.runs.splice(victimIdx, 1);
+              closeRun(victim);
+            }
           }
           if (s.currentRun) {
             appendToRun(s.currentRun, bytes);
             if (typeof msg.growthAbsEnd === "number" && !Number.isNaN(msg.growthAbsEnd)) {
               s.currentRun.fedEnd = s.currentRun.fedEnd == null ? msg.growthAbsEnd : Math.max(s.currentRun.fedEnd, msg.growthAbsEnd);
+            }
+            if (typeof msg.growthAbsStart === "number" && !Number.isNaN(msg.growthAbsStart)) {
+              s.currentRun.fedStart = s.currentRun.fedStart == null ? msg.growthAbsStart : Math.min(s.currentRun.fedStart, msg.growthAbsStart);
             }
             if (msg.localTimeSec != null && msg.growthAbsStart != null) {
               const delta = msg.growthAbsStart - msg.localTimeSec;

@@ -222,6 +222,12 @@
       // "why did it think this was Korean" has to be answerable from a
       // pasted log rather than reproduced.
       language: [],
+      // 0.1.41: run topology decisions (boundary suppressed, run opened,
+      // run retired, rebuild requested). A seek storm reshapes which demux
+      // run serves which region, and when that mapping goes wrong the
+      // symptom is audio that simply never decodes. Without these records
+      // a paste shows the consequence and none of the decisions.
+      runs: [],
       truncated: false
     };
   }
@@ -646,6 +652,24 @@
     markDirty();
   }
 
+  function logRunTopology(entry) {
+    if (!current || !entry) return;
+    pushCapped(
+      current.runs,
+      {
+        t: mediaTime(),
+        wall: now(),
+        event: String(entry.event || "unknown"),
+        reason: entry.reason == null ? null : String(entry.reason),
+        spanStart: typeof entry.spanStart === "number" ? entry.spanStart : null,
+        spanEnd: typeof entry.spanEnd === "number" ? entry.spanEnd : null,
+        atS: typeof entry.atS === "number" ? entry.atS : null
+      },
+      MAX_HEALTH
+    );
+    markDirty();
+  }
+
   function logError(text) {
     var ev = { t: mediaTime(), wall: now(), text: String(text) };
     if (!current) {
@@ -705,6 +729,7 @@
     logError: logError,
     logHealth: logHealth,
     logLanguage: logLanguage,
+    logRunTopology: logRunTopology,
     setTimeSource: setTimeSource,
     flushNow: flushNow,
     // exposed for tests/inspection; not part of the contract consumers use

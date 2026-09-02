@@ -510,6 +510,25 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
         /* stale port; next heartbeat or coverage growth will resolve it */
       }
     }
+  } else if (msg.type === 'pm-request-run-rebuild' || msg.type === 'pm-run-topology') {
+    // 0.1.41: run-topology traffic between offscreen and the tab. The
+    // rebuild request travels to content.js, which is the only context that
+    // can reach capture.js in the MAIN world where the cached init bytes
+    // live; topology events travel the same way so they reach the devlog.
+    var runPort = portsByTabId.get(msg.tabId);
+    if (runPort) {
+      try {
+        runPort.postMessage({
+          type: msg.type === 'pm-request-run-rebuild' ? 'request-run-rebuild' : 'run-topology',
+          videoId: msg.videoId,
+          atS: msg.atS,
+          event: msg.event,
+          reason: msg.reason,
+          spanStart: msg.spanStart,
+          spanEnd: msg.spanEnd
+        });
+      } catch (e) {}
+    }
   } else if (msg.type === 'pm-language-decision') {
     // 0.1.37: every language decision, including the ones that declined to
     // act, relayed to the tab so it lands in the devlog. See

@@ -2831,6 +2831,30 @@
         // source (applyDetectedLanguage is idempotent past the first
         // real change either way).
         applyDetectedLanguage(msg.videoId, msg.language);
+      } else if (msg.type === 'request-run-rebuild') {
+        // 0.1.41: offscreen found that no run can decode the playhead. Only
+        // capture.js (MAIN world) holds the cached init bytes needed to
+        // open one, so relay the request across the same bridge the
+        // eviction check already uses.
+        TWARN(TAG, '[PM-RUN-REBUILD] offscreen cannot decode the playhead at ' +
+          (msg.atS != null ? msg.atS.toFixed(2) : 'unknown') + ' - asking capture.js for a fresh run');
+        devlog('logRunTopology', {
+          event: 'rebuild-requested',
+          reason: 'no-run-serves-playhead',
+          atS: msg.atS
+        });
+        try {
+          window.postMessage({ __pmToCapture: 'PM_CONTENT', type: 'force-run-boundary', atS: msg.atS }, location.origin);
+        } catch (e) {}
+      } else if (msg.type === 'run-topology') {
+        // Suppressions and retirements, recorded so a future paste shows
+        // the run topology decisions rather than only their consequences.
+        devlog('logRunTopology', {
+          event: msg.event,
+          reason: msg.reason,
+          spanStart: msg.spanStart,
+          spanEnd: msg.spanEnd
+        });
       } else if (msg.type === 'language-decision') {
         // 0.1.37: recorded whatever the outcome, including holds.
         TLOG(
@@ -2974,6 +2998,18 @@
 
   function handleCaptureMessage(data) {
     if (!data) return;
+
+    if (data.type === 'run-topology') {
+      // 0.1.41: capture.js's own topology decisions (a suppressed or opened
+      // boundary), recorded in the devlog alongside offscreen's.
+      devlog('logRunTopology', {
+        event: data.event,
+        reason: data.reason,
+        spanStart: data.spanStart,
+        spanEnd: data.spanEnd
+      });
+      return;
+    }
 
     if (data.type === 'chainlog') {
       // capture.js runs in a separate JS realm (MAIN world) - its console
