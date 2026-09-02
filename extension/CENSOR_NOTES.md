@@ -742,6 +742,99 @@ of that file) - it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
+## RELEASE BLOCKER (2026-09-02, 0.1.44): bundle the model weights, no more runtime fetch
+
+The pre-listing blocker. The Whisper weights were fetched from
+huggingface.co at runtime, which MV3 and the Chrome Web Store reject as
+remotely-hosted code, breaks the "nothing leaves your device" claim, and
+makes transcription depend on a third party's uptime. They are now bundled
+into the extension and loaded from disk, with remote loading hard-off.
+
+### What is bundled, and why fp32 is large
+
+Three model repos, the only ones the shipped code can reach:
+
+| local id | repo | role |
+|---|---|---|
+| `base` | `Xenova/whisper-base.en` | the English default (DEFAULT_MODEL) |
+| `lang-detect` | `Xenova/whisper-tiny` | the language-gate probe |
+| `multilingual` | `Xenova/whisper-base` | a confirmed non-English switch, paired with the `shared/packs/` wordlists |
+
+`whisper-tiny.en` and `whisper-small.en` sit in `MODEL_IDS` but no UI can
+select them (there is no `pm_model` picker), so they are excluded rather
+than shipped as dead weight.
+
+**Size, stated plainly, because it is a submission fact.** The code loads
+with `dtype: 'fp32'` (the quantized decoder hits an onnxruntime-web
+MatMulNBits bug, per the spike notes), and fp32 is four bytes per
+parameter. The bundled weights total **~707MB** across the three repos
+(base.en 280MB, tiny 147MB, base 280MB), which is roughly four times the
+~160MB an int8 estimate would suggest. This is the faithful number:
+bundling matches what the extension runs today, and changing the dtype to
+shrink the package is a transcription-quality decision, not a bundling one,
+and belongs to its own round if install size becomes a listing problem. The
+compressed store zip is smaller; the measured figure is in the round
+report.
+
+The file set per repo was not guessed. It was recorded by running the exact
+`pipeline()` the worker uses against a clean cache and observing which files
+landed: `config.json`, `tokenizer.json`, `tokenizer_config.json`,
+`generation_config.json`, `preprocessor_config.json`, and the fp32
+`onnx/encoder_model.onnx` + `onnx/decoder_model_merged.onnx` (fp32 carries
+no dtype suffix).
+
+### How they load
+
+`env.allowLocalModels = true`, `env.allowRemoteModels = false` (hard-off, so
+a missing or misnamed file fails loudly in dev instead of silently reaching
+the network in production), and `env.localModelPath` set from the worker's
+`init` message to `chrome.runtime.getURL('models/')` (getURL is only
+available on the main thread, so it is passed in exactly as `wasmPaths`
+already was). The local directory mirrors the Hub id, so
+`Xenova/whisper-base.en` resolves to `models/Xenova/whisper-base.en/` with
+no id remapping. `manifest.json`'s `web_accessible_resources` gains
+`models/*`.
+
+The onnxruntime-web WASM runtime was already local: `build.js` copies the
+`ort-wasm-simd-threaded.*` files into `dist/` and `env.backends.onnx.wasm
+.wasmPaths` points at `getURL('dist/')`. Confirmed, no CDN.
+
+### The build step
+
+Weights are gitignored (`extension/models/`), not committed: 707MB does not
+belong in git, and they are reproducible. The build path:
+
+- `npm run fetch-models` downloads them (idempotent), from
+  `scripts/model-manifest.mjs`, the single source of truth shared by the
+  fetch, the check, and the unit test.
+- `npm run package` = fetch + build, the actual ship path.
+- `npm run check-models` gates presence and rejects stub/LFS-pointer ONNX
+  files.
+- `npm run build` alone (JS only) just warns if `models/` is absent, so a
+  routine dev build does not force a 707MB download.
+
+The shipped zip must therefore be produced by `npm run package` (or a fetch
+followed by build), not a bare git checkout.
+
+### Offline verification
+
+`npm run verify:offline` is the acceptance test, and it makes "no network" a
+fact rather than a config flag: it replaces global `fetch` with one that
+throws on any http URL, sets the worker's exact env (remote off), and then
+loads and transcribes. Result: base.en loads from `models/` and produces a
+real transcript ("Well, darn it, I dropped my coffee again..."), and the
+tiny and multilingual models both load offline, with a sample language pack
+confirmed present so the non-English path (model + pack) is local end to
+end. Every one of these happens with huggingface.co unreachable.
+
+### Future note
+
+Non-English support is a working feature, not dead weight: the gate swaps
+to the detected language's curated pack in `shared/packs/` (27 languages).
+It stays exactly as it was. If the ~707MB fp32 install ever becomes a
+review or install-size problem, the lever is the dtype, evaluated against
+the MatMulNBits bug, in a dedicated round.
+
 ## FIX ROUND (2026-09-02, 0.1.43): two numbers that were produced without being computed
 
 Catch-up across four rounds: 35.8s, 25.2s, 15.2s, and this round targets

@@ -3377,3 +3377,32 @@ being computed". Pipeline-side specifics:
   `inference` (pure model call) versus `modelResolve` (getTranscriber
   await), which separates loading from warm-up. `inferenceCount` resets on
   respawn, which is the boundary the question is about.
+
+## 0.1.44: bundled model weights (pre-listing blocker)
+
+Full write-up in CENSOR_NOTES.md "bundle the model weights, no more runtime
+fetch". Pipeline-side specifics:
+
+- **Worker env is local-only.** `src/whisper-worker-src.js`:
+  `allowLocalModels=true`, `allowRemoteModels=false` (hard-off),
+  `useBrowserCache=false`. `env.localModelPath` is set from the `init`
+  message's `modelsBase`, which `src/offscreen-src.js` fills with
+  `chrome.runtime.getURL('models/')` (getURL is main-thread only, so it is
+  passed in like `wasmPathsBase`). `MODEL_IDS` is unchanged, since the local
+  layout mirrors the Hub id.
+- **`scripts/model-manifest.mjs`** is the one source of truth for repos +
+  files, imported by `scripts/fetch-models.mjs` (download),
+  `verify/check-models.mjs` (fast presence gate), and
+  `test/model_manifest_test.js` (shape). The file list is the recorded fp32
+  set, not an assumed one.
+- **`web_accessible_resources` += `models/*`** so the worker can fetch the
+  weights via getURL. `*` matches nested paths in MV3.
+- **ONNX WASM already local**: `build.js` copies `ort-wasm-simd-threaded.*`
+  into `dist/`; `env.backends.onnx.wasm.wasmPaths = getURL('dist/')`. No CDN.
+- **`verify/verify-offline.mjs`** blocks global fetch, loads all three
+  models under the shipped env, transcribes the English test wav, and
+  confirms a language pack is present: proof the English and non-English
+  paths are both offline.
+- **`models/` is gitignored**; `npm run package` (fetch + build) produces
+  the shippable tree. `npm run build` alone only warns when models are
+  absent.
