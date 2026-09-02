@@ -3118,3 +3118,31 @@ the first field test found"; the pipeline-side specifics:
   renders through a microtask so a burst (play + seeking + a window
   landing) is one render, and `addWords` calls it so coverage and the label
   change in the same instant.
+
+## 0.1.35: the segment-rebinds-session bug, pill tracing, faster first hang
+
+Full write-up in CENSOR_NOTES.md "the pill was right, the session was not".
+Pipeline-side specifics:
+
+- **The relay no longer rebinds the session.** `handleCaptureMessage`'s
+  'segment' branch used to run `session = newSession(data.videoId)` on any
+  videoId mismatch, so one late segment from the previous video wiped
+  coverage, `intervals` (the mute schedule) and `bufferedRanges`, and
+  `addWords` then dropped every result for the real current video. The
+  decision moved to `PMSessionBinding.segmentAction()` in
+  `shared/session_binding.js`; content.js only creates, uses, ignores or
+  (after a consecutive run of the same unexpected id) resets.
+- **`session.instanceId`** is a monotonic per-page counter, purely
+  diagnostic. It makes "two paths, two session objects" visible in a log,
+  which is what this round had to infer from symptoms instead.
+- **`[PM-PILL]` traces on state CHANGE only**, gated on `pm_debugOverlay`,
+  emitted via `TLOG` so it reaches the Copy-logs ring buffer. The trace is
+  built once inside `computeStatusState` and attached to whichever state is
+  returned (`withTrace`), so it can never disagree with the decision it is
+  explaining. `coverageEndNear()` reports the coverage end relevant to the
+  playhead rather than a global max, which would hide a gap sitting right
+  in front of the playhead.
+- **Stage timeouts are now per attempt**: `withStageTimeout(promise, label,
+  timeoutMs)` with `stageTimeoutMsFor(attemptsSoFar)` giving 10s on the
+  first attempt and the original 25s once a rebuild has been tried. Applied
+  at all three stage call sites (track-ready, get-sample-rate, decode).

@@ -742,6 +742,93 @@ of that file) - it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
+## FIX ROUND (2026-09-02, 0.1.35): the pill was right, the session was not
+
+The 0.1.34 pill fixes did not stop the field reports, and the second
+re-test made the reason unmistakable: the pill was showing states that were
+impossible on fresh inputs. "Press play to load audio" while PAUSED with
+captured audio at the playhead, and "Analyzing" with 28 seconds of coverage
+ahead of the playhead when the margin is 5. Two rounds had been spent
+improving a state machine that was already correct.
+
+### The actual bug
+
+`content.js` keyed its per-video session on videoId, and the audio relay
+contained this:
+
+```js
+if (!session || session.videoId !== data.videoId) {
+  session = newSession(data.videoId);
+}
+```
+
+A segment is data about audio. It arrives asynchronously, in a stream, from
+a MAIN-world script with its own view of which video is playing. One late
+segment carrying the PREVIOUS video's id, landing just after a video-change
+reset, therefore replaced the live session with an empty one bound to the
+old video. Coverage, the mute schedule and the captured-range bookkeeping
+all went in a single assignment. Worse, every subsequent transcription
+result for the CURRENT video was then dropped by `addWords`' own
+`session.videoId !== videoId` guard, so none of it could be rebuilt.
+
+Both symptoms are the same fact seen twice: no `bufferedRanges` means
+nothing captured at the playhead ("Press play"), and no `coveredIntervals`
+means nothing analyzed ("Analyzing"). The pill was reporting an empty
+session accurately, while the console showed the pipeline producing
+coverage for a session nothing was reading any more. It also explains the
+pause-catchup churn in the log (three engages, two ownership-cleared): each
+wipe made the playhead uncovered again.
+
+This was never a display bug. It was a filter that had silently stopped
+filtering, wearing a display bug as a disguise, and it survived two rounds
+because the symptom looked cosmetic.
+
+**The rule**: navigation redefines which video the tab is on, and
+`capture.js` sends an explicit reset for that. A segment never does. The
+one exception is a missed reset, which would otherwise mean ignoring
+segments forever, so a short run of segments for the same unexpected id is
+adopted as the reset we never received. Alternating ids never accumulate
+toward that, because alternation means confusion rather than navigation and
+adopting either would be a coin flip on which video is being filtered.
+
+Extracted to `shared/session_binding.js` as a pure function with its own
+test file, deliberately: a four-line conditional in a message handler is
+exactly the shape of thing that hides a protection failure, and this one
+did, for two releases.
+
+### Tracing, so the next one is not deduced
+
+Every pill state CHANGE (not every tick, which would drown the log) now
+emits `[PM-PILL]` with the whole input vector: playhead, paused,
+captured-at-playhead plus nearest captured range, coverage end near the
+playhead, uncovered-within-margin, growth recency, the promise ledger, and
+the session identity. Gated on `pm_debugOverlay` and routed through `TLOG`
+so it lands in the ring buffer that "Copy logs" pastes, meaning a single
+paste reconstructs the pill's history.
+
+Sessions carry an `instanceId` for the same reason. The bug this round was
+two code paths holding different session objects, where every individual
+value looks plausible and only the identity is wrong. That is invisible in
+a log full of numbers and obvious in a log that prints which object
+produced them.
+
+### Hang timeout: 10s on the first attempt
+
+25s was chosen when a timeout meant "give up on this window", so it had to
+be generous enough never to punish a slow machine. Since 0.1.34 the second
+attempt rebuilds the decode pipeline, which is cheap and is the repair most
+likely to clear a wedged decoder, so waiting 25 seconds before trying it
+was pure dead time. First attempts now wait 10s; post-rebuild attempts keep
+the full 25s, so slowness is still never punished. Worst case before
+anything changes drops from about 50s to about 35s.
+
+### Tests
+
+`session_binding_test.js` (12) pins the rule: late segments ignored,
+matching traffic clearing a stale run, the missed-reset backstop firing
+after a consecutive run, alternating ids never accumulating, and junk input
+never producing a rebind. Suite: 252 node checks, 181 browser checks.
+
 ## FIX ROUND (2026-09-02, 0.1.34): what the first field test found
 
 Two devlogs from a real machine, and every item below is a defect they
