@@ -54,7 +54,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "shared/packs/*.json"
+        "shared/packs/*.json",
+        "icons/icon32.png"
       ],
       "matches": [
         "https://www.youtube.com/*"

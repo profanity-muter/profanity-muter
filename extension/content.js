@@ -1525,7 +1525,7 @@
     if (settings.enabled && isUnhealthy()) {
       setStatusPillActive(true, 'warning');
       if (statusPillEl) {
-        statusPillEl.textContent = 'Profanity Muter is NOT filtering this video';
+        setPillContent('Profanity Muter is NOT filtering this video');
       }
       return;
     }
@@ -1538,7 +1538,7 @@
     var milestone = activeMilestoneText();
     if (milestone) {
       setStatusPillActive(true, 'milestone');
-      if (statusPillEl) statusPillEl.textContent = milestone;
+      if (statusPillEl) setPillContent(milestone);
       return;
     }
     var status = computeStatusState();
@@ -1549,16 +1549,16 @@
     setStatusPillActive(true, 'normal');
     if (!statusPillEl) return;
     var label;
-    if (status.kind === 'off') label = '🛡 Off';
-    else if (status.kind === 'shorts') label = '🛡 Shorts not supported';
-    else if (status.kind === 'live') label = '🛡 Live - limited support';
-    else if (status.kind === 'protected') label = '🛡 Protected';
-    else if (status.kind === 'analyzing-safe') label = '🛡 Analyzing - safe to pause (~' + status.etaS + 's)';
-    else if (status.kind === 'buffering') label = '🛡 Buffering + analyzing…';
-    else if (status.kind === 'needs-play') label = '🛡 Press play to load audio';
-    else label = '🛡 Analyzing…';
+    if (status.kind === 'off') label = 'Off';
+    else if (status.kind === 'shorts') label = 'Shorts not supported';
+    else if (status.kind === 'live') label = 'Live - limited support';
+    else if (status.kind === 'protected') label = 'Protected';
+    else if (status.kind === 'analyzing-safe') label = 'Analyzing - safe to pause (~' + status.etaS + 's)';
+    else if (status.kind === 'buffering') label = 'Buffering + analyzing…';
+    else if (status.kind === 'needs-play') label = 'Press play to load audio';
+    else label = 'Analyzing…';
     // Multilingual support (0.1.25): show the detected language once known,
-    // whenever it's not English - e.g. "🛡 Protected · es". Omitted for
+    // whenever it's not English - e.g. "Protected · es" (with the logo mark prefixed). Omitted for
     // English (the default/common case needs no extra label) and for the
     // 'off' state (transcription has been given up on entirely; language
     // isn't meaningful there).
@@ -1567,13 +1567,32 @@
     }
     var count = session ? session.mutedCount || 0 : 0;
     if (count > 0) label += ' · ' + count + ' muted';
-    statusPillEl.textContent = label;
+    setPillContent(label);
   }
   // `tone` is 'normal' or 'warning'. The warning treatment is deliberately
   // loud relative to the routine pill (solid red rather than translucent
   // black, and bold) because it is the one pill state a user must not
   // skim past. No emoji, consistent with the rest of the extension's
   // styling.
+
+  // The pill leads with the extension's own mark (icons/icon32.png, listed
+  // in web_accessible_resources) rather than a generic shield emoji, so
+  // the pill is visibly OURS on a page full of YouTube's UI. Content is
+  // rebuilt img+text on every update; the img is 12px, decorative
+  // (alt=""), and never receives pointer events (the pill itself is
+  // pointer-events:none).
+  function setPillContent(text) {
+    if (!statusPillEl) return;
+    while (statusPillEl.firstChild) statusPillEl.removeChild(statusPillEl.firstChild);
+    try {
+      var mark = document.createElement('img');
+      mark.src = chrome.runtime.getURL('icons/icon32.png');
+      mark.alt = '';
+      mark.style.cssText = 'width:12px;height:12px;vertical-align:-2px;margin-right:5px;border-radius:2px;';
+      statusPillEl.appendChild(mark);
+    } catch (e) { /* chrome.* unavailable: text-only pill */ }
+    statusPillEl.appendChild(document.createTextNode(text));
+  }
   var statusPillTone = null;
   function setStatusPillActive(active, tone) {
     tone = tone || 'normal';
