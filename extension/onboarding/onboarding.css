@@ -1,75 +1,146 @@
 /* onboarding/onboarding.css
-   Loaded AFTER popup/popup.css, which supplies every design token and
-   every control style (switches, radios, buttons, inputs, hints). This
-   file does exactly two things: undo the popup's fixed 320px body width,
-   and lay out a full page. Anything that styles a CONTROL belongs in
-   popup.css so both surfaces get it.
+   Loaded AFTER popup/popup.css, which supplies control behavior styles.
+   This file is the shared FULL-PAGE SHELL for every extension page
+   (report/report.html loads it too) and carries the extension-page
+   visual identity: ink-on-paper, navy #1d2f54 and gold #e8c46c drawn
+   directly from the product mark. Image-free by design; the craft is
+   type, rhythm, and restraint.
 
-   Despite the name, this is the shared FULL-PAGE SHELL for every
-   extension page, not just onboarding - report/report.html loads it too
-   and uses the same .ob-page / .ob-field / .ob-ack scaffolding. Kept
-   under this name rather than renamed to avoid churning a working file
-   for cosmetics; if a third page appears, rename it then. */
+   Contract kept from the previous version: every class the pages and
+   the verify harness rely on (.ob-page, .ob-field, .ob-ack, .ob-dots,
+   .pm-hidden and all control classes) keeps its name and behavior;
+   only presentation changed. */
+
+:root {
+  --ink: #1d2f54;
+  --ink-60: #56617e;
+  --ink-30: #b9bfce;
+  --gold: #e8c46c;
+  --gold-deep: #8a6d1f;
+  --paper: #faf8f2;
+  --paper-raised: #ffffff;
+  --hairline: #e4dfd2;
+}
+
+[data-theme="dark"] {
+  --ink: #eae6da;
+  --ink-60: #a8a99f;
+  --ink-30: #4d5468;
+  --gold: #e8c46c;
+  --gold-deep: #e8c46c;
+  --paper: #16223d;
+  --paper-raised: #1d2f54;
+  --hairline: #2b3a5e;
+}
 
 body {
-  /* popup.css pins this to the popup's 320px. */
   width: auto;
   min-height: 100vh;
-  padding: 32px 20px 64px;
+  padding: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
 .ob-page {
-  max-width: 620px;
+  max-width: 560px;
   margin: 0 auto;
+  padding: 72px 28px 88px;
 }
 
+/* ---- Header: mark, quiet wordmark, progress rail -------------------- */
+
 .ob-header {
-  margin-bottom: 28px;
+  margin-bottom: 44px;
 }
 
 .ob-title {
   margin: 0;
-  font-size: 20px;
-  font-weight: 650;
-  letter-spacing: -0.01em;
+  font-size: 32px;
+  font-weight: 350;
+  letter-spacing: -0.015em;
+  line-height: 1.15;
 }
 
 .ob-subtitle {
-  margin: 6px 0 0;
-  font-size: 13px;
-  color: var(--pm-muted);
+  margin: 10px 0 0;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-60);
+  max-width: 46ch;
 }
 
-/* Progress dots. Filled = done or current, hollow = ahead. */
+/* Progress: a hairline rail with numbered stations. Same four .ob-dot
+   elements; numerals come from a CSS counter so the markup is unchanged. */
 .ob-dots {
   display: flex;
-  gap: 8px;
-  margin-top: 18px;
+  align-items: center;
+  gap: 0;
+  margin-top: 30px;
+  counter-reset: station;
 }
 
 .ob-dot {
-  width: 8px;
-  height: 8px;
+  counter-increment: station;
+  width: 26px;
+  height: 26px;
   border-radius: 50%;
-  background: var(--pm-track-off);
-  transition: background 120ms ease;
+  background: none;
+  border: 1px solid var(--ink-30);
+  color: var(--ink-60);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  transition: border-color 150ms ease, color 150ms ease, background 150ms ease;
+}
+
+.ob-dot::before {
+  content: counter(station);
+}
+
+.ob-dot + .ob-dot {
+  margin-left: 34px;
+  position: relative;
+}
+
+.ob-dot + .ob-dot::after {
+  content: "";
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  width: 34px;
+  height: 1px;
+  background: var(--ink-30);
 }
 
 .ob-dot--done {
-  background: var(--pm-accent);
+  background: var(--ink);
+  border-color: var(--ink);
+  color: var(--paper);
 }
 
+.ob-dot--done:last-of-type,
+.ob-dot--done + .ob-dot:not(.ob-dot--done) {
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--gold) 45%, transparent);
+}
+
+/* ---- Step body ------------------------------------------------------ */
+
 .ob-step-title {
-  margin: 0 0 12px;
-  font-size: 17px;
-  font-weight: 620;
+  margin: 0 0 14px;
+  font-size: 20px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
 }
 
 .ob-lede {
-  margin: 0 0 16px;
-  font-size: 13.5px;
-  line-height: 1.55;
-  color: var(--pm-fg);
+  margin: 0 0 22px;
+  font-size: 14.5px;
+  line-height: 1.65;
+  max-width: 50ch;
 }
 
 .ob-list {
@@ -78,39 +149,100 @@ body {
   list-style: none;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 0;
+  counter-reset: point;
 }
 
 .ob-list li {
-  font-size: 13.5px;
-  line-height: 1.55;
-  color: var(--pm-muted);
-  padding-left: 14px;
-  border-left: 2px solid var(--pm-border);
+  counter-increment: point;
+  font-size: 14px;
+  line-height: 1.6;
+  color: var(--ink-60);
+  padding: 16px 0 16px 40px;
+  border-top: 1px solid var(--hairline);
+  position: relative;
+}
+
+.ob-list li:last-child {
+  border-bottom: 1px solid var(--hairline);
+}
+
+.ob-list li::before {
+  content: counter(point, lower-roman) ".";
+  position: absolute;
+  left: 2px;
+  top: 16px;
+  font-style: italic;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 15px;
+  color: var(--gold-deep);
+  min-width: 28px;
 }
 
 .ob-list strong {
-  color: var(--pm-fg);
-  font-weight: 600;
+  color: var(--ink);
+  font-weight: 570;
   display: block;
-  margin-bottom: 2px;
+  margin-bottom: 3px;
 }
 
-/* One settings block on the setup step. */
+/* ---- Settings blocks ------------------------------------------------ */
+
 .ob-field {
-  padding: 18px 0;
-  border-top: 1px solid var(--pm-border);
+  padding: 22px 0;
+  border-top: 1px solid var(--hairline);
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
+.ob-field .pm-label {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-60);
+}
+
 .ob-field .pm-hint {
   margin: 0;
+  color: var(--ink-60);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .ob-field .pm-button {
   align-self: flex-start;
+}
+
+/* Radios: full-width quiet rows; selection is an ink ring, the current
+   choice's title carries a small gold tick drawn with a border, not an
+   icon font. */
+.pm-radio-group--stacked .pm-radio-label--stacked {
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  padding: 14px 16px;
+  background: var(--paper-raised);
+  transition: border-color 120ms ease;
+}
+
+.pm-radio-group--stacked .pm-radio-label--stacked:hover {
+  border-color: var(--ink-30);
+}
+
+.pm-radio-group--stacked .pm-radio-label--stacked:has(input:checked) {
+  border-color: var(--ink);
+  box-shadow: inset 3px 0 0 var(--gold);
+}
+
+.pm-radio-title {
+  font-weight: 570;
+  color: var(--ink);
+}
+
+.pm-radio-desc {
+  color: var(--ink-60);
+  line-height: 1.55;
 }
 
 .ob-locked,
@@ -121,9 +253,10 @@ body {
 }
 
 .ob-locked {
-  padding: 12px;
-  border: 1px solid var(--pm-border);
-  border-radius: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--paper-raised);
   margin-bottom: 4px;
 }
 
@@ -132,47 +265,91 @@ body {
   align-self: flex-start;
 }
 
-/* The acknowledgment gate. Given real weight on the page - it is the one
-   thing on this screen, and it is a decision, not a formality. */
+/* ---- The acknowledgment gate ---------------------------------------
+   Inverse panel: the one signed decision on the page reads as a
+   document, ink field with paper text, gold rule above. */
 .ob-ack {
   display: flex;
-  gap: 12px;
+  gap: 14px;
   align-items: flex-start;
-  padding: 16px;
-  border: 1px solid var(--pm-border);
-  border-radius: 10px;
-  font-size: 13.5px;
-  line-height: 1.55;
+  padding: 22px 24px;
+  border: none;
+  border-top: 2px solid var(--gold);
+  border-radius: 4px;
+  background: var(--ink);
+  color: var(--paper);
+  font-size: 14px;
+  line-height: 1.65;
   cursor: pointer;
 }
 
-.ob-ack input {
-  margin: 2px 0 0;
-  width: 16px;
-  height: 16px;
-  flex: 0 0 auto;
-  accent-color: var(--pm-accent);
+[data-theme="dark"] .ob-ack {
+  background: var(--paper-raised);
+  color: var(--ink);
 }
+
+.ob-ack input {
+  margin: 3px 0 0;
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  accent-color: var(--gold);
+}
+
+/* ---- Navigation ----------------------------------------------------- */
 
 .ob-nav {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 28px;
-  padding-top: 20px;
-  border-top: 1px solid var(--pm-border);
+  gap: 12px;
+  margin-top: 36px;
+  padding-top: 24px;
+  border-top: 1px solid var(--hairline);
 }
 
-/* ---- Report a problem page (report/report.html) --------------------------
-   That page reuses this file as the shared extension-page shell (body
-   width, .ob-page, .ob-field, .ob-ack); only what is specific to it lives
-   below. */
+.ob-nav .pm-button {
+  background: var(--ink);
+  color: var(--paper);
+  border: none;
+  border-radius: 4px;
+  padding: 11px 26px;
+  font-size: 14px;
+  font-weight: 550;
+  letter-spacing: 0.01em;
+}
+
+.ob-nav .pm-button:hover {
+  background: color-mix(in srgb, var(--ink) 88%, var(--gold));
+}
+
+.ob-nav .pm-button--secondary {
+  background: none;
+  color: var(--ink-60);
+  border: none;
+  padding: 11px 10px;
+}
+
+.ob-nav .pm-button--secondary:hover {
+  color: var(--ink);
+  background: none;
+}
+
+.pm-button:focus-visible,
+.pm-link-button:focus-visible,
+.ob-ack input:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--gold-deep);
+  outline-offset: 2px;
+}
+
+/* ---- Report a problem page ------------------------------------------ */
+
 .rp-consent-detail {
   display: block;
   margin-top: 4px;
   font-size: 12.5px;
-  line-height: 1.5;
-  color: var(--pm-muted);
+  line-height: 1.55;
+  color: var(--ink-60);
 }
 
 .rp-actions {
@@ -186,9 +363,10 @@ body {
   flex-direction: column;
   align-items: flex-start;
   gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--pm-border);
-  border-radius: 8px;
+  padding: 14px 16px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  background: var(--paper-raised);
 }
 
 .rp-done .pm-hint {
@@ -198,4 +376,14 @@ body {
 .rp-email {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+  color: var(--gold-deep);
+}
+
+@media (max-width: 480px) {
+  .ob-page {
+    padding: 44px 20px 64px;
+  }
+  .ob-title {
+    font-size: 26px;
+  }
 }
