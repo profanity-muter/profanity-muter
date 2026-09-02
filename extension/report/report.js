@@ -140,17 +140,29 @@
     return navigator.clipboard.writeText(api.reportToJson(currentReport()));
   }
 
+  // The mail draft (Tier 1). Carries the compact, counts-only summary in
+  // the body so the report is actionable even if nobody pastes anything;
+  // see shared/report.js for why that inversion was the point of 0.1.33.
+  // The consent checkbox governs per-video data in BOTH tiers.
+  function currentMailto() {
+    var api = reportApi();
+    return api.buildMailto({
+      email: supportEmail(),
+      extensionVersion: extensionVersion(),
+      userAgent: (typeof navigator !== "undefined" && navigator.userAgent) || "",
+      whatHappened: whatEl.value,
+      videoUrl: videoEl.value.trim(),
+      devlog: consentEl.checked ? devlog : null,
+      logWithheld: !consentEl.checked
+    });
+  }
+
   function send() {
     var api = reportApi();
     if (!api) return;
     copyReport().then(
       function () {
-        var mailto = api.buildMailto({
-          email: supportEmail(),
-          extensionVersion: extensionVersion(),
-          whatHappened: whatEl.value,
-          videoUrl: videoEl.value.trim()
-        });
+        var mailto = currentMailto();
         mailtoEl.href = mailto;
         emailEl.textContent = supportEmail();
         show(doneEl, true);
@@ -169,15 +181,18 @@
         // Never a dead end: if the clipboard is unavailable, the report
         // still has to be gettable, so fall back to selecting it in the
         // textarea for a manual copy.
-        setStatus("Couldn't copy automatically - see below");
+        // The clipboard is the OPTIONAL tier now, so its failure is a
+        // minor inconvenience rather than a dead end: the mail draft
+        // already carries the summary that makes the report actionable.
+        setStatus("Couldn't copy the full log - the email still has the summary");
         show(doneEl, true);
         emailEl.textContent = supportEmail();
-        mailtoEl.href = api.buildMailto({
-          email: supportEmail(),
-          extensionVersion: extensionVersion(),
-          whatHappened: whatEl.value,
-          videoUrl: videoEl.value.trim()
-        });
+        mailtoEl.href = currentMailto();
+        try {
+          mailtoEl.click();
+        } catch (e) {
+          /* the fallback link is right there */
+        }
       }
     );
   }

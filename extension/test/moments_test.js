@@ -217,22 +217,26 @@ test("the store id is still the TODO placeholder (fails once the listing is live
   assert.strictEqual(M.STORE_ITEM_ID, "TODO_CHROME_WEB_STORE_ITEM_ID");
 });
 
-test("the support address is still the placeholder (fails once support is real)", () => {
-  // Same forcing function as the store id above: this fails the day the
-  // extension is listed, so a real support mailbox must be set in
-  // shared/moments.js rather than a placeholder shipping in the mailto:
-  // link of every problem report.
-  assert.strictEqual(M.SUPPORT_EMAIL, "support@example.com");
+test("the support address is the real mailbox, pinned so a change is deliberate", () => {
+  // Was a placeholder assertion until 0.1.33; now it pins the live
+  // address. If the profanitymuter.com domain ever lands this becomes
+  // support@profanitymuter.com AND the gmail keeps forwarding, because
+  // reports will go on arriving at whatever address shipped in old builds
+  // for years.
+  assert.strictEqual(M.SUPPORT_EMAIL, "profanity.muter@gmail.com");
 });
 
 test("the support address is a role address, never a personal mailbox", () => {
   // It goes out in every problem report's mailto: link, so it lands in
-  // strangers' mail clients and address books permanently.
-  assert.ok(/^[a-z]+@/.test(M.SUPPORT_EMAIL), M.SUPPORT_EMAIL);
-  ["gmail", "outlook", "yahoo", "proton"].forEach(function (needle) {
+  // strangers' mail clients and address books permanently. A project
+  // gmail satisfies that; a person's name in it would not. The earlier
+  // no-gmail rule assumed a custom domain the project does not have yet.
+  assert.ok(/^[a-z.]+@/.test(M.SUPPORT_EMAIL), M.SUPPORT_EMAIL);
+  ["nathanael", "desmond", "natedesmond", "alex", "stone"].forEach(function (needle) {
     assert.strictEqual(M.SUPPORT_EMAIL.toLowerCase().indexOf(needle), -1, needle);
   });
 });
+
 
 test("the share blurb is the agreed copy, and carries the link", () => {
   assert.strictEqual(

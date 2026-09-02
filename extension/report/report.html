@@ -53,6 +53,9 @@
             It holds the words that were matched and when, your settings, and
             which parts of the video were analyzed - not the transcripts of
             what was said, unless you turned on verbose logging yourself.
+            Unticking this leaves your viewing activity out of the email as
+            well as the attachment; the email still carries your version,
+            browser and settings.
           </span>
         </span>
       </label>
@@ -61,14 +64,15 @@
 
     <section class="ob-field">
       <span class="pm-label">Sending it</span>
-      <!-- Said plainly rather than glossed over: the paste step is a real
-           limitation of mailto: (no attachments, and a body carried in a
-           URL that clients truncate), and a user who isn't told will
-           assume the empty-looking email is a bug. -->
+      <!-- 0.1.33: the email now carries a short summary by itself, so the
+           paste step is genuinely optional and is described that way. The
+           previous copy made pasting sound mandatory, which meant every
+           report from someone who did not paste looked empty and
+           undiagnosable. -->
       <p class="pm-hint">
-        Email can't attach the report automatically, so this copies it to
-        your clipboard and opens a draft. <strong>Paste into the email</strong>
-        where it says to, then send.
+        This opens an email with a short summary already filled in, so it is
+        useful even if you send it as is. The full log is also copied to your
+        clipboard: paste it into the email if you can, but it is optional.
       </p>
       <div class="rp-actions">
         <button id="rp-send" class="pm-button" type="button">Copy report &amp; open email</button>
@@ -77,10 +81,10 @@
 
       <div class="rp-done pm-hidden" id="rp-done" aria-hidden="true">
         <p class="pm-hint">
-          <strong>Copied.</strong> If your email app didn't open, use the
-          link below - or send the report to
+          <strong>Your draft is ready</strong>, with the summary already in
+          it. If your email app didn't open, use the link below, or write to
           <span id="rp-email" class="rp-email"></span> from any email app.
-          Paste it into the message before sending.
+          The full log is on your clipboard if you want to paste it in too.
         </p>
         <a id="rp-mailto" class="pm-link-button" href="#">Open email app</a>
         <button id="rp-copy-again" class="pm-link-button" type="button">Copy the report again</button>
