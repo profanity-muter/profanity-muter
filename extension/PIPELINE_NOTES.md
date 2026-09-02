@@ -3146,3 +3146,36 @@ Pipeline-side specifics:
   timeoutMs)` with `stageTimeoutMsFor(attemptsSoFar)` giving 10s on the
   first attempt and the original 25s once a rebuild has been tried. Applied
   at all three stage call sites (track-ready, get-sample-rate, decode).
+
+## 0.1.36: pill presentation collapse, ownership marks, fallback gating and rewind
+
+Full write-up in CENSOR_NOTES.md "one processing state, and a fallback that
+stops costing content". Pipeline-side specifics:
+
+- **`shared/pill.js`** holds the internal-state to label mapping and the
+  countdown. `clampEta(raw, hasMeasuredRtf)` applies the cold floor
+  (`ETA_FLOOR_COLD_S`) until `session.lastKnownRtf` exists, then the
+  ordinary floor. `present()` maps analyzing-safe/analyzing-slow/buffering
+  to one sentence; the internal kinds are unchanged and still traced.
+- **`computeStatusState` computes the whole trace vector up front**,
+  including `capturedAtPlayhead`, `nearestCaptured` and `inFlight`, before
+  the protected branch can return. `test/pill_test.js` pins the ordering by
+  reading the source, because the failure mode was a trace field that was
+  never evaluated rather than one that was wrong.
+- **`shared/catchup.js`** holds four rules: `markSelfAction`/`isSelfAction`
+  (timestamped, self-expiring, replacing the `suppressNextPlayEvent` and
+  `suppressNextPauseEvent` one-shots), `ownershipOnPlaybackEvent`,
+  `mayEngagePause` (the re-engage debounce), `shouldEngageFallback` and
+  `rewindDecision`.
+- **Fallback gating** uses heartbeat recency as the in-flight signal:
+  offscreen sends `pm-heartbeat` every 4s while a transcription is genuinely
+  running, so `HEARTBEAT_FRESH_MS = 6000` in content.js means "a window is
+  being worked on right now". That is the signal the old coverage-only
+  condition lacked.
+- **The rewind** records `session.fallbackStartT` when the fallback
+  engages, and `maybeRewindAfterFallback()` runs where the fallback is
+  cleared (coverage caught up). `session.userSeekedSinceFallback` is set by
+  the seeking handler unless the seek carries our own `selfSeekMark`, so
+  the rewind cannot mistake itself for the user superseding it. Only
+  `not-covered-yet` keeps the pending rewind alive; every other refusal
+  retires it. The rewind is recorded in the devlog.

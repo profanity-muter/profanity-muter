@@ -742,6 +742,118 @@ of that file) - it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
+## FIX ROUND (2026-09-02, 0.1.36): one processing state, and a fallback that stops costing content
+
+Two field traces. The first produced a product verdict rather than a bug
+report: the pill should say "processing, with a countdown, then protected",
+and instead cycled through four sentences in the first seconds of an
+ordinary cold start. The second found the muted-playback fallback quietly
+consuming the user's video.
+
+### The pill: a presentation collapse, not a new state machine
+
+Seven routine states had accumulated over fifteen releases. Each was added
+to answer a real question, each transition in the trace was correct by its
+own rule, and the aggregate was noise. So the INTERNAL states stay (the
+logic and the [PM-PILL] traces use the distinctions) and the presentation
+collapses to one processing state plus a countdown, then Protected.
+`shared/pill.js` owns that mapping, so there is exactly one place where
+what the user reads is decided, and it is unit tested.
+
+A countdown is a better citizen than a static estimate because the person
+reading it can check it. That cuts both ways, and both failure modes were
+live in the trace:
+
+- **Absurd optimism.** "~1s" quoted on a cold seek, from a default rtf
+  guess, before anything had been measured. One second is not a plausible
+  time to load a model, demux and transcribe, and a countdown that hits
+  zero immediately teaches the user to ignore it. The first promise is now
+  floored generously until a real rtf exists.
+- **Alarm for a normal event.** When the countdown ran out, the old model
+  escalated the label to "taking longer than expected", which the trace
+  shows firing two seconds into a healthy cold start. Overrunning an
+  estimate is ordinary. The label now drops the number and waits, and
+  re-arms by itself when the next window completes.
+
+Escalation to an actual warning remains the health monitor's job on its own
+much slower wall clock. The pill describes what is happening; only the
+health monitor says something is wrong. That separation is the thing that
+keeps either surface worth reading.
+
+"Press play to load audio" survives as the one actionable sentence, gated
+hard, because it is the only state that asks the user to do something.
+
+### Input uniformity
+
+A 0.1.35 trace logged `capturedAtPlayhead=NA nearestCaptured=none` while
+`bufferedRanges=1` held a range containing the playhead: the protected
+branch returned before those inputs were computed. A trace that varies by
+branch is worse than no trace, because it invites conclusions from fields
+that were never evaluated. The full vector is now computed before any
+branch reads or reports it, and a source-shape test pins that ordering
+rather than the symptom. Traces also record the presented label next to the
+internal state, computed before tracing so the two cannot disagree.
+
+### Ownership ping-pong
+
+Three engage/clear cycles in four seconds, each logging "ownership cleared:
+external play observed". There was no external play. The extension was
+reading its own programmatic resume as the user taking over, dropping
+ownership, and re-engaging a moment later, which the user experiences as a
+video stuttering between paused and playing.
+
+Self-initiated actions are now timestamped marks rather than one-shot
+booleans. The boolean was fragile in exactly the way this needed it not to
+be: `play()` settles asynchronously and can fail without firing an event,
+after which the stale flag swallows the NEXT event, possibly the genuinely
+external one the whole mechanism exists to catch. A mark expires by itself.
+
+A short quiet period after each release stops re-engagement at coverage
+edges, where the covered/uncovered answer flickers as the playhead crosses
+a boundary. The protection given up is small (the next window is usually
+seconds away) and the behaviour removed is one the user reads as the
+extension malfunctioning.
+
+### The fallback was costing the user content
+
+The muted-playback fallback exists for a genuine deadlock: pausing stops
+YouTube fetching, and audio it buffered before our hook attached can never
+be captured passively, so playing is what unblocks it. But the trigger
+measured COVERAGE growth alone, and coverage does not move while a window
+is being transcribed. A slow first window was therefore indistinguishable
+from a dead pipeline.
+
+The trace shows it firing while a window was actively computing and capture
+had reached `[0,29)`. Nothing was starved. The user permanently lost the
+first 2.44 seconds of the video: spoken words played silently and are gone.
+
+Two fixes. **Starvation now has to be true on every axis at once**: no
+window in flight (a heartbeat within ~1.5 cadences means one is), no
+capture growth, and audio actually needed at the playhead. And **when it
+legitimately fires, the content is no longer lost**: the start of the
+silence is recorded, and once coverage catches up over that stretch the
+video seeks back, unmutes, and plays it properly.
+
+The rewind is guarded three ways. A user seek supersedes it entirely, since
+their navigation outranks recovering audio they chose to skip past. A
+sub-threshold stretch is not worth the jolt. And it never rewinds into
+audio that is still unanalyzed, which would recover the sound and lose the
+protection, the wrong trade in the strictest mode the product offers.
+
+That last point is the principle worth keeping: pause-until-ready is chosen
+by people who want nothing unchecked to reach a child's ears, and it has to
+be exactly as careful with their content as with their protection. You may
+wait, but you eventually hear every analyzed second.
+
+### Tests
+
+`pill_test.js` (17) covers the collapse, the countdown, both floors, and
+the source-shape guard for input uniformity. `catchup_test.js` (24) covers
+self-action tagging including expiry, ownership in both directions, the
+debounce, the fallback trigger-gating matrix, and the rewind path including
+user-supersede, sub-threshold, and the not-yet-covered wait. Suite: 293
+node checks, 181 browser checks.
+
 ## FIX ROUND (2026-09-02, 0.1.35): the pill was right, the session was not
 
 The 0.1.34 pill fixes did not stop the field reports, and the second
