@@ -96,18 +96,32 @@ body {
 }
 
 .ob-dot--done {
-  background: var(--ink-30);
+  background: var(--ink);
 }
 
-.ob-dot--done:has(+ .ob-dot:not(.ob-dot--done)),
-.ob-dot--done:last-child {
+.ob-dots[aria-valuenow="1"] .ob-dot:nth-child(1),
+.ob-dots[aria-valuenow="2"] .ob-dot:nth-child(2),
+.ob-dots[aria-valuenow="3"] .ob-dot:nth-child(3),
+.ob-dots[aria-valuenow="4"] .ob-dot:nth-child(4) {
   background: var(--ink);
   height: 3px;
 }
 
-/* Small-caps step position, written by CSS counters on the rail itself. */
 .ob-dots::after {
-  content: "";
+  margin-left: 10px;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12.5px;
+  color: var(--ink-60);
+  letter-spacing: 0.04em;
+}
+.ob-dots[aria-valuenow="1"]::after { content: "i of iv"; }
+.ob-dots[aria-valuenow="2"]::after { content: "ii of iv"; }
+.ob-dots[aria-valuenow="3"]::after { content: "iii of iv"; }
+.ob-dots[aria-valuenow="4"]::after { content: "iv of iv"; }
+
+/* Stale after the first screen: the tagline belongs to the cover only. */
+.ob-header:has(.ob-dots:not([aria-valuenow="1"])) .ob-subtitle {
+  display: none;
 }
 
 /* ---- Step body ------------------------------------------------------ */
@@ -267,7 +281,6 @@ body {
   font-size: 16.5px;
   line-height: 1.7;
   border: none;
-  border-top: 2px solid var(--gold);
   border-radius: 4px;
   background: var(--ink);
   color: var(--paper);
@@ -293,6 +306,17 @@ body {
 
 .ob-page {
   padding-bottom: 120px;
+}
+
+.ob-nav::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 100%;
+  height: 28px;
+  pointer-events: none;
+  background: linear-gradient(to bottom, transparent, var(--paper));
 }
 
 .ob-nav {
@@ -332,7 +356,9 @@ body {
   background: none;
   color: var(--ink-60);
   border: none;
-  padding: 11px 10px;
+  padding: 11px 14px;
+  margin-right: auto;
+  order: -1;
 }
 
 .ob-nav .pm-button--secondary:hover {
@@ -452,4 +478,15 @@ input:focus-visible {
   margin-top: 8px;
   font-size: 12px;
   color: var(--ink-60);
+}
+
+.ob-ack a,
+#ob-step-4 .pm-link-button,
+#ob-step-4 a {
+  color: var(--gold);
+}
+
+/* 8. Step 2 ranks its caveats: the first is the one that matters. */
+.ob-list li:first-child strong {
+  font-size: 16px;
 }
