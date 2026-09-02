@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Profanity Muter — Setup</title>
+<!-- popup.css FIRST, then onboarding.css. This page deliberately reuses the
+     popup's stylesheet wholesale rather than restating its design tokens and
+     control styles: the switches, radios, buttons, inputs and hints are the
+     same components, and a second copy of them is a guarantee that the two
+     surfaces drift apart. onboarding.css only undoes the popup's fixed
+     320px body width and adds page-level layout on top. -->
+<link rel="stylesheet" href="../popup/popup.css" />
+<link rel="stylesheet" href="onboarding.css" />
+</head>
+<body>
+  <main class="ob-page">
+    <header class="ob-header">
+      <h1 class="ob-title">Profanity Muter</h1>
+      <p class="ob-subtitle">A few minutes now, and it runs by itself after that.</p>
+      <div class="ob-dots" id="ob-dots" role="progressbar" aria-label="Setup progress" aria-valuemin="1" aria-valuemax="4" aria-valuenow="1">
+        <span class="ob-dot" data-step="1"></span>
+        <span class="ob-dot" data-step="2"></span>
+        <span class="ob-dot" data-step="3"></span>
+        <span class="ob-dot" data-step="4"></span>
+      </div>
+    </header>
+
+    <!-- ===== 1. How it works ===== -->
+    <section class="ob-step" id="ob-step-1">
+      <h2 class="ob-step-title">How it works</h2>
+      <ul class="ob-list">
+        <li>
+          <strong>The audio is transcribed on your device.</strong>
+          A speech model runs inside your browser and reads the audio of the
+          video you're watching. Nothing is uploaded, nothing is sent to us,
+          and no account is involved — there is no server in this picture at
+          all.
+        </li>
+        <!-- "Silenced", never "bleeped". Family Movie Act §110(11) protects
+             making limited portions of audio IMPERCEPTIBLE; it does not
+             cover ADDING audio, which a bleep tone would be. Do not let
+             this copy (or any future copy) promise a bleep. See
+             CENSOR_NOTES.md "Mute, never bleep". -->
+        <li>
+          <strong>Matched words are silenced as they play.</strong>
+          When a word from the active list is found, the video is muted for
+          exactly that moment and unmuted straight after. The word is
+          removed, not covered over — nothing is added to the audio.
+        </li>
+        <li>
+          <strong>Captions are censored too.</strong>
+          If subtitles or the transcript panel are open, matched words are
+          replaced there as well, so the word isn't simply read instead of
+          heard.
+        </li>
+      </ul>
+    </section>
+
+    <!-- ===== 2. Honest limits =====
+         Its own step, deliberately, rather than a line of fine print
+         somewhere. A parent who installs this and assumes it is airtight
+         has been misled by us, even if we never said so. -->
+    <section class="ob-step pm-hidden" id="ob-step-2" aria-hidden="true">
+      <h2 class="ob-step-title">What it won't do</h2>
+      <p class="ob-lede">
+        This is the part worth reading. Profanity Muter reduces profanity —
+        it does not eliminate it.
+      </p>
+      <ul class="ob-list">
+        <li>
+          <strong>Analysis trails the video.</strong>
+          Transcribing takes a moment, so the start of a video — and the
+          seconds right after you skip around — may not be analyzed yet.
+          That window is the most likely place for a word to slip through.
+          The next step lets you decide what should happen during it.
+        </li>
+        <li>
+          <strong>Speech recognition is imperfect.</strong>
+          Music, crosstalk, accents, mumbling and noise all cause missed or
+          mis-heard words. A word can be missed. A clean word can
+          occasionally be muted by mistake.
+        </li>
+        <li>
+          <strong>It only knows the words on the list.</strong>
+          Slang, misspellings and new coinages won't match until someone
+          adds them.
+        </li>
+        <li>
+          <strong>Caption censoring depends on the captions.</strong>
+          If a video has no subtitles, or its subtitles are poorly timed or
+          leave words out, there is nothing on screen for us to censor —
+          the audio filtering still runs either way.
+        </li>
+      </ul>
+      <p class="ob-lede">
+        No automated filter is perfect, and this one isn't either. Treat it
+        as a good filter rather than a guarantee — the same way you'd treat
+        a spam folder.
+      </p>
+    </section>
+
+    <!-- ===== 3. Guided setup ===== -->
+    <section class="ob-step pm-hidden" id="ob-step-3" aria-hidden="true">
+      <h2 class="ob-step-title">Set it up</h2>
+      <p class="ob-lede">
+        These are the same settings as the toolbar popup, and they save as
+        you change them. You can change any of them later.
+      </p>
+
+      <!-- Locked-out notice: only if a parental lock was already set (i.e.
+           someone re-opened this guide later). Unlocking here uses the same
+           password and the same rule as the popup. -->
+      <div class="ob-locked pm-hidden" id="ob-locked" aria-hidden="true">
+        <p class="pm-hint">
+          These settings are locked with a password. Enter it to make changes.
+        </p>
+        <input
+          type="password"
+          id="ob-lock-password"
+          class="pm-input"
+          placeholder="Password"
+          autocomplete="current-password"
+        />
+        <button id="ob-lock-unlock" class="pm-button pm-button--secondary" type="button">
+          Unlock
+        </button>
+        <p id="ob-lock-status" class="pm-hint" role="status" aria-live="polite"></p>
+      </div>
+
+      <div class="ob-field">
+        <span class="pm-label">While a video is still being analyzed</span>
+        <p class="pm-hint">
+          The one setting worth thinking about. It decides what happens in
+          the not-yet-analyzed window described on the last screen.
+        </p>
+        <div class="pm-radio-group pm-radio-group--stacked" role="radiogroup" aria-label="While a video is still being analyzed">
+          <label class="pm-radio-label pm-radio-label--stacked">
+            <input type="radio" name="ob-catchup-mode" id="ob-catchup-mute" value="mute" checked />
+            <span>
+              <span class="pm-radio-title">Mute until ready (recommended)</span>
+              <span class="pm-radio-desc">
+                The video plays, silently, until analysis catches up. Nothing
+                unchecked is ever heard; you miss a few seconds of clean audio.
+              </span>
+            </span>
+          </label>
+          <label class="pm-radio-label pm-radio-label--stacked">
+            <input type="radio" name="ob-catchup-mode" id="ob-catchup-pause" value="pause" />
+            <span>
+              <span class="pm-radio-title">Pause until ready (strictest)</span>
+              <span class="pm-radio-desc">
+                Playback waits. Nothing unchecked ever plays at all, at the
+                cost of a pause at the start of videos and after skipping.
+              </span>
+            </span>
+          </label>
+          <label class="pm-radio-label pm-radio-label--stacked">
+            <input type="radio" name="ob-catchup-mode" id="ob-catchup-play" value="play" />
+            <span>
+              <span class="pm-radio-title">Play unfiltered (not recommended)</span>
+              <span class="pm-radio-desc">
+                Nothing waits and nothing is muted until analysis catches up —
+                so profanity in that window is heard normally.
+              </span>
+            </span>
+          </label>
+        </div>
+      </div>
+
+      <div class="ob-field">
+        <span class="pm-label">Built-in list</span>
+        <div class="pm-radio-group pm-radio-group--stacked" role="radiogroup" aria-label="Built-in list">
+          <label class="pm-radio-label pm-radio-label--stacked">
+            <input type="radio" name="ob-strictness" id="ob-strictness-none" value="none" />
+            <span>
+              <span class="pm-radio-title">None</span>
+              <span class="pm-radio-desc">Only the words you add below</span>
+            </span>
+          </label>
+          <label class="pm-radio-label pm-radio-label--stacked">
+            <input type="radio" name="ob-strictness" id="ob-strictness-standard" value="standard" />
+            <span>
+              <span class="pm-radio-title">Standard</span>
+              <span class="pm-radio-desc">Clear profanity and slurs</span>
+            </span>
+          </label>
+          <label class="pm-radio-label pm-radio-label--stacked">
+            <input type="radio" name="ob-strictness" id="ob-strictness-strict" value="strict" checked />
+            <span>
+              <span class="pm-radio-title">Strict</span>
+              <span class="pm-radio-desc">Also euphemisms and religious exclamations</span>
+            </span>
+          </label>
+        </div>
+        <p class="pm-hint">
+          The built-in lists aren't shown here — they're maintained by the
+          extension and updated with it.
+        </p>
+      </div>
+
+      <div class="ob-field">
+        <label class="pm-label" for="ob-wordlist">My additional words</label>
+        <p class="pm-hint">
+          Optional. Anything here is filtered on top of the built-in list —
+          one word or phrase per line.
+        </p>
+        <textarea
+          id="ob-wordlist"
+          class="pm-textarea"
+          rows="5"
+          spellcheck="false"
+          placeholder="one word or phrase per line"
+        ></textarea>
+        <button id="ob-wordlist-save" class="pm-button pm-button--secondary" type="button">
+          Save words
+        </button>
+      </div>
+
+      <div class="ob-field">
+        <span class="pm-label">Parental lock (optional)</span>
+        <div class="ob-lock-setup" id="ob-lock-setup">
+          <p class="pm-hint">
+            Set a password to stop these settings being changed.
+          </p>
+          <input
+            type="password"
+            id="ob-lock-new"
+            class="pm-input"
+            placeholder="New password"
+            autocomplete="new-password"
+          />
+          <input
+            type="password"
+            id="ob-lock-confirm"
+            class="pm-input"
+            placeholder="Confirm password"
+            autocomplete="new-password"
+          />
+          <button id="ob-lock-set" class="pm-button pm-button--secondary" type="button">
+            Set password
+          </button>
+          <p id="ob-lock-set-status" class="pm-hint" role="status" aria-live="polite"></p>
+        </div>
+        <div class="ob-lock-done pm-hidden" id="ob-lock-done" aria-hidden="true">
+          <p class="pm-hint">A password is set. You can remove it from the toolbar popup.</p>
+        </div>
+        <p class="pm-hint">
+          This is a deterrent, not security: anyone who can open
+          chrome://extensions can clear this extension's storage or remove
+          it. If you forget the password, remove and re-add the extension.
+        </p>
+      </div>
+    </section>
+
+    <!-- ===== 4. Acknowledgment ===== -->
+    <section class="ob-step pm-hidden" id="ob-step-4" aria-hidden="true">
+      <h2 class="ob-step-title">One last thing</h2>
+      <p class="ob-lede">
+        We'd rather you go in with the right expectation than be
+        disappointed later.
+      </p>
+      <label class="ob-ack">
+        <input type="checkbox" id="ob-ack-check" />
+        <span>
+          I understand that Profanity Muter reduces profanity but will not
+          catch 100% of words, and I should not rely on it as a guarantee.
+        </span>
+      </label>
+      <p id="ob-ack-done" class="pm-hint pm-hidden" aria-hidden="true">
+        You're all set. You can close this tab — everything is saved, and the
+        toolbar popup has these settings whenever you want them.
+      </p>
+    </section>
+
+    <nav class="ob-nav">
+      <button id="ob-back" class="pm-button pm-button--secondary" type="button">Back</button>
+      <button id="ob-next" class="pm-button" type="button">Next</button>
+      <button id="ob-finish" class="pm-button pm-hidden" type="button" disabled>Finish setup</button>
+      <span id="ob-status" class="pm-status" role="status" aria-live="polite"></span>
+    </nav>
+  </main>
+
+  <script src="../shared/wordlist.js"></script>
+  <script src="../shared/lock.js"></script>
+  <script src="../shared/moments.js"></script>
+  <script src="onboarding.js"></script>
+</body>
+</html>

@@ -8,7 +8,37 @@
 <body>
   <header class="pm-header">
     <span class="pm-title">Profanity Muter</span>
+    <button id="pm-open-onboarding" class="pm-link-button" type="button">Setup guide</button>
   </header>
+
+  <!-- Slim, persistent until acknowledged. Not a modal and not dismissable:
+       the acknowledgment is the one thing we want every user to have
+       actually seen, so it stays until they do it — but it takes one line
+       and blocks nothing. -->
+  <button
+    id="pm-finish-setup"
+    class="pm-banner pm-hidden"
+    type="button"
+    aria-hidden="true"
+  >
+    Finish setup — 1 minute
+  </button>
+
+  <!-- Review prompt. Rendered only when PMMoments.reviewPromptEligibility
+       says so; see shared/moments.js for the Chrome Web Store policy rules
+       this surface has to obey (shown at most once ever, permanent
+       dismissal, no incentive, nothing gated on it). -->
+  <section class="pm-row pm-row--review pm-hidden" id="pm-review-card" aria-hidden="true">
+    <p class="pm-review-text">
+      Is Profanity Muter doing its job? A review helps other parents find it.
+    </p>
+    <div class="pm-review-actions">
+      <button id="pm-review-yes" class="pm-button pm-button--secondary" type="button">
+        Leave a review
+      </button>
+      <button id="pm-review-no" class="pm-link-button" type="button">No thanks</button>
+    </div>
+  </section>
 
   <section class="pm-row pm-row--toggle">
     <label class="pm-switch-label">
@@ -187,6 +217,18 @@
     <button id="pm-copy-devlog" class="pm-link-button" type="button">Copy debug log</button>
   </section>
 
+  <!-- Share. Shown only after acknowledgment (nobody should be recommending
+       this before they've been told its limits), and deliberately NOT
+       lock-gated — like "Copy debug log", it changes no setting. -->
+  <section class="pm-row pm-row--share pm-hidden" id="pm-share-row" aria-hidden="true">
+    <span class="pm-label pm-label--muted">Share</span>
+    <button id="pm-share" class="pm-link-button" type="button">Share with a friend</button>
+    <p class="pm-hint">
+      Copies a short message and the store link. No tracking, no referral
+      codes.
+    </p>
+  </section>
+
   <section class="pm-row pm-row--stats">
     <span class="pm-label pm-label--muted">Stats</span>
     <p id="pm-stats-line" class="pm-stats-line">
@@ -261,6 +303,7 @@
 
   <script src="../shared/wordlist.js"></script>
   <script src="../shared/lock.js"></script>
+  <script src="../shared/moments.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

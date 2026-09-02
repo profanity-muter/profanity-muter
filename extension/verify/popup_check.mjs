@@ -60,14 +60,31 @@ const stub = (initialSync, initialLocal) => `
       }
     };
   }
+  window.__pmTabs = [];
+  window.__pmClipboard = null;
   window.chrome = {
-    runtime: { lastError: undefined, getManifest: () => ({ version: '0.1.29' }) },
+    runtime: {
+      lastError: undefined,
+      getManifest: () => ({ version: '0.1.30' }),
+      getURL: (p) => 'chrome-extension://stub/' + p
+    },
+    tabs: { create: (opts) => { window.__pmTabs.push(opts.url); } },
     storage: {
       sync: area(window.__pmSync, 'sync'),
       local: area(window.__pmLocal, 'local'),
       onChanged: { addListener() {} }
     }
   };
+  // The popup closes itself after opening a tab; in the harness that would
+  // end the page under test, so neutralize it and record the intent.
+  window.__pmClosed = false;
+  window.close = () => { window.__pmClosed = true; };
+  // Clipboard: file:// pages have no clipboard permission, so capture the
+  // write instead of asking the browser for one.
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { writeText: (t) => { window.__pmClipboard = t; return Promise.resolve(); } }
+  });
 `;
 
 async function open(browser, sync, local) {
@@ -95,8 +112,23 @@ const snapshot = () => ({
   lockLockedHidden: document.getElementById('pm-lock-locked').classList.contains('pm-hidden'),
   lockUnlockedHidden: document.getElementById('pm-lock-unlocked').classList.contains('pm-hidden'),
   lockStatus: document.getElementById('pm-lock-status').textContent.trim(),
-  status: document.getElementById('pm-status').textContent.trim()
+  status: document.getElementById('pm-status').textContent.trim(),
+  bannerHidden: document.getElementById('pm-finish-setup').classList.contains('pm-hidden'),
+  reviewHidden: document.getElementById('pm-review-card').classList.contains('pm-hidden'),
+  shareHidden: document.getElementById('pm-share-row').classList.contains('pm-hidden'),
+  shareDisabled: document.getElementById('pm-share').disabled,
+  setupGuideDisabled: document.getElementById('pm-open-onboarding').disabled
 });
+
+// A fully review-eligible sync/local pair: acknowledged, installed 8 days
+// ago, past both usage milestones, never prompted. Individual checks below
+// break exactly one gate at a time.
+const ACK = { version: 1, timestamp: 1 };
+const eligibleSync = (over = {}) => Object.assign({
+  pm_ackNotPerfect: ACK,
+  pm_installedAt: Date.now() - 8 * 24 * 60 * 60 * 1000
+}, over);
+const eligibleLocal = { pm_stats: { videosProtected: 12, totalMuted: 30 } };
 
 const browser = await chromium.launch();
 
@@ -248,6 +280,278 @@ const browser = await chromium.launch();
   check('setpw: record stored with salt+hash', !!rec && rec.salt.length === 32 && rec.hash.length === 64, rec);
   check('setpw: plaintext never stored', JSON.stringify(rec).indexOf('abcd') === -1);
   check('setpw: parent stays unlocked in this session', s.enabledDisabled === false && s.lockUnlockedHidden === false);
+  await page.close();
+}
+
+// ===== 0.1.30 surfaces: onboarding banner, review prompt, share =====
+
+// ---- 7. unacknowledged: banner shows, share hidden ----
+{
+  const { page, errors } = await open(browser, {});
+  const s = await page.evaluate(snapshot);
+  check('banner: no page errors', errors.length === 0, errors);
+  check('banner: shows when unacknowledged', s.bannerHidden === false);
+  check('banner: share row hidden until acknowledged', s.shareHidden === true);
+  check('banner: review card hidden', s.reviewHidden === true);
+  await page.click('#pm-finish-setup');
+  await page.waitForTimeout(50);
+  const tabs = await page.evaluate(() => window.__pmTabs);
+  check('banner: opens the onboarding page', tabs.length === 1 && /onboarding\/onboarding\.html$/.test(tabs[0]), tabs);
+  await page.close();
+}
+
+// ---- 8. acknowledged: banner gone, share shown ----
+{
+  const { page } = await open(browser, { pm_ackNotPerfect: ACK });
+  const s = await page.evaluate(snapshot);
+  check('acked: banner hidden', s.bannerHidden === true);
+  check('acked: share row shown', s.shareHidden === false);
+  await page.close();
+}
+
+// ---- 9. a stale ack version re-shows the banner ----
+{
+  const { page } = await open(browser, { pm_ackNotPerfect: { version: 0, timestamp: 1 } });
+  const s = await page.evaluate(snapshot);
+  check('stale ack: banner returns', s.bannerHidden === false);
+  check('stale ack: share hidden again', s.shareHidden === true);
+  await page.close();
+}
+
+// ---- 10. Setup guide link always available ----
+{
+  const { page } = await open(browser, { pm_ackNotPerfect: ACK });
+  await page.click('#pm-open-onboarding');
+  await page.waitForTimeout(50);
+  const tabs = await page.evaluate(() => window.__pmTabs);
+  check('setup guide: reopens onboarding', tabs.length === 1 && /onboarding\.html$/.test(tabs[0]), tabs);
+  await page.close();
+}
+
+// ---- 11. review card: renders only when every gate passes ----
+{
+  const { page } = await open(browser, eligibleSync(), eligibleLocal);
+  const s = await page.evaluate(snapshot);
+  check('review: card shown when eligible', s.reviewHidden === false);
+  // Showing it must record it immediately — otherwise closing the popup
+  // would re-ask on every open.
+  const rec = await page.evaluate(() => window.__pmSync.pm_reviewPrompt);
+  check('review: pm_reviewPrompt written on render', !!rec && typeof rec.shownAt === 'number' && rec.dismissed === false, rec);
+  await page.close();
+}
+
+// ---- 12. each gate individually suppresses the card ----
+{
+  const cases = [
+    ['unacknowledged', { pm_ackNotPerfect: undefined }, eligibleLocal],
+    ['no install date', { pm_installedAt: undefined }, eligibleLocal],
+    ['installed 6 days ago', { pm_installedAt: Date.now() - 6 * 24 * 60 * 60 * 1000 }, eligibleLocal],
+    ['already prompted', { pm_reviewPrompt: { shownAt: 1, dismissed: true } }, eligibleLocal],
+    ['too few videos', {}, { pm_stats: { videosProtected: 9, totalMuted: 99 } }],
+    ['too few mutes', {}, { pm_stats: { videosProtected: 99, totalMuted: 24 } }],
+    ['no stats at all', {}, {}]
+  ];
+  for (const [name, syncOver, local] of cases) {
+    const sync = eligibleSync();
+    for (const k of Object.keys(syncOver)) {
+      if (syncOver[k] === undefined) delete sync[k];
+      else sync[k] = syncOver[k];
+    }
+    const { page } = await open(browser, sync, local);
+    const s = await page.evaluate(snapshot);
+    check(`review gate: ${name} suppresses the card`, s.reviewHidden === true);
+    const wrote = await page.evaluate(() => 'pm_reviewPrompt' in window.__pmSync);
+    check(`review gate: ${name} records nothing new`, wrote === (name === 'already prompted'));
+    await page.close();
+  }
+}
+
+// ---- 13. review actions ----
+{
+  const { page } = await open(browser, eligibleSync(), eligibleLocal);
+  await page.click('#pm-review-yes');
+  await page.waitForTimeout(80);
+  let s = await page.evaluate(snapshot);
+  const tabs = await page.evaluate(() => window.__pmTabs);
+  const rec = await page.evaluate(() => window.__pmSync.pm_reviewPrompt);
+  check('review: "Leave a review" opens the store reviews URL', tabs.length === 1 && /\/reviews$/.test(tabs[0]), tabs);
+  check('review: marked dismissed after acting', rec.dismissed === true, rec);
+  check('review: card hidden after acting', s.reviewHidden === true);
+  await page.close();
+
+  const { page: p2 } = await open(browser, eligibleSync(), eligibleLocal);
+  await p2.click('#pm-review-no');
+  await p2.waitForTimeout(80);
+  s = await p2.evaluate(snapshot);
+  const rec2 = await p2.evaluate(() => window.__pmSync.pm_reviewPrompt);
+  const tabs2 = await p2.evaluate(() => window.__pmTabs);
+  check('review: "No thanks" opens nothing', tabs2.length === 0, tabs2);
+  check('review: "No thanks" dismisses permanently', rec2.dismissed === true, rec2);
+  check('review: card hidden after declining', s.reviewHidden === true);
+  check('review: says it will not ask again', /won.t ask again/.test(s.status), s.status);
+  await p2.close();
+}
+
+// ---- 14. share copies the blurb ----
+{
+  const { page } = await open(browser, { pm_ackNotPerfect: ACK });
+  await page.click('#pm-share');
+  await page.waitForTimeout(80);
+  const text = await page.evaluate(() => window.__pmClipboard);
+  const s = await page.evaluate(snapshot);
+  check('share: copies the blurb', /^I use Profanity Muter to auto-mute swearing/.test(text || ''), text);
+  check('share: includes the store link', (text || '').includes('chromewebstore.google.com'), text);
+  check('share: no tracking parameters', !(text || '').includes('?'), text);
+  check('share: status toast', s.status === 'Copied!', s.status);
+  await page.close();
+}
+
+// ---- 15. share + debug log stay usable while the settings are locked ----
+{
+  const { page: p0 } = await open(browser, {});
+  const record = await p0.evaluate(() => window.PMLock.create('hunter2'));
+  await p0.close();
+
+  const { page } = await open(browser, { pm_lock: record, pm_ackNotPerfect: ACK });
+  const s = await page.evaluate(snapshot);
+  check('locked: share row still visible', s.shareHidden === false);
+  check('locked: share button enabled', s.shareDisabled === false);
+  check('locked: Copy debug log still enabled', s.copyDisabled === false);
+  check('locked: Setup guide still enabled', s.setupGuideDisabled === false);
+  await page.click('#pm-share');
+  await page.waitForTimeout(80);
+  const text = await page.evaluate(() => window.__pmClipboard);
+  check('locked: share still copies', (text || '').includes('Profanity Muter'), text);
+  await page.close();
+}
+
+// ===== onboarding page =====
+{
+  const OB = pathToFileURL(path.join(EXT, 'onboarding', 'onboarding.html')).href;
+  const page = await browser.newPage();
+  const errors = [];
+  page.on('pageerror', e => errors.push(String(e)));
+  page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
+  await page.addInitScript(stub({}, {}));
+  await page.goto(OB);
+  await page.waitForTimeout(150);
+
+  const obSnap = () => ({
+    step: [1, 2, 3, 4].filter(i => !document.getElementById('ob-step-' + i).classList.contains('pm-hidden')),
+    dotsDone: document.querySelectorAll('.ob-dot--done').length,
+    finishHidden: document.getElementById('ob-finish').classList.contains('pm-hidden'),
+    finishDisabled: document.getElementById('ob-finish').disabled,
+    backDisabled: document.getElementById('ob-back').disabled,
+    ackDoneHidden: document.getElementById('ob-ack-done').classList.contains('pm-hidden')
+  });
+
+  let s = await page.evaluate(obSnap);
+  check('onboarding: no page errors', errors.length === 0, errors);
+  check('onboarding: starts on step 1 only', s.step.length === 1 && s.step[0] === 1, s.step);
+  check('onboarding: one dot filled', s.dotsDone === 1, s.dotsDone);
+  check('onboarding: Back disabled on step 1', s.backDisabled === true);
+
+  // No built-in word may appear on this page either.
+  const leak = await page.evaluate(() => {
+    const t = document.body.innerText.toLowerCase();
+    return t.includes('fuck') || t.includes('shit');
+  });
+  check('onboarding: no built-in word text anywhere', leak === false);
+
+  await page.click('#ob-next');
+  await page.click('#ob-next');
+  s = await page.evaluate(obSnap);
+  check('onboarding: reaches the setup step', s.step[0] === 3, s.step);
+  check('onboarding: three dots filled', s.dotsDone === 3, s.dotsDone);
+
+  // Catch-up mode is preselected to "mute" and writes through on change.
+  const preselected = await page.evaluate(() =>
+    [...document.getElementsByName('ob-catchup-mode')].find(r => r.checked)?.value
+  );
+  check('onboarding: mute preselected', preselected === 'mute', preselected);
+  await page.click('#ob-catchup-pause');
+  await page.waitForTimeout(80);
+  let sync = await page.evaluate(() => window.__pmSync);
+  check('onboarding: catch-up choice saved', sync.pm_catchupMode === 'pause', sync.pm_catchupMode);
+  check('onboarding: level saved alongside', sync.pm_strictness === 'strict', sync.pm_strictness);
+
+  await page.fill('#ob-wordlist', 'fnord\nblorp');
+  await page.click('#ob-wordlist-save');
+  await page.waitForTimeout(80);
+  sync = await page.evaluate(() => window.__pmSync);
+  check('onboarding: additional words saved', JSON.stringify(sync.pm_additionalWords) === '["fnord","blorp"]', sync.pm_additionalWords);
+  check('onboarding: never writes the deprecated pm_wordlist', !('pm_wordlist' in sync), Object.keys(sync));
+
+  // Acknowledgment gate.
+  await page.click('#ob-next');
+  s = await page.evaluate(obSnap);
+  check('onboarding: final step shows Finish, hides Next', s.finishHidden === false && s.step[0] === 4);
+  check('onboarding: Finish disabled until the box is ticked', s.finishDisabled === true);
+  // Force a click past the `disabled` attribute, the way the locked-popup
+  // check does: finish() must refuse on its own, not only because the
+  // button was unclickable.
+  await page.evaluate(() => {
+    document.getElementById('ob-finish').dispatchEvent(new Event('click'));
+  });
+  await page.waitForTimeout(80);
+  let ack = await page.evaluate(() => window.__pmSync.pm_ackNotPerfect);
+  check('onboarding: a forced click on a disabled Finish records nothing', ack === undefined, ack);
+
+  await page.click('#ob-ack-check');
+  s = await page.evaluate(obSnap);
+  check('onboarding: ticking enables Finish', s.finishDisabled === false);
+  await page.click('#ob-finish');
+  await page.waitForTimeout(100);
+  ack = await page.evaluate(() => window.__pmSync.pm_ackNotPerfect);
+  s = await page.evaluate(obSnap);
+  check('onboarding: ack record written', !!ack && ack.version === 1 && typeof ack.timestamp === 'number', ack);
+  check('onboarding: confirmation shown', s.ackDoneHidden === false);
+  await page.close();
+}
+
+// ---- onboarding respects an existing parental lock ----
+{
+  const OB = pathToFileURL(path.join(EXT, 'onboarding', 'onboarding.html')).href;
+  const p0 = await browser.newPage();
+  await p0.addInitScript(stub({}, {}));
+  await p0.goto(URL);
+  await p0.waitForTimeout(100);
+  const record = await p0.evaluate(() => window.PMLock.create('hunter2'));
+  await p0.close();
+
+  const page = await browser.newPage();
+  await page.addInitScript(stub({ pm_lock: record }, {}));
+  await page.goto(OB);
+  await page.waitForTimeout(150);
+  await page.click('#ob-next');
+  await page.click('#ob-next');
+  let state = await page.evaluate(() => ({
+    lockedHidden: document.getElementById('ob-locked').classList.contains('pm-hidden'),
+    catchupDisabled: document.getElementById('ob-catchup-play').disabled,
+    wordsDisabled: document.getElementById('ob-wordlist').disabled
+  }));
+  check('onboarding lock: unlock prompt shown', state.lockedHidden === false);
+  check('onboarding lock: setup controls disabled', state.catchupDisabled === true && state.wordsDisabled === true);
+
+  const before = await page.evaluate(() => window.__pmWrites.length);
+  await page.evaluate(() => {
+    const el = document.getElementById('ob-catchup-play');
+    el.disabled = false;
+    el.checked = true;
+    el.dispatchEvent(new Event('change'));
+  });
+  await page.waitForTimeout(80);
+  const after = await page.evaluate(() => window.__pmWrites.length);
+  check('onboarding lock: a forced change writes nothing', after === before, { before, after });
+
+  await page.fill('#ob-lock-password', 'hunter2');
+  await page.click('#ob-lock-unlock');
+  await page.waitForTimeout(150);
+  state = await page.evaluate(() => ({
+    lockedHidden: document.getElementById('ob-locked').classList.contains('pm-hidden'),
+    catchupDisabled: document.getElementById('ob-catchup-play').disabled
+  }));
+  check('onboarding lock: unlocks with the right password', state.lockedHidden === true && state.catchupDisabled === false);
   await page.close();
 }
 

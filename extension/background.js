@@ -80,6 +80,63 @@ chrome.runtime.onInstalled.addListener(function () {
     .catch(function () {})
     .then(ensureOffscreenDocument);
 });
+
+// ---- first-run onboarding + install date (0.1.30) --------------------------
+//
+// A SECOND onInstalled listener rather than more code inside the one above:
+// that one is about the offscreen document's lifecycle and nothing else, and
+// these two concerns share no state. Chrome runs both.
+//
+// Two jobs, in this order of importance:
+//
+//  1. pm_installedAt — stamped once, and only if absent. It gates the review
+//     prompt's "installed >= 7 days" rule (see shared/moments.js). Written on
+//     UPDATE too, not just install, so the ~zero existing 0.1.29 installs get
+//     a date at all; the honest consequence is that they wait 7 days from the
+//     update rather than from their real install, which is the conservative
+//     direction (see moments.js's NOTE ON BACKFILL).
+//
+//  2. The onboarding tab, opened exactly once, on a genuine `install` only.
+//     Never on `update`: an update the user did not ask for is the worst
+//     imaginable moment to seize a tab, and doing it would also re-open for
+//     everyone on every release. pm_onboarded is set BEFORE the tab is
+//     created, so a failure to open can't leave the flag unset and re-trigger
+//     on the next install event.
+//
+// Deliberately no `chrome.tabs` permission is needed or requested:
+// chrome.tabs.create is available to every extension; only READING tab
+// url/title requires the permission, and this reads nothing.
+chrome.runtime.onInstalled.addListener(function (details) {
+  var reason = details && details.reason;
+  try {
+    chrome.storage.sync.get(['pm_installedAt', 'pm_onboarded'], function (items) {
+      if (chrome.runtime.lastError) return;
+      items = items || {};
+
+      if (typeof items.pm_installedAt !== 'number') {
+        chrome.storage.sync.set({ pm_installedAt: Date.now() });
+      }
+
+      // Mirrors PMMoments.shouldAutoOpenOnboarding (shared/moments.js),
+      // which is the unit-tested statement of this rule. The service
+      // worker deliberately does not import that module: it is a two-term
+      // boolean, and adding a shared script to the SW's load path to
+      // avoid restating it would cost more than it saves. If this rule
+      // ever grows a third term, move it here properly.
+      if (reason === 'install' && items.pm_onboarded !== true) {
+        chrome.storage.sync.set({ pm_onboarded: true }, function () {
+          try {
+            chrome.tabs.create({ url: chrome.runtime.getURL('onboarding/onboarding.html') });
+          } catch (e) {
+            console.warn('[PM-BG] could not open onboarding tab:', String(e));
+          }
+        });
+      }
+    });
+  } catch (e) {
+    console.warn('[PM-BG] onInstalled onboarding/install-date step failed:', String(e));
+  }
+});
 ensureOffscreenDocument();
 chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
 

@@ -35,6 +35,10 @@ body {
 .pm-header {
   padding: 14px 16px 10px;
   border-bottom: 1px solid var(--pm-border);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
 }
 
 .pm-title {
@@ -450,4 +454,51 @@ body {
   opacity: 0.5;
   cursor: not-allowed;
   text-decoration: none;
+}
+
+/* ---- Onboarding banner, review prompt, share (0.1.30) -------------------- */
+
+/* "Finish setup" — a full-width strip under the header, shown until the
+   user has acknowledged. Styled as a quiet accent bar rather than a
+   warning: it is an unfinished task, not an error. */
+.pm-banner {
+  display: block;
+  width: 100%;
+  appearance: none;
+  border: none;
+  border-bottom: 1px solid var(--pm-border);
+  background: color-mix(in srgb, var(--pm-accent) 12%, transparent);
+  color: var(--pm-accent);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  padding: 9px 16px;
+  cursor: pointer;
+}
+
+.pm-banner:hover {
+  background: color-mix(in srgb, var(--pm-accent) 18%, transparent);
+}
+
+.pm-row--review {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.pm-review-text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.pm-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.pm-row--share .pm-hint {
+  margin-top: 6px;
 }

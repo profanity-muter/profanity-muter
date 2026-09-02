@@ -160,6 +160,13 @@
   var lockUnlockEl = document.getElementById("pm-lock-unlock");
   var lockRemoveEl = document.getElementById("pm-lock-remove");
   var lockStatusEl = document.getElementById("pm-lock-status");
+  var openOnboardingEl = document.getElementById("pm-open-onboarding");
+  var finishSetupEl = document.getElementById("pm-finish-setup");
+  var reviewCardEl = document.getElementById("pm-review-card");
+  var reviewYesEl = document.getElementById("pm-review-yes");
+  var reviewNoEl = document.getElementById("pm-review-no");
+  var shareRowEl = document.getElementById("pm-share-row");
+  var shareEl = document.getElementById("pm-share");
 
   var hasStorage =
     typeof chrome !== "undefined" &&
@@ -993,6 +1000,160 @@
     });
   }
 
+  // ---- Onboarding, review prompt, share (0.1.30) --------------------------
+  //
+  // Three surfaces, one storage read. All three decisions are made by the
+  // pure predicates in shared/moments.js — this section only renders what
+  // it is told, and every gate lives in one unit-tested place rather than
+  // as conditionals grown into the UI.
+  function momentsApi() {
+    return (typeof window !== "undefined" && window.PMMoments) || null;
+  }
+
+  function openOnboarding() {
+    var url;
+    try {
+      url = chrome.runtime.getURL("onboarding/onboarding.html");
+    } catch (e) {
+      return;
+    }
+    try {
+      chrome.tabs.create({ url: url });
+      // A popup stays open behind the new tab it just spawned, which reads
+      // as nothing having happened. Close it.
+      window.close();
+    } catch (e) {
+      // No chrome.tabs (shouldn't happen in a popup): fall back to a plain
+      // navigation rather than silently doing nothing.
+      window.open(url, "_blank");
+    }
+  }
+
+  // The "Finish setup" banner and the share row are both driven off the
+  // acknowledgment record, in opposite directions: the banner shows until
+  // it exists, the share row shows only once it does. Nobody should be
+  // recommending this extension to a friend before being told its limits.
+  function renderAckSurfaces(ackRecord) {
+    var m = momentsApi();
+    var acknowledged = !!(m && m.isAcknowledged(ackRecord));
+    finishSetupEl.classList.toggle("pm-hidden", acknowledged);
+    finishSetupEl.setAttribute("aria-hidden", acknowledged ? "true" : "false");
+    shareRowEl.classList.toggle("pm-hidden", !acknowledged);
+    shareRowEl.setAttribute("aria-hidden", acknowledged ? "false" : "true");
+  }
+
+  // CHROME WEB STORE POLICY lives with the predicate, in
+  // shared/moments.js — read it there before touching any of this. The
+  // short version, restated at the point of use because it constrains
+  // this code specifically:
+  //   * at most once, ever — showing the card WRITES pm_reviewPrompt, so
+  //     it can never be shown again even if the user neither clicks nor
+  //     dismisses (closing the popup counts as having been asked);
+  //   * dismissal is permanent, and "No thanks" is a real dismissal;
+  //   * no incentive is offered, and no rating is solicited first — both
+  //     buttons are equally available and nothing is gated on either;
+  //   * it is a card inside the popup, never a tab or a notification.
+  function renderReviewPrompt(items) {
+    var m = momentsApi();
+    if (!m) return;
+    var verdict = m.reviewPromptEligibility({
+      stats: (items && items.pm_stats) || {},
+      installedAt: items && items.pm_installedAt,
+      ack: items && items.pm_ackNotPerfect,
+      reviewPrompt: items && items.pm_reviewPrompt,
+      now: Date.now()
+    });
+    if (!verdict.eligible) return;
+
+    reviewCardEl.classList.remove("pm-hidden");
+    reviewCardEl.setAttribute("aria-hidden", "false");
+
+    // Record it as shown IMMEDIATELY, not on click. If this waited for a
+    // button, a user who simply closed the popup would be asked again on
+    // every open — which is exactly the repeated nagging the "at most
+    // once" rule exists to prevent. Being asked once and walking away IS
+    // an answer.
+    markReviewPromptShown(false);
+  }
+
+  function markReviewPromptShown(dismissed) {
+    var m = momentsApi();
+    if (!m || !hasStorage) return;
+    try {
+      chrome.storage.sync.set({
+        pm_reviewPrompt: m.makeReviewPromptRecord(dismissed, Date.now())
+      });
+    } catch (e) {
+      // Non-fatal: the worst case is being asked once more.
+    }
+  }
+
+  function hideReviewCard() {
+    reviewCardEl.classList.add("pm-hidden");
+    reviewCardEl.setAttribute("aria-hidden", "true");
+  }
+
+  function onReviewYes() {
+    var m = momentsApi();
+    markReviewPromptShown(true);
+    hideReviewCard();
+    if (!m) return;
+    try {
+      chrome.tabs.create({ url: m.REVIEW_URL });
+      window.close();
+    } catch (e) {
+      window.open(m.REVIEW_URL, "_blank");
+    }
+  }
+
+  function onReviewNo() {
+    markReviewPromptShown(true);
+    hideReviewCard();
+    setStatus("Thanks — we won't ask again");
+  }
+
+  function shareWithFriend() {
+    var m = momentsApi();
+    if (!m) return;
+    if (!navigator.clipboard || !navigator.clipboard.writeText) {
+      setStatus("Clipboard unavailable");
+      return;
+    }
+    navigator.clipboard.writeText(m.SHARE_TEXT).then(
+      function () { setStatus("Copied!"); },
+      function () { setStatus("Copy failed"); }
+    );
+  }
+
+  // One read for all three surfaces. pm_stats lives in the LOCAL area (see
+  // the Stats section below), so it has to be fetched separately from the
+  // sync keys and merged before the eligibility check can run.
+  function loadMoments() {
+    // No storage, or an unreadable one: show none of the three. We cannot
+    // tell whether this user has acknowledged, and a banner shown on a
+    // transient sync error to someone who finished months ago is worse
+    // than a banner missed once by someone who hasn't.
+    if (!hasStorage) return;
+    chrome.storage.sync.get(
+      ["pm_ackNotPerfect", "pm_installedAt", "pm_reviewPrompt"],
+      function (syncItems) {
+        if (chrome.runtime && chrome.runtime.lastError) return;
+        syncItems = syncItems || {};
+        renderAckSurfaces(syncItems.pm_ackNotPerfect);
+        if (!hasLocalStorage) return;
+        chrome.storage.local.get(["pm_stats"], function (localItems) {
+          if (chrome.runtime && chrome.runtime.lastError) return;
+          renderReviewPrompt({
+            pm_ackNotPerfect: syncItems.pm_ackNotPerfect,
+            pm_installedAt: syncItems.pm_installedAt,
+            pm_reviewPrompt: syncItems.pm_reviewPrompt,
+            pm_stats: (localItems && localItems.pm_stats) || {}
+          });
+        });
+      }
+    );
+  }
+
   // ---- Copy debug log ---------------------------------------------------
   // Hands over the whole `pm_devlog` ring (last 10 videos: analyzed
   // windows, matched words, mute intervals, unanalyzed-playback gaps,
@@ -1091,6 +1252,11 @@
   lockRemoveEl.addEventListener("click", removeLockPassword);
   // Enter submits the field it's typed in — a password field that
   // ignores Enter feels broken.
+  openOnboardingEl.addEventListener("click", openOnboarding);
+  finishSetupEl.addEventListener("click", openOnboarding);
+  reviewYesEl.addEventListener("click", onReviewYes);
+  reviewNoEl.addEventListener("click", onReviewNo);
+  shareEl.addEventListener("click", shareWithFriend);
   lockPasswordEl.addEventListener("keydown", function (ev) {
     if (ev.key === "Enter") unlock();
   });
@@ -1109,4 +1275,12 @@
   // is deferred, not allowed — see lockStateLoaded.
   renderLockUI();
   loadLock();
+  // Note the deliberate absence of a synchronous pre-render here, unlike
+  // every other section in this file. All three of these surfaces start
+  // hidden in the HTML and are only ever revealed by a real storage read.
+  // The popup's usual "render correct defaults immediately" rule would
+  // mean flashing "Finish setup" at someone who finished setup weeks ago,
+  // on every single open — and the honest default for "have you
+  // acknowledged?" is "we don't know yet", which shows nothing.
+  loadMoments();
 })();

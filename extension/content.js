@@ -697,6 +697,15 @@
 
   // ---- engage/release: every call is logged with an explicit reason so
   // there is never a silent "why is this muted" state. -----------------------
+  //
+  // PRODUCT RULE — MUTE, NEVER BLEEP. This sets video.muted and nothing
+  // else, deliberately. Do not "improve" this by mixing in a bleep tone,
+  // a beep, or any replacement audio: the Family Movie Act (17 U.S.C.
+  // §110(11)) protects making limited portions of a work IMPERCEPTIBLE
+  // during a private performance — it does not protect ADDING audio to
+  // someone else's copyrighted work, which is what a bleep is. Silence is
+  // the whole legal basis on which this extension operates. See
+  // CENSOR_NOTES.md "Mute, never bleep" before touching this.
   function engageMute(reason, intervalInfo) {
     var video = getVideo();
     if (!video || !session) return;

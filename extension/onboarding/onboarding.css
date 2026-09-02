@@ -1,0 +1,158 @@
+/* onboarding/onboarding.css
+   Loaded AFTER popup/popup.css, which supplies every design token and
+   every control style (switches, radios, buttons, inputs, hints). This
+   file does exactly two things: undo the popup's fixed 320px body width,
+   and lay out a full page. Anything that styles a CONTROL belongs in
+   popup.css so both surfaces get it. */
+
+body {
+  /* popup.css pins this to the popup's 320px. */
+  width: auto;
+  min-height: 100vh;
+  padding: 32px 20px 64px;
+}
+
+.ob-page {
+  max-width: 620px;
+  margin: 0 auto;
+}
+
+.ob-header {
+  margin-bottom: 28px;
+}
+
+.ob-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.ob-subtitle {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--pm-muted);
+}
+
+/* Progress dots. Filled = done or current, hollow = ahead. */
+.ob-dots {
+  display: flex;
+  gap: 8px;
+  margin-top: 18px;
+}
+
+.ob-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--pm-track-off);
+  transition: background 120ms ease;
+}
+
+.ob-dot--done {
+  background: var(--pm-accent);
+}
+
+.ob-step-title {
+  margin: 0 0 12px;
+  font-size: 17px;
+  font-weight: 620;
+}
+
+.ob-lede {
+  margin: 0 0 16px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--pm-fg);
+}
+
+.ob-list {
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.ob-list li {
+  font-size: 13.5px;
+  line-height: 1.55;
+  color: var(--pm-muted);
+  padding-left: 14px;
+  border-left: 2px solid var(--pm-border);
+}
+
+.ob-list strong {
+  color: var(--pm-fg);
+  font-weight: 600;
+  display: block;
+  margin-bottom: 2px;
+}
+
+/* One settings block on the setup step. */
+.ob-field {
+  padding: 18px 0;
+  border-top: 1px solid var(--pm-border);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ob-field .pm-hint {
+  margin: 0;
+}
+
+.ob-field .pm-button {
+  align-self: flex-start;
+}
+
+.ob-locked,
+.ob-lock-setup {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.ob-locked {
+  padding: 12px;
+  border: 1px solid var(--pm-border);
+  border-radius: 8px;
+  margin-bottom: 4px;
+}
+
+.ob-locked .pm-button,
+.ob-lock-setup .pm-button {
+  align-self: flex-start;
+}
+
+/* The acknowledgment gate. Given real weight on the page — it is the one
+   thing on this screen, and it is a decision, not a formality. */
+.ob-ack {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 16px;
+  border: 1px solid var(--pm-border);
+  border-radius: 10px;
+  font-size: 13.5px;
+  line-height: 1.55;
+  cursor: pointer;
+}
+
+.ob-ack input {
+  margin: 2px 0 0;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  accent-color: var(--pm-accent);
+}
+
+.ob-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 28px;
+  padding-top: 20px;
+  border-top: 1px solid var(--pm-border);
+}

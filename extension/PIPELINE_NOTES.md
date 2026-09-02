@@ -2991,3 +2991,26 @@ The parental lock (`pm_lock`) is popup-only by explicit decision and is
 consulted nowhere in the content scripts. Worth knowing when reading a
 dev log from a locked install: the settings snapshot is still recorded
 normally, because the lock gates *changing* settings, not reading them.
+
+## 0.1.30: onboarding + growth surfaces (pipeline-adjacent notes only)
+
+The release is almost entirely popup/onboarding-side (see CENSOR_NOTES.md
+"Onboarding, honest limits & growth surfaces"). Two things touch this
+side of the codebase:
+
+- **`background.js` gained a second `onInstalled` listener** — separate
+  from the offscreen-lifecycle one above it, because they share no state
+  and Chrome runs both. It stamps `pm_installedAt` once and, on a genuine
+  `install` only, opens `onboarding/onboarding.html` in a tab. No
+  `chrome.tabs` permission was added or is needed: `tabs.create` is
+  available to every extension, and this reads nothing about any tab.
+- **`engageMute()` now carries the MUTE-NEVER-BLEEP rule in a comment**,
+  because that function is the one place it could be violated. The Family
+  Movie Act (17 U.S.C. §110(11)) protects making portions of a work
+  imperceptible during a private performance; it does not protect adding
+  audio, which a bleep tone is. `video.muted = true` and nothing else is
+  the legal basis this whole extension stands on — do not mix in a tone,
+  a beep, or replacement audio, however much nicer it might sound.
+
+Nothing in the audio path, the offscreen document, or the word-matching
+path changed.

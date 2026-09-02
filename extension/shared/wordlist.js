@@ -86,6 +86,31 @@
 //                                resolveSettingsFromStorage — including
 //                                why legacy "custom" with no saved list
 //                                migrates to "strict", not "none").
+//   pm_onboarded      boolean  default false — the onboarding tab has been
+//                                AUTO-OPENED once (set by background.js on
+//                                a genuine install). NOT the same as
+//                                "finished onboarding" — see
+//                                pm_ackNotPerfect.
+//   pm_ackNotPerfect  {version, timestamp} | absent — the user explicitly
+//                                acknowledged that this extension will not
+//                                catch every word. Gates the popup's
+//                                "Finish setup" banner (shown until it
+//                                exists) and its share row (shown only
+//                                once it does).
+//   pm_installedAt    number (epoch ms) | absent — install time, stamped
+//                                once by background.js. Gates the review
+//                                prompt's 7-day rule.
+//   pm_reviewPrompt   {shownAt, dismissed} | absent — the review prompt
+//                                has been shown. Its existence alone
+//                                means it is never shown again.
+//                                pm_onboarded/pm_ackNotPerfect/
+//                                pm_installedAt/pm_reviewPrompt are all
+//                                owned by shared/moments.js plus the popup
+//                                and onboarding pages — deliberately NOT
+//                                in this file's STORAGE_KEYS and NOT part
+//                                of the PMWordlist.settings contract:
+//                                nothing in the matching path or the
+//                                content scripts consults any of them.
 //   pm_lock           {salt: string, hash: string} | absent — the
 //                                optional PARENTAL LOCK (0.1.29). When
 //                                present, the popup opens with every

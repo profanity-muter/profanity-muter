@@ -742,6 +742,181 @@ of that file) — it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays honest about the actual
 shipped pack shape.
 
+## FEATURE (2026-09-02, 0.1.30): Onboarding, honest limits & growth surfaces
+
+Three surfaces that share one idea, which is why they share one module
+(`shared/moments.js`): each is a small, purely-arithmetic predicate over a
+few storage keys deciding whether to say something to the user right now.
+Written where they are displayed, those predicates rot into untestable
+`if`s scattered through `popup.js`; written as pure functions with an
+injected clock, the whole eligibility matrix is checkable in milliseconds.
+The UI files only render what they are told.
+
+### 1. First-run onboarding (`onboarding/`)
+
+A full extension page, opened automatically **once**, by `background.js`'s
+second `onInstalled` listener, on `reason === "install"` only. Never on
+`update`: an update the user did not ask for is the worst possible moment
+to seize a tab, and doing it would re-open for everyone on every release.
+`pm_onboarded` is set *before* the tab is created, so a failed open can't
+leave the flag unset and re-trigger. Re-openable any time from the popup's
+"Setup guide" link. No `chrome.tabs` permission is needed — `tabs.create`
+is available to every extension; only *reading* tab url/title requires it.
+
+Four steps, progress dots, everything local (three same-origin scripts,
+two same-origin stylesheets, no network of any kind):
+
+1. **How it works** — on-device transcription, nothing uploaded, no
+   account, no server; matched words silenced as they play; captions
+   censored too.
+2. **What it won't do** — a full step, not fine print.
+3. **Guided setup** — catch-up mode first and framed as the one setting
+   worth thinking about, then built-in level, additional words, and an
+   optional parental lock.
+4. **Acknowledgment** — a real gate.
+
+The page reuses `popup/popup.css` wholesale and adds only page layout
+(`onboarding.css` undoes the popup's fixed 320px body width). A second
+copy of the switch/radio/button styles would guarantee the two surfaces
+drift. It writes the **same** storage keys as the popup through the same
+one-funnel lock rule (`persist()`), resolves what to display through
+`resolveSettingsFromStorage` so the 0.1.29 migration has one
+implementation, and defines no settings semantics of its own.
+
+**Honest-limits copy.** The tone target was to name the exact failure
+mode plainly rather than reach for legalese — the register comparable
+products use (Enjoy Movies Your Way naming poorly-timed subtitles and
+words missing from captions; ClearPlay's "we do not guarantee that our
+filters will be 100% accurate"; YouTube Kids' "no automated system of
+filters is perfect"). So the screen says: analysis trails the video at
+the start and after skipping, and that window is where a word is most
+likely to slip through; speech recognition is imperfect and a clean word
+can occasionally be muted by mistake; only listed words match; and
+caption censoring depends on captions existing and being well-timed. It
+closes with "no automated filter is perfect, and this one isn't either" —
+a good filter, not a guarantee, the way you'd treat a spam folder.
+
+**The acknowledgment** (`pm_ackNotPerfect: {version, timestamp}`) is a
+checkbox plus a button that stays `disabled` until it is ticked. It is
+not implied by reaching the screen, by clicking through, or by a
+pre-ticked box. `version` is `ACK_VERSION`, so a future material change
+to what is being acknowledged can require a fresh one instead of
+silently inheriting consent to different words — a record from any other
+version reads as *not acknowledged*. It is written **outside** the lock
+funnel on purpose: it is not a setting but a record that this person was
+told, and a parental lock must not be able to prevent it (blocking it
+would only mean the banner never clears).
+
+Until it exists, the popup shows a slim, non-dismissable **"Finish
+setup"** banner. Slim and non-dismissable is the deliberate combination:
+it blocks nothing and costs one line, but it is the one thing we want
+every user to have actually seen.
+
+### Mute, never bleep
+
+Confirmed product rule, recorded here because it is the kind of thing a
+future contributor "improves" without knowing: **this extension mutes and
+must never add a bleep tone.** The Family Movie Act (17 U.S.C. §110(11))
+protects making limited portions of a work *imperceptible* during a
+private performance; it does not protect *adding* audio to someone else's
+copyrighted work, which is exactly what a bleep is. Silence is the legal
+basis on which the whole extension operates. The rule is restated at the
+one place it could be violated — `engageMute()` in `content.js` — and the
+onboarding copy says "silenced… removed, not covered over; nothing is
+added to the audio" rather than anything that hints at a bleep. Do not
+let future copy promise one either.
+
+### 2. Review prompt (milestone-triggered)
+
+A small dismissable card **inside the popup**. Never a new tab, never a
+notification, never an interstitial.
+
+> Is Profanity Muter doing its job? A review helps other parents find it.
+
+**Chrome Web Store policy constraints**, enforced by
+`reviewPromptEligibility` rather than by convention, and restated in
+comments at both the predicate and the point of use:
+
+- **Shown at most once, ever.** Once `pm_reviewPrompt` exists the
+  predicate returns not-eligible forever. There is deliberately no
+  "remind me later" state — that is how "at most once" quietly becomes
+  "repeatedly".
+- **Dismissal is permanent**, and "No thanks" is a real dismissal.
+- **No incentive** of any kind, and **no rating solicited first** — no
+  "was this helpful? → only positives get the review link" funnel. Both
+  buttons are equally available.
+- **Nothing is gated, degraded, delayed or nagged** based on whether the
+  user reviews.
+
+The card **records itself as shown the moment it renders**, not on click.
+If it waited for a button, a user who simply closed the popup would be
+asked again on every open. Being asked once and walking away is an answer.
+
+Eligibility (all must hold): `videosProtected >= 10` **and**
+`totalMuted >= 25` **and** installed >= 7 days **and** acknowledged
+**and** never prompted. The milestones exist so the ask lands only on
+someone with a real basis for an opinion; asking earlier produces both
+worse reviews and a worse product. Note `pm_stats` lives in the **local**
+area while the rest are **sync**, so the popup does two reads and merges
+before deciding.
+
+*Backfill:* installs predating 0.1.30 have no `pm_installedAt`;
+`background.js` stamps it on update, so they wait 7 days from the update.
+Deliberate — treating an unknown install date as old enough would prompt
+every existing user the moment they updated, which is the surprise nag
+the gate exists to prevent.
+
+### 3. Share with a friend
+
+A row in the popup, shown **only after acknowledgment** (nobody should be
+recommending this before being told its limits) and deliberately **not**
+lock-gated — like "Copy debug log", it changes no setting. One click
+copies:
+
+> I use Profanity Muter to auto-mute swearing in YouTube videos — free,
+> runs entirely on your device: `<store URL>`
+
+No tracking, no referral code, no query string at all (asserted in the
+tests). The store URL and the review URL both derive from a single
+`STORE_ITEM_ID` constant in `shared/moments.js`, currently the placeholder
+`TODO_CHROME_WEB_STORE_ITEM_ID` since the extension isn't listed yet — and
+a test asserts it is *still* the placeholder, so that when the listing
+goes live the test fails and forces the id to be replaced rather than a
+placeholder shipping silently in a share link.
+
+### Tests
+
+`test/moments_test.js` (36) — the full eligibility matrix below, ack
+record shapes and version invalidation, `shouldAutoOpenOnboarding`, and
+the share/store constants (including the no-tracking and no-incentive
+assertions).
+
+| input | eligible | reason |
+|---|---|---|
+| all gates met | yes | `eligible` |
+| prompt record exists (dismissed or not, or `{}`) | no | `already-prompted` |
+| never acknowledged / acked under an older version | no | `not-acknowledged` |
+| no install date, or a non-numeric one | no | `no-install-date` |
+| installed 6 days ago / 7 days minus a second | no | `too-new` |
+| installed exactly 7 days ago | yes | `eligible` |
+| install date in the future (clock skew) | no | `too-new` |
+| no stats / 9 videos / garbage values | no | `not-enough-videos` |
+| 10 videos but 24 mutes | no | `not-enough-mutes` |
+| exactly 10 videos and 25 mutes | yes | `eligible` |
+
+`verify/popup_check.mjs` grew from 39 to 103 checks, covering what only a
+rendered page can show: the banner appearing when unacknowledged and
+clearing when acked (including a stale ack version bringing it back), each
+review gate individually suppressing the card, the card writing
+`pm_reviewPrompt` on render, both buttons' behaviour, the share row
+copying the blurb, share/debug-log/setup-guide staying usable while the
+settings are locked, and the whole onboarding page — step navigation,
+`mute` preselected, settings writing through, the deprecated `pm_wordlist`
+never written, no built-in word appearing anywhere on that page either,
+the Finish gate refusing a *forced* click on the disabled button, and an
+existing parental lock disabling the setup step and refusing a forced
+change until unlocked.
+
 ## FEATURE (2026-09-02, 0.1.29): Hidden lists & parental lock
 
 Two changes that only make sense together: the popup stops showing the
@@ -1163,6 +1338,10 @@ Avoiding self-triggered observer loops:
 | `pm_showStatus`     | `boolean`                 | `true` — shows an on-player status pill (consumed by the audio pipeline's `content.js`). Distinct from `pm_debugOverlay`: this is a lightweight, on-by-default status indicator, not an opt-in diagnostic |
 | `pm_strictness`     | `"none"\|"standard"\|"strict"` | `"strict"` — the LEVEL: how much of the BUILT-IN list is on (nothing / `CORE_WORDLIST` / `DEFAULT_WORDLIST`). The active list is always this tier PLUS `pm_additionalWords`. `"custom"` is no longer a valid value — see "Hidden lists & parental lock" below for the full migration table |
 | `pm_additionalWords` | `string[]`               | unset -> `[]` — the user's OWN words, ADDED ON TOP of the tier. The only word-list key the popup writes from 0.1.29, and the only one whose contents are ever shown in the UI |
+| `pm_onboarded`      | `boolean`                 | `false` -> the onboarding tab has not been auto-opened yet. Set by `background.js` on a genuine install, immediately before opening the tab. NOT "finished onboarding" |
+| `pm_ackNotPerfect`  | `{version, timestamp}` or absent | absent -> the popup shows the "Finish setup" banner and hides the share row. Written by the onboarding page's final step |
+| `pm_installedAt`    | `number` (epoch ms) or absent | stamped once by `background.js`; gates the review prompt's 7-day rule |
+| `pm_reviewPrompt`   | `{shownAt, dismissed}` or absent | absent -> the review prompt may still be shown. Its existence alone disqualifies forever |
 | `pm_lock`           | `{salt, hash}` or absent  | absent -> no lock. Optional parental lock over the popup's settings; `hash` = SHA-256(salt + password), hex. Owned by `shared/lock.js` + `popup/popup.js`; NOT in `STORAGE_KEYS`, NOT in the `PMWordlist.settings` contract. A deterrent, not security |
 | `pm_padding`        | `"tight"\|"normal"\|"wide"` | `"normal"` — how much surrounding audio the mute interval pads around a matched word; consumed entirely by the audio pipeline's `content.js` for its interval math |
 | `pm_multilingual`   | `boolean`                 | `true` — "Filter other languages (auto-detect)"; stored/exposed here only — the audio pipeline's language detection reads it to decide whether to call `PMWordlist.setLanguage(lang)`; see "FEATURE: language pack architecture" below |
