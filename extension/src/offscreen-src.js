@@ -40,6 +40,10 @@ import { Input, ReadableStreamSource, AudioBufferSink, WEBM, MP4, ADTS } from 'm
 // .PMLanguage; imported for its side effect so the bundle carries one
 // implementation of the rule rather than a second copy of it here.
 import '../shared/language.js';
+// 0.1.40: the decode timeout ladder and the iterator disposal contract.
+// Imported for its side effect (it attaches globalThis.PMDecode) so the
+// shipped path is the same code the Node tests exercise.
+import '../shared/decode.js';
 
 // 'small' added 0.1.13 as an opt-in accuracy tier (per the quiet-speech-
 // recall investigation) - Xenova/whisper-small.en is confirmed on the Hub to
@@ -717,8 +721,12 @@ const SINK_ERROR_THRESHOLD = 3; // same exact window THROWING a decode error thi
 //   HANG_THRESHOLD:        unchanged final fallback - if windows keep
 //     hanging even after rebuilding and advancing, the content itself is
 //     the problem and the session is marked unanalyzable.
-const HANG_REBUILD_AT = 2;
-const HANG_SKIP_AT = 3;
+// 0.1.40: recovery is now cheap, so it happens sooner. With the iterator
+// leak fixed a hang should be rare, and when one does happen the rebuild is
+// the repair most likely to clear it, so there is no reason to sit through
+// a second identical wait before trying it.
+const HANG_REBUILD_AT = globalThis.PMDecode ? globalThis.PMDecode.HANG_REBUILD_AT : 1;
+const HANG_SKIP_AT = globalThis.PMDecode ? globalThis.PMDecode.HANG_SKIP_AT : 2;
 const HANG_THRESHOLD = 6; // 0.1.23: same exact window HANGING (stage timeout, no thrown error) this many times in a row -> unanalyzable - higher than SINK_ERROR_THRESHOLD on purpose: after the 0.1.23 fed-data clamp + end-of-stream-flush fixes, a genuine hang should be much rarer, so a couple of stray timeouts shouldn't give up as fast as a confident thrown DRM-style error does
 
 // Stage-timeout guard (0.1.21) - a live user session on a LIVE STREAM
@@ -751,9 +759,18 @@ const STAGE_TIMEOUT_MS = 25000; // generously above any legitimate stage per the
 // above any legitimate decode of a sub-20s window (measured RTF is well
 // under 1x realtime), and post-rebuild attempts keep the full 25s so a
 // genuinely slow machine is never penalized for being slow.
-const STAGE_TIMEOUT_FIRST_MS = 10000;
+// 0.1.40: 3s, down from 10s. At these window sizes a decode that is going
+// to settle settles in well under a second (the measured RTF table is far
+// under 1x realtime), so ten seconds was not patience, it was ten seconds
+// of a wedged decoder before anything happened. Post-rebuild attempts keep
+// the full 25s below, so a genuinely slow machine is never punished for
+// being slow: the short leash applies only to the FIRST try, where the
+// cheap repair is one step away.
+const STAGE_TIMEOUT_FIRST_MS = globalThis.PMDecode ? globalThis.PMDecode.STAGE_TIMEOUT_FIRST_MS : 3000;
 function stageTimeoutMsFor(attemptsSoFar) {
-  return attemptsSoFar > 0 ? STAGE_TIMEOUT_MS : STAGE_TIMEOUT_FIRST_MS;
+  return globalThis.PMDecode
+    ? globalThis.PMDecode.stageTimeoutMsFor(attemptsSoFar)
+    : (attemptsSoFar > 0 ? STAGE_TIMEOUT_MS : STAGE_TIMEOUT_FIRST_MS);
 }
 function withStageTimeout(promise, label, timeoutMs) {
   const limitMs = typeof timeoutMs === 'number' ? timeoutMs : STAGE_TIMEOUT_MS;
@@ -1102,6 +1119,9 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   if (abortIfGone('pre-decode')) return false;
   const nativeRate = run.nativeRate;
   const sink = run.sink;
+  // Owned so the timeout path can close it; see the decode block below.
+  let decodeIterator = null;
+  let decodeAborted = false;
   if (!sink) {
     // The second field-log crash ("Cannot read properties of null (reading
     // 'buffers')"), now a quiet abort rather than a thrown TypeError that
@@ -1111,20 +1131,57 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   }
   const wrapped = [];
   try {
-    // Stage-timeout guard (0.1.21): the decode loop itself is the OTHER
-    // place a container/codec-specific mediabunny/WebCodecs path could hang
-    // with no thrown error at all (a live AAC/fMP4 session produced zero
-    // [PM-SKIP]/[PM-DEMUX-ERR] lines, which rules out every OTHER catch
-    // path in this function - see the withStageTimeout comment above).
-    // Wrapped as one IIFE so the WHOLE decode (not each individual chunk)
-    // is bounded by a single timeout.
-    await withStageTimeout(
-      (async () => {
-        for await (const wb of sink.buffers(absStart, absEnd)) wrapped.push(wb);
-      })(),
-      'decode',
-      stageTimeoutMsFor(s.hangAttempts.get(windowKeyForErrors) || 0)
-    );
+    // ROOT CAUSE OF THE CHRONIC DECODE HANG (0.1.40). Read this before
+    // touching the decode path again.
+    //
+    // The old code was:
+    //
+    //     await withStageTimeout((async () => {
+    //       for await (const wb of sink.buffers(a, b)) wrapped.push(wb);
+    //     })(), 'decode', ms);
+    //
+    // On timeout, withStageTimeout rejects and we move on. But the async
+    // IIFE keeps running, still suspended inside `for await`, and the
+    // iterator is never closed. That is not a harmless leak, because of how
+    // mediabunny builds these iterators (dist/modules/src/media-sink.js,
+    // mediaSamplesInRange):
+    //
+    //   * EVERY buffers() call creates its OWN AudioDecoder, and closes it
+    //     only in the `.finally()` of an internal pump task.
+    //   * That pump only finishes when the range ends naturally or the
+    //     consumer calls iterator.return(), which sets terminated/ended and
+    //     releases its waits.
+    //   * The pump applies backpressure: once sampleQueue fills, it blocks
+    //     on `await queueDequeue`, which only the consumer's next() call
+    //     resolves.
+    //
+    // So an abandoned iterator parks forever holding a live AudioDecoder
+    // and a queue of unclosed AudioData objects. WebCodecs decoders are a
+    // finite resource, so each abandoned decode makes the NEXT one likelier
+    // to stall, which times out, which abandons another. That is the
+    // "roughly every other window" density in the field log: a
+    // self-amplifying cascade, and 0.1.21's timeout guard, meant to bound
+    // the failure, is what turned one stall into a chain of them.
+    //
+    // The fix is to own the iterator and always close it. Abandoning it is
+    // the bug; the timeout is fine.
+    decodeIterator = sink.buffers(absStart, absEnd)[Symbol.asyncIterator]();
+    const budgetMs = stageTimeoutMsFor(s.hangAttempts.get(windowKeyForErrors) || 0);
+    const drain = globalThis.PMDecode
+      ? await globalThis.PMDecode.drainWithTimeout(decodeIterator, { timeoutMs: budgetMs })
+      : { values: [], timedOut: true, error: null };
+    // drainWithTimeout owns the teardown, so by the time it resolves the
+    // iterator is closed whichever way it ended.
+    decodeIterator = null;
+    if (drain.error) throw drain.error;
+    if (drain.timedOut) {
+      const timeoutErr = new Error(
+        'stage "decode" did not settle within ' + budgetMs + 'ms (hung promise, not a thrown error)'
+      );
+      timeoutErr.isStageTimeout = true;
+      throw timeoutErr;
+    }
+    for (let i = 0; i < drain.values.length; i++) wrapped.push(drain.values[i]);
   } catch (e) {
     // DRM/undecodable-content detection (0.1.15) vs. silent-hang detection
     // (0.1.21, split into its OWN counter/threshold in 0.1.23 - see
@@ -1140,6 +1197,18 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     // releasing safe-mode muting via `pm-unanalyzable` (see below) so
     // content that will never decode is never left permanently muted with
     // no way to actually protect it.
+    // Belt and braces: drainWithTimeout already closed the iterator on
+    // every path it owns. This covers a throw from anywhere else in the
+    // block (the sink.buffers() call itself, say) that left one open.
+    decodeAborted = true;
+    if (decodeIterator) {
+      try {
+        await decodeIterator.return();
+      } catch (disposeErr) {
+        log('[PM-DECODE] iterator teardown threw (continuing): ' + String(disposeErr));
+      }
+      decodeIterator = null;
+    }
     if (abortIfGone('decode')) return false;
     const isHang = !!(e && e.isStageTimeout);
     const attempts = isHang ? s.hangAttempts : s.sinkErrorAttempts;
@@ -1173,6 +1242,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     notifyTab(s, '[PM-SKIP] ' + span + ' skipped: sink.buffers ' + (isHang ? 'hang' : 'error') + ' (' + errCount + '/' + threshold + '): ' + String(e && e.message ? e.message : e));
     return false;
   }
+  decodeIterator = null; // completed naturally: the pump closed its own decoder
   s.sinkErrorAttempts.delete(windowKeyForErrors); // a successful decode clears any prior error/hang count for this exact span
   s.hangAttempts.delete(windowKeyForErrors);
   if (wrapped.length === 0) {

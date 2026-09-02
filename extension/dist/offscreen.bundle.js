@@ -13957,11 +13957,113 @@
     }
   });
 
+  // shared/decode.js
+  var require_decode = __commonJS({
+    "shared/decode.js"(exports, module) {
+      (function(root) {
+        "use strict";
+        var STAGE_TIMEOUT_FIRST_MS = 3e3;
+        var STAGE_TIMEOUT_MS = 25e3;
+        function stageTimeoutMsFor(attemptsSoFar) {
+          return attemptsSoFar > 0 ? STAGE_TIMEOUT_MS : STAGE_TIMEOUT_FIRST_MS;
+        }
+        var HANG_REBUILD_AT = 1;
+        var HANG_SKIP_AT = 2;
+        var HANG_THRESHOLD = 6;
+        function hangAction(attemptCount) {
+          var n = typeof attemptCount === "number" && attemptCount > 0 ? attemptCount : 0;
+          if (n >= HANG_THRESHOLD) return "giveup";
+          if (n >= HANG_SKIP_AT) return "skip";
+          if (n >= HANG_REBUILD_AT) return "rebuild";
+          return "retry";
+        }
+        function drainWithTimeout(iterator, options) {
+          options = options || {};
+          var timeoutMs = typeof options.timeoutMs === "number" ? options.timeoutMs : STAGE_TIMEOUT_MS;
+          var setTimer = options.setTimer || (typeof setTimeout === "function" ? setTimeout : null);
+          var clearTimer = options.clearTimer || (typeof clearTimeout === "function" ? clearTimeout : null);
+          var values = [];
+          var aborted = false;
+          var timer = null;
+          if (!iterator || typeof iterator.next !== "function") {
+            return Promise.resolve({ values, timedOut: false, error: new Error("not an iterator") });
+          }
+          var timeoutPromise = new Promise(function(resolve) {
+            if (!setTimer) return;
+            timer = setTimer(function() {
+              aborted = true;
+              resolve("timeout");
+            }, timeoutMs);
+          });
+          var drainPromise = (function() {
+            function step() {
+              return Promise.resolve(iterator.next()).then(function(result) {
+                if (aborted) return "aborted";
+                if (result && result.done) return "done";
+                values.push(result ? result.value : void 0);
+                return step();
+              });
+            }
+            return step();
+          })();
+          return Promise.race([drainPromise, timeoutPromise]).then(
+            function(outcome) {
+              if (clearTimer && timer != null) clearTimer(timer);
+              if (outcome === "done") return { values, timedOut: false, error: null };
+              aborted = true;
+              return closeIterator(iterator).then(function() {
+                return { values, timedOut: true, error: null };
+              });
+            },
+            function(err) {
+              if (clearTimer && timer != null) clearTimer(timer);
+              aborted = true;
+              return closeIterator(iterator).then(function() {
+                return { values, timedOut: false, error: err };
+              });
+            }
+          );
+        }
+        function closeIterator(iterator) {
+          if (!iterator || typeof iterator.return !== "function") return Promise.resolve(false);
+          try {
+            return Promise.resolve(iterator.return()).then(
+              function() {
+                return true;
+              },
+              function() {
+                return false;
+              }
+            );
+          } catch (e) {
+            return Promise.resolve(false);
+          }
+        }
+        var PMDecodeCore = {
+          STAGE_TIMEOUT_FIRST_MS,
+          STAGE_TIMEOUT_MS,
+          HANG_REBUILD_AT,
+          HANG_SKIP_AT,
+          HANG_THRESHOLD,
+          stageTimeoutMsFor,
+          hangAction,
+          drainWithTimeout,
+          closeIterator
+        };
+        root.PMDecode = PMDecodeCore;
+        if (typeof module !== "undefined" && module.exports) {
+          module.exports = { PMDecodeCore };
+        }
+      })(typeof globalThis !== "undefined" ? globalThis : exports);
+    }
+  });
+
   // src/offscreen-src.js
   var require_offscreen_src = __commonJS({
     "src/offscreen-src.js"() {
       init_src();
       var import_language = __toESM(require_language());
+      var import_decode = __toESM(require_decode());
       var MODEL_IDS = {
         tiny: "Xenova/whisper-tiny.en",
         base: "Xenova/whisper-base.en",
@@ -14403,13 +14505,13 @@
       var WINDOW_LOOP_THRESHOLD = 3;
       var ALL_WORDS_CAP = 2e3;
       var SINK_ERROR_THRESHOLD = 3;
-      var HANG_REBUILD_AT = 2;
-      var HANG_SKIP_AT = 3;
+      var HANG_REBUILD_AT = globalThis.PMDecode ? globalThis.PMDecode.HANG_REBUILD_AT : 1;
+      var HANG_SKIP_AT = globalThis.PMDecode ? globalThis.PMDecode.HANG_SKIP_AT : 2;
       var HANG_THRESHOLD = 6;
       var STAGE_TIMEOUT_MS = 25e3;
-      var STAGE_TIMEOUT_FIRST_MS = 1e4;
+      var STAGE_TIMEOUT_FIRST_MS = globalThis.PMDecode ? globalThis.PMDecode.STAGE_TIMEOUT_FIRST_MS : 3e3;
       function stageTimeoutMsFor(attemptsSoFar) {
-        return attemptsSoFar > 0 ? STAGE_TIMEOUT_MS : STAGE_TIMEOUT_FIRST_MS;
+        return globalThis.PMDecode ? globalThis.PMDecode.stageTimeoutMsFor(attemptsSoFar) : attemptsSoFar > 0 ? STAGE_TIMEOUT_MS : STAGE_TIMEOUT_FIRST_MS;
       }
       function withStageTimeout(promise, label, timeoutMs) {
         const limitMs = typeof timeoutMs === "number" ? timeoutMs : STAGE_TIMEOUT_MS;
@@ -14625,20 +14727,37 @@
         if (abortIfGone("pre-decode")) return false;
         const nativeRate = run.nativeRate;
         const sink = run.sink;
+        let decodeIterator = null;
+        let decodeAborted = false;
         if (!sink) {
           log("[PM-ABORT] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") stopped at decode: run sink already released");
           return false;
         }
         const wrapped = [];
         try {
-          await withStageTimeout(
-            (async () => {
-              for await (const wb of sink.buffers(absStart, absEnd)) wrapped.push(wb);
-            })(),
-            "decode",
-            stageTimeoutMsFor(s.hangAttempts.get(windowKeyForErrors) || 0)
-          );
+          decodeIterator = sink.buffers(absStart, absEnd)[Symbol.asyncIterator]();
+          const budgetMs = stageTimeoutMsFor(s.hangAttempts.get(windowKeyForErrors) || 0);
+          const drain = globalThis.PMDecode ? await globalThis.PMDecode.drainWithTimeout(decodeIterator, { timeoutMs: budgetMs }) : { values: [], timedOut: true, error: null };
+          decodeIterator = null;
+          if (drain.error) throw drain.error;
+          if (drain.timedOut) {
+            const timeoutErr = new Error(
+              'stage "decode" did not settle within ' + budgetMs + "ms (hung promise, not a thrown error)"
+            );
+            timeoutErr.isStageTimeout = true;
+            throw timeoutErr;
+          }
+          for (let i = 0; i < drain.values.length; i++) wrapped.push(drain.values[i]);
         } catch (e) {
+          decodeAborted = true;
+          if (decodeIterator) {
+            try {
+              await decodeIterator.return();
+            } catch (disposeErr) {
+              log("[PM-DECODE] iterator teardown threw (continuing): " + String(disposeErr));
+            }
+            decodeIterator = null;
+          }
           if (abortIfGone("decode")) return false;
           const isHang = !!(e && e.isStageTimeout);
           const attempts = isHang ? s.hangAttempts : s.sinkErrorAttempts;
@@ -14663,6 +14782,7 @@
           notifyTab(s, "[PM-SKIP] " + span + " skipped: sink.buffers " + (isHang ? "hang" : "error") + " (" + errCount + "/" + threshold + "): " + String(e && e.message ? e.message : e));
           return false;
         }
+        decodeIterator = null;
         s.sinkErrorAttempts.delete(windowKeyForErrors);
         s.hangAttempts.delete(windowKeyForErrors);
         if (wrapped.length === 0) {
