@@ -3406,3 +3406,36 @@ fetch". Pipeline-side specifics:
 - **`models/` is gitignored**; `npm run package` (fetch + build) produces
   the shippable tree. `npm run build` alone only warns when models are
   absent.
+
+## 0.1.46: English-only build variant (default), multilingual behind a flag
+
+The ~707MB of 0.1.44 was dominated by the 0.1.25 multilingual pair. 0.1.46
+keeps ONE codebase and picks the build with `PM_VARIANT` (`english` default
+| `multilingual`), so the two builds never diverge into two forks.
+
+- `scripts/variant.mjs` is the source of truth (env -> variant, store name).
+- `scripts/model-manifest.mjs` returns `['Xenova/whisper-base.en']` for
+  english (~280MB, fp32 only) and adds `whisper-tiny` + `whisper-base` for
+  multilingual (~707MB). Shipping build, so no compare-only fp16/q8 files.
+- `build.js` generates `shared/build-config.js` (`{ englishOnly }`), which
+  esbuild inlines into the offscreen bundle and the worker, and injects the
+  `manifest.json` store name. The committed config + manifest are the
+  english default (a plain english build is a no-op diff).
+- Runtime gate: in `offscreen-src.js`, `wantsProbe` and `effectiveModelId`
+  are guarded by `!BUILD_CONFIG.englishOnly`, so the english build never
+  fires a detect-language probe and never routes a window to `multilingual`.
+  `whisper-worker-src.js`'s `getTranscriber` additionally hard-pins every
+  request to base.en when `englishOnly`, a defense-in-depth guarantee that
+  `whisper-tiny`/`whisper-base` are never loaded even from a stale message.
+  The full 0.1.25 gate + routing code is untouched and active when the flag
+  is off.
+- Tests: `test/model_manifest_test.js` asserts the model set for BOTH
+  variants (fresh cache-busted dynamic import per variant, run sequentially
+  to avoid env races) and that english excludes tiny/base;
+  `test/language_test.js` still exercises the gate. `verify-offline.mjs`
+  gates the language-pack check on the multilingual variant.
+- Both builds offline-verified: english loads base.en and transcribes with
+  the gate skipped (~280MB); multilingual loads all three (~707MB).
+
+The multilingual auto-detect feature is not removed, just not in the default
+download; it is a planned future optional download.

@@ -26,6 +26,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline, env } from '@huggingface/transformers';
 import { MODEL_REPOS, MODEL_FILES } from '../scripts/model-manifest.mjs';
+import { isEnglishOnly } from '../scripts/variant.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.resolve(__dirname, '..');
@@ -130,8 +131,11 @@ async function main() {
   // The per-language wordlist packs the non-English path matches against
   // are shipped in shared/packs/ and were already local; confirm a sample
   // is present so the non-English path is local end to end (model + pack).
-  const koPack = path.join(EXT, 'shared', 'packs', 'ko.json');
-  check('a language pack (ko.json) is bundled for the non-English path', fs.existsSync(koPack));
+  // Only the multilingual variant ever exercises that path.
+  if (!isEnglishOnly()) {
+    const koPack = path.join(EXT, 'shared', 'packs', 'ko.json');
+    check('a language pack (ko.json) is bundled for the non-English path', fs.existsSync(koPack));
+  }
 
   globalThis.fetch = realFetch;
   console.log('\nverify-offline: ' + (failures === 0 ? 'PASS' : failures + ' FAILURE(S)'));

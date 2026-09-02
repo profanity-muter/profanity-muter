@@ -742,6 +742,33 @@ of that file) - it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
+## 0.1.46: English-only build variant (size cut from ~707MB to ~280MB)
+
+Bundling all three fp32 models (0.1.44) put the package at ~707MB, most of
+it the multilingual pair (`whisper-tiny` language probe + `whisper-base`
+transcriber) added in 0.1.25. To ship a small default, 0.1.46 introduces a
+build VARIANT flag rather than forking the codebase in two:
+
+- `PM_VARIANT` (`english` default, or `multilingual`), read by
+  `scripts/variant.mjs` (the one source of truth) and the model manifest.
+- `npm run package` builds the english variant: `Xenova/whisper-base.en`
+  fp32 only, ~280MB, store name "Profanity Muter".
+- `npm run package:multilingual` builds the full ~707MB, three-repo variant,
+  store name "Profanity Muter (Multilingual)".
+- The build step generates `shared/build-config.js`
+  (`{ englishOnly: true|false }`), which esbuild inlines into the offscreen
+  bundle and the worker. When `englishOnly`, the language-detection gate and
+  multilingual model routing are switched OFF at runtime: every window
+  transcribes as English with base.en, and neither `whisper-tiny` nor
+  `whisper-base` is ever loaded. The multilingual code stays fully intact
+  behind the flag (no deletion, one codebase).
+- `build.js` also injects the store `name` into `manifest.json` per variant;
+  the committed `manifest.json` and `shared/build-config.js` are the english
+  default, so a plain english build leaves them unchanged.
+
+The multilingual (auto-detect + per-language packs) feature is not gone, just
+not in the default download; it remains a planned future optional download.
+
 ## RELEASE BLOCKER (2026-09-02, 0.1.44): bundle the model weights, no more runtime fetch
 
 The pre-listing blocker. The Whisper weights were fetched from

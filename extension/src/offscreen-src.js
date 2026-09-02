@@ -40,6 +40,12 @@ import { Input, ReadableStreamSource, AudioBufferSink, WEBM, MP4, ADTS } from 'm
 // .PMLanguage; imported for its side effect so the bundle carries one
 // implementation of the rule rather than a second copy of it here.
 import '../shared/language.js';
+// 0.1.46: the build variant, inlined by esbuild. In the english build
+// (englishOnly) the language gate and multilingual model routing below are
+// switched off: no detect-language probe is ever fired and every window
+// transcribes as English with base.en. In the multilingual build the full
+// 0.1.25 behavior is active. See shared/build-config.js.
+import { BUILD_CONFIG } from '../shared/build-config.js';
 // 0.1.40: the decode timeout ladder and the iterator disposal contract.
 // Imported for its side effect (it attaches globalThis.PMDecode) so the
 // shipped path is the same code the Node tests exercise.
@@ -1543,6 +1549,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // same single-threaded worker.
   const langApi = globalThis.PMLanguage;
   const wantsProbe =
+    !BUILD_CONFIG.englishOnly && // english build never probes: base.en, always English
     s.multilingualEnabled &&
     s.modelId !== 'multilingual' &&
     s.languageState !== 'detecting' &&
@@ -1626,6 +1633,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // multilingual model; English (or multilingual disabled, or the user's
   // own explicit 'multilingual' override) stays on `s.modelId` throughout.
   const effectiveModelId =
+    !BUILD_CONFIG.englishOnly &&
     s.multilingualEnabled && s.languageState === 'resolved' && s.detectedLanguage && s.detectedLanguage !== 'en'
       ? 'multilingual'
       : s.modelId;

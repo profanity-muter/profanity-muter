@@ -33,6 +33,12 @@
 // (deliberately not needed) - the wasm path base is handed over once in an
 // 'init' message from the main thread, which already has chrome.runtime.
 import { pipeline, env, Tensor } from '@huggingface/transformers';
+// 0.1.46: the build variant, inlined by esbuild. In the english build
+// (englishOnly) the language gate never runs (see offscreen-src.js), so the
+// worker is only ever asked for base.en; this import lets getTranscriber
+// ALSO hard-pin to base.en defensively, guaranteeing whisper-tiny and
+// whisper-base are never loaded even if a stale message asked for them.
+import { BUILD_CONFIG } from '../shared/build-config.js';
 
 // Eager warm-up timing (0.1.18) - as early in this file's own execution as
 // possible, so `workerSpawnMs` (below) measures genuine worker-script-start-
@@ -99,7 +105,10 @@ let wasmPathsBase = null;
 // NEXT call gets a fresh attempt.
 const transcriberPromises = new Map(); // modelId -> Promise<pipeline>
 function getTranscriber(modelId) {
-  const id = MODEL_IDS[modelId] ? modelId : DEFAULT_MODEL;
+  // English build: every request collapses to base.en, so neither the
+  // multilingual transcriber nor the lang-detect probe can ever be loaded.
+  const requested = BUILD_CONFIG.englishOnly ? DEFAULT_MODEL : modelId;
+  const id = MODEL_IDS[requested] ? requested : DEFAULT_MODEL;
   if (!transcriberPromises.has(id)) {
     const t0 = performance.now();
     transcriberPromises.set(
