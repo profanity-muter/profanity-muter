@@ -3242,3 +3242,38 @@ failure behind it". Pipeline-side specifics:
   back over the tab's port (`open-ui-outcome`), which content.js logs as
   `[PM-BADGE] outcome=...`. The ladder logic is otherwise unchanged: it was
   working, and the repeated clicks in the field log were deliberate use.
+
+## 0.1.40: the decode hang, root-caused
+
+Full write-up in CENSOR_NOTES.md "the decode hang was ours all along".
+Pipeline-side specifics:
+
+- **The wedge was an abandoned async iterator.** `withStageTimeout` around
+  a `for await` loop rejects the outer promise but leaves the loop
+  suspended, so `sink.buffers()`'s iterator is never closed. Per
+  mediabunny's `mediaSamplesInRange`, that iterator owns an `AudioDecoder`
+  closed only in its pump's `.finally()`, and the pump blocks on
+  backpressure that only the consumer releases. Each timeout leaked one
+  decoder plus its queued `AudioData`, so hangs bred hangs.
+- **`shared/decode.js` owns the drain.** `drainWithTimeout(iterator, {...})`
+  returns `{values, timedOut, error}` and closes the iterator on every exit
+  path, including a throw (closing twice is harmless; assuming the throw
+  cleaned up is how the leak survived three releases). `closeIterator`
+  always resolves so a teardown failure cannot mask the decode failure.
+- **Refuted on the way**, so nobody repeats them: the bounded
+  `ReadableStreamSource` cache is not the cause (an evicted read THROWS via
+  `_throwDueToCacheMiss`, it does not hang), and `_pull()` cannot orphan a
+  pending slice.
+- **Ladder**: `STAGE_TIMEOUT_FIRST_MS` 10000 -> 3000, `HANG_REBUILD_AT`
+  2 -> 1, `HANG_SKIP_AT` 3 -> 2, `STAGE_TIMEOUT_MS` and `HANG_THRESHOLD`
+  unchanged. Note `HANG_THRESHOLD` is now effectively unreachable per span
+  (we skip at 2), so `markUnanalyzable` for hangs is reached via the
+  track-ready/sample-rate paths; the thrown-error path is unaffected.
+- **`PM-TIMELINE-ALARM` is downstream**: a hang leaves the span uncovered,
+  the picker returns to the same anchor, and rtf-aware sizing gives the
+  retry a different length, so two eventual successes overlap.
+- **Countdown inputs**: `session.effectiveRtf` is an EWMA over `wallMs`
+  (not `computeMs`) per completed window, and `session.countdown` is the
+  monotonic display ledger, reset only by a seek. `computeStatusState`
+  passes `displayedS` through to `PMPill.present`, which prefers it over
+  the raw promise remainder.

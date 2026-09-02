@@ -742,6 +742,124 @@ of that file) - it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
+## FIX ROUND (2026-09-02, 0.1.40): the decode hang was ours all along
+
+Three releases treated the `sink.buffers()` hang as a mediabunny or
+WebCodecs defect on some unaudited container path. 0.1.21 added a stage
+timeout to bound it, 0.1.34 added a rebuild ladder, 0.1.35 shortened the
+first wait. By 0.1.39 the field log showed roughly every other window
+hanging on a six-minute video, 12+ events, each costing 10 to 35 seconds.
+
+It was the timeout. Reading mediabunny's own implementation
+(`dist/modules/src/media-sink.js`, `mediaSamplesInRange`):
+
+- Every `buffers()` call constructs its **own** `AudioDecoder`, closed only
+  in the `.finally()` of an internal pump task.
+- That pump finishes when the range ends naturally, or when the **consumer**
+  calls `iterator.return()`, which sets its terminated flags and releases
+  the promises it awaits.
+- The pump applies backpressure: once its sample queue fills it blocks on a
+  promise that only the consumer's `next()` resolves.
+
+Our guard did `await withStageTimeout(loopPromise)` and moved on. The async
+loop stayed suspended inside `for await`, so the iterator was never closed,
+so the pump parked forever holding a live decoder and a queue of unclosed
+`AudioData`. WebCodecs decoders are a finite resource. **Each timeout made
+the next decode likelier to stall, which timed out, which leaked another.**
+The "every other window" density is a self-amplifying cascade, and the
+guard written to bound one failure was manufacturing the next.
+
+Two hypotheses were checked and refuted on the way, both worth recording so
+nobody re-runs them. The bounded stream cache is not it: a read of evicted
+data **throws** (`_throwDueToCacheMiss`), it does not hang, and a thrown
+decode error takes a different, working path. And `_pull()` cannot orphan a
+pending slice: every path either fills it, resolves it null at stream end,
+or rejects it.
+
+### The fix
+
+An iterator we stop consuming gets closed. `shared/decode.js` owns the
+drain, so the caller cannot forget the teardown, because the teardown is
+not the caller's job. `test/decode_test.js` reproduces mediabunny's
+backpressure and resource semantics with a fake iterator that holds a
+"decoder" released only in `return()`, so a regression fails there rather
+than in someone's six-minute video.
+
+Recovery got cheaper now that it is not fighting a leak: first attempt 3s
+rather than 10s (a decode that will settle settles in well under a second
+at these window sizes, so ten seconds was dead time in front of a repair
+that takes milliseconds), rebuild on the FIRST hang, advance past the span
+on the second. Post-rebuild attempts keep the full 25s, so a genuinely slow
+machine is never punished for being slow. Worst case before the pipeline
+moves past a doomed span: about 60s down to about 28s.
+
+Skipping still never marks a span covered, so skipped audio stays
+unanalyzed and mute/pause catch-up keeps protecting it. Only the picker
+stops returning to it.
+
+### The timeline double-decode was downstream
+
+`PM-TIMELINE-ALARM` fired on windows sharing an anchor (three at t0=24.00).
+Not an independent bug: a hang leaves the span uncovered, the picker
+correctly returns to the same anchor, and the rtf-aware sizing gives the
+retry a different length, so two eventual successes overlap and produce
+near-duplicate text. Fewer attempts per anchor plus no cascade removes the
+cause rather than papering over the symptom.
+
+### The countdown, made monotonic
+
+Same log, separate report: the countdown "goes down, then up, then says
+analyzing, then finally protected". Every jump was truthful in isolation,
+since each completed window recomputes an estimate and a hang-delayed
+window produces a worse one. Truthful in isolation is not trustworthy. A
+number that can rise is not a countdown.
+
+- **Monotonic display.** It may fall or hold, never rise. A worse estimate
+  stops the descent instead of reversing it, and the existing elapsed rule
+  is the escape valve: when the hold outlasts the promise, the label drops
+  the number entirely. Only a seek or a video change may raise it, because
+  those are new questions rather than revised answers.
+- **Quote time-to-Protected, pessimistically.** Throughput is an EWMA over
+  **wall** time including hang losses, because a window that took twelve
+  seconds while the decoder hung for nine really did deliver its audio at
+  that rate. Hang-prone videos now quote slower numbers by themselves. The
+  bias is deliberate: finishing early and snapping to Protected reads as
+  fast, hitting zero and lingering reads as broken.
+- **Jitter gate.** A trivially better quote is flicker, not information.
+
+The monotonicity test drives hostile sequences rather than a happy path,
+and caught a real bug in the new ledger: `state.lastTickWall || now` treats
+a zero timestamp as missing, disabling the tick whenever the clock reads
+exactly 0. Real wall clocks never do, injected test clocks do, and a guard
+that only works on real inputs is not a guard.
+
+### Confirmed working in the field, for the record
+
+Muting and matching whenever the language stays English; the health
+promise path (one `stalled-analysis` followed by `recovered`); `PM-STALE-KEPT`
+applying a window across a generation change instead of recomputing it; and
+the 0.1.37 language gate holding English with three `already-english`
+records at scores 19.7 to 22.3, which is the gate declining to act exactly
+as designed.
+
+### Not us: the reset-to-start on refresh
+
+Investigated and dropped. The user's A/B reproduced it with the extension
+disabled, so it is YouTube's own resume behaviour. For the record, the
+load-order interaction is real but benign: we do engage pause-catchup at
+t=0 roughly a second before YouTube's restore-seek lands, and the pending
+fallback rewind is retired correctly when that seek arrives, because a
+restore-seek is classified external and a page refresh allocates a fresh
+session with no pending rewind. No load-settle machinery was built.
+
+### Tests
+
+`decode_test.js` (14) covers the disposal contract with a fake iterator
+matching mediabunny's semantics, plus both ladders. `pill_test.js` grew to
+43 with the monotonicity property, the jitter gate, wall-time EWMA
+behaviour, and the escape valve. Suite: 349 node checks, 184 browser
+checks.
+
 ## FIX ROUND (2026-09-02, 0.1.37): a two-letter code, and the protection failure behind it
 
 The user photographed the badge reading "Analyzing ~5s · ko", then
