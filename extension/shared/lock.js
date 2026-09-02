@@ -1,5 +1,5 @@
 // shared/lock.js
-// Plain script (NOT an ES module), loaded by popup/popup.html only —
+// Plain script (NOT an ES module), loaded by popup/popup.html only -
 // nothing in the content-script path consults the lock, so it is
 // deliberately absent from manifest.json's content_scripts. Defines
 // globalThis.PMLock.
@@ -9,7 +9,7 @@
 // An optional parental lock over the popup's settings. When
 // chrome.storage.sync's `pm_lock` is present, the popup opens with every
 // setting disabled and asks for a password; entering it correctly unlocks
-// the settings for THAT POPUP SESSION ONLY (closing the popup re-locks —
+// the settings for THAT POPUP SESSION ONLY (closing the popup re-locks -
 // there is no persisted "unlocked" flag, deliberately: a persisted one
 // would survive the parent walking away).
 //
@@ -20,7 +20,7 @@
 // open chrome://extensions can inspect the popup, clear the extension's
 // storage, or simply remove the extension. The lock raises the effort of
 // changing a setting from "one click" to "know that chrome://extensions
-// exists and be willing to visibly wipe the extension" — which is the
+// exists and be willing to visibly wipe the extension" - which is the
 // entire product goal. Do not describe it, in code or in copy, as
 // anything stronger. A forgotten password is not recoverable: the honest
 // answer is "remove and re-add the extension (or clear its storage)",
@@ -28,8 +28,8 @@
 //
 // Storage schema (chrome.storage.sync):
 //   pm_lock  {salt: string, hash: string} | absent
-//            salt — 16 random bytes, hex (32 chars)
-//            hash — SHA-256(salt + password), hex (64 chars)
+//            salt - 16 random bytes, hex (32 chars)
+//            hash - SHA-256(salt + password), hex (64 chars)
 //            The plaintext password is NEVER stored, anywhere. Sync (not
 //            local) so a lock set on one device roams with the profile,
 //            like every other setting.
@@ -38,14 +38,14 @@
 // common password ("1234") from being recognizable at a glance, and stops
 // two devices/families with the same password from sharing a hash. It is
 // NOT meaningful protection against an offline attacker with the storage
-// dump — a single SHA-256 pass is trivially brute-forceable against a
+// dump - a single SHA-256 pass is trivially brute-forceable against a
 // short password. Key stretching (PBKDF2/scrypt) would change that, and
 // was deliberately skipped: the threat model here is a curious child with
 // access to the machine, for whom clearing storage is already easier than
 // cracking anything.
 //
 // Like shared/wordlist.js and shared/devlog.js, the pure logic here works
-// with zero dependency on chrome.* or the DOM — see PMLockCore — so it
+// with zero dependency on chrome.* or the DOM - see PMLockCore - so it
 // can be require()d directly under Node for unit tests. WebCrypto is
 // reached through injectable parameters (a `subtle` and a
 // `getRandomValues`) rather than closed over, so the tests exercise the
@@ -56,11 +56,11 @@
 
   // Short enough not to be a nuisance for a parent typing on a phone-sized
   // popup, long enough that "1" isn't a password. Not a security control
-  // — see the header.
+  // - see the header.
   var MIN_PASSWORD_LENGTH = 4;
 
   // ======================================================================
-  // PURE CORE — no chrome.*, no DOM, no ambient crypto. Exported for Node.
+  // PURE CORE - no chrome.*, no DOM, no ambient crypto. Exported for Node.
   // ======================================================================
 
   function toHex(bytes) {
@@ -74,7 +74,7 @@
 
   // Is this a well-formed lock record? Anything else (absent, a leftover
   // partial write, a hand-edited value) is treated as NO LOCK rather than
-  // as a lock nobody can open — the failure mode of a corrupted record
+  // as a lock nobody can open - the failure mode of a corrupted record
   // must be "settings are editable again", never "this profile is bricked
   // until you reinstall".
   function isLockRecord(value) {
@@ -105,7 +105,7 @@
 
   // Length-independent string compare. Genuinely constant-time comparison
   // is not achievable in JS and would be pointless here anyway (the
-  // attacker already holds the hash if they can read storage) — this is
+  // attacker already holds the hash if they can read storage) - this is
   // just a plain, honest equality check written so it reads as deliberate
   // rather than as an oversight.
   function hashesEqual(a, b) {
@@ -176,7 +176,7 @@
   // This is the ONE place the rule lives: a write is allowed when there is
   // no valid lock record at all, or when this popup session has been
   // unlocked. Everything that persists a setting routes through the
-  // popup's single persistSettings() funnel, which asks this — no
+  // popup's single persistSettings() funnel, which asks this - no
   // per-handler checks to keep in sync, and a future options page inherits
   // the rule by using the same funnel.
   function mayWriteSettings(lockRecord, unlockedThisSession) {
@@ -198,7 +198,7 @@
   };
 
   // ======================================================================
-  // BROWSER WIRING — the same core with this context's WebCrypto bound in.
+  // BROWSER WIRING - the same core with this context's WebCrypto bound in.
   // ======================================================================
 
   function subtleOrNull() {
@@ -216,7 +216,7 @@
 
   // Can this context set a lock at all? Extension pages are secure
   // contexts so crypto.subtle is there in practice; guarded anyway (the
-  // devlog.js posture — a missing capability degrades the feature, never
+  // devlog.js posture - a missing capability degrades the feature, never
   // breaks the popup). When false, the popup hides the lock control and
   // says why rather than offering a button that can't work.
   function available() {

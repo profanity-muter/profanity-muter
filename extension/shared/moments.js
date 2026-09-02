@@ -5,8 +5,8 @@
 //
 // WHAT A "MOMENT" IS
 // ------------------
-// The three surfaces added in 0.1.30 — the first-run onboarding flow, the
-// review prompt, and the share row — are all the same shape of decision:
+// The three surfaces added in 0.1.30 - the first-run onboarding flow, the
+// review prompt, and the share row - are all the same shape of decision:
 // "given what storage says about this install, should we say something to
 // the user right now?". Each is a small, purely-arithmetic predicate over
 // a handful of storage keys, and each is exactly the kind of thing that
@@ -15,14 +15,14 @@
 //
 // So the predicates live here, pure, and the UI files only render what
 // they are told. Nothing in this file touches chrome.*, the DOM, or the
-// clock — `now` is always passed in — which is what makes the eligibility
+// clock - `now` is always passed in - which is what makes the eligibility
 // matrix in test/moments_test.js able to cover every gate.
 //
-// Storage schema (chrome.storage.sync) — all four keys are owned here and
+// Storage schema (chrome.storage.sync) - all four keys are owned here and
 // by the popup/onboarding pages; none are read by the content scripts or
 // by shared/wordlist.js, so none are in its STORAGE_KEYS:
 //
-//   pm_onboarded    boolean  default false — the onboarding tab has been
+//   pm_onboarded    boolean  default false - the onboarding tab has been
 //                   AUTO-OPENED once. Set by background.js the first time
 //                   it opens the tab on install, and never consulted
 //                   again except to not do that twice. Deliberately NOT
@@ -30,7 +30,7 @@
 //                   they can close the tab immediately, which is why the
 //                   acknowledgment below is tracked separately.
 //
-//   pm_ackNotPerfect  {version, timestamp} | absent — the user explicitly
+//   pm_ackNotPerfect  {version, timestamp} | absent - the user explicitly
 //                   acknowledged that this extension will not catch
 //                   everything. `version` is ACK_VERSION, so a future
 //                   material change to what is being acknowledged can
@@ -38,11 +38,11 @@
 //                   consent to different words. Until this exists, the
 //                   popup shows a slim "Finish setup" banner.
 //
-//   pm_installedAt  number (epoch ms) | absent — when the extension was
+//   pm_installedAt  number (epoch ms) | absent - when the extension was
 //                   installed. Written once by background.js's
 //                   onInstalled handler. See NOTE ON BACKFILL below.
 //
-//   pm_reviewPrompt {shownAt, dismissed} | absent — the review prompt has
+//   pm_reviewPrompt {shownAt, dismissed} | absent - the review prompt has
 //                   been shown. Its mere EXISTENCE is what makes the
 //                   prompt never appear again; `dismissed` records which
 //                   button ended it, for nothing but honesty in a support
@@ -63,7 +63,7 @@
   //
   // TODO(listing): the extension is not on the Chrome Web Store yet, so
   // there is no item id to point at. Both URLs below are placeholders and
-  // are the ONLY place either link exists — when the listing goes live,
+  // are the ONLY place either link exists - when the listing goes live,
   // replace STORE_ITEM_ID here and nothing else needs to change.
   //
   // The review URL shape is the canonical CWS one:
@@ -83,11 +83,11 @@
   var SUPPORT_EMAIL = "support@example.com";
 
   // The share blurb. Plain, first-person, no adjectives doing sales work,
-  // no referral code and no tracking parameter on the URL — the whole
+  // no referral code and no tracking parameter on the URL - the whole
   // point is that a parent can paste this into a group chat without
   // feeling like they are forwarding an ad.
   var SHARE_TEXT =
-    "I use Profanity Muter to auto-mute swearing in YouTube videos — " +
+    "I use Profanity Muter to auto-mute swearing in YouTube videos - " +
     "free, runs entirely on your device: " +
     STORE_URL;
 
@@ -95,7 +95,7 @@
   //
   // Bumping ACK_VERSION invalidates every existing acknowledgment and
   // re-shows the banner. Only do that for a MATERIAL change to what is
-  // being acknowledged — not for copy edits.
+  // being acknowledged - not for copy edits.
   var ACK_VERSION = 1;
 
   function makeAckRecord(now) {
@@ -120,13 +120,13 @@
 
   // ---- review prompt -----------------------------------------------------
   //
-  // CHROME WEB STORE POLICY — these are not preferences, they are the
+  // CHROME WEB STORE POLICY - these are not preferences, they are the
   // rules this surface must obey, and every one of them is enforced by
   // reviewPromptEligibility below rather than by convention:
   //
   //   * Shown AT MOST ONCE, ever. Once pm_reviewPrompt exists, this
   //     function returns not-eligible forever. There is no "remind me
-  //     later" state, on purpose — that is how "at most once" quietly
+  //     later" state, on purpose - that is how "at most once" quietly
   //     becomes "repeatedly".
   //   * Dismissal is PERMANENT.
   //   * No incentive of any kind is offered for reviewing, and no rating
@@ -135,7 +135,7 @@
   //   * Nothing about the extension is gated, degraded, delayed, or
   //     nagged based on whether the user reviews. The prompt is a card
   //     that can be dismissed and never returns.
-  //   * It is a card INSIDE the popup — never a new tab, never a
+  //   * It is a card INSIDE the popup - never a new tab, never a
   //     notification, never an interstitial.
   //
   // The milestone gates below exist so the ask lands only on someone with
@@ -147,7 +147,7 @@
   var REVIEW_MIN_INSTALL_DAYS = 7;
   var DAY_MS = 24 * 60 * 60 * 1000;
 
-  // Returns {eligible: boolean, reason: string}. `reason` is always set —
+  // Returns {eligible: boolean, reason: string}. `reason` is always set -
   // "eligible" when it is, otherwise the FIRST gate that failed, which is
   // what makes a support question ("why am I not seeing it?") answerable.
   //
@@ -173,7 +173,7 @@
       return { eligible: false, reason: "no-install-date" };
     }
     // Guard a clock that has moved backwards (or an installedAt in the
-    // future from a device clock skew) — treat it as "not old enough"
+    // future from a device clock skew) - treat it as "not old enough"
     // rather than computing a negative age and passing every gate.
     var ageMs = now - input.installedAt;
     if (ageMs < REVIEW_MIN_INSTALL_DAYS * DAY_MS) {
@@ -205,7 +205,7 @@
 
   // Should background.js auto-open the onboarding tab? Only on a genuine
   // first install, and only once. An UPDATE must never steal a tab from
-  // someone who is mid-video — an update the user did not ask for is the
+  // someone who is mid-video - an update the user did not ask for is the
   // worst possible moment to take over the screen.
   function shouldAutoOpenOnboarding(reason, onboardedFlag) {
     return reason === "install" && !isOnboarded(onboardedFlag);

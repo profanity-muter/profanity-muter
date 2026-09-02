@@ -1,4 +1,4 @@
-// capture.js — MAIN world, document_start.
+// capture.js - MAIN world, document_start.
 // Intercepts YouTube's MSE audio SourceBuffer appends (see
 // ../spike-capture/SPIKE_NOTES.md) and forwards raw bytes + timing metadata
 // to content.js (isolated world) via window.postMessage. Always calls the
@@ -6,7 +6,7 @@
 (function () {
   var TAG = '[PM-CAPTURE]';
   var MSG_SOURCE = 'PM_CAPTURE';
-  var CHAIN_LOG_CROSS_CHECK_SLACK_S = 1.0; // [PM-CHAIN] log-collapse disagreement threshold (0.1.15) — matches offscreen-src.js's CHECK_SLACK_S
+  var CHAIN_LOG_CROSS_CHECK_SLACK_S = 1.0; // [PM-CHAIN] log-collapse disagreement threshold (0.1.15) - matches offscreen-src.js's CHECK_SLACK_S
 
   function currentVideoId() {
     try {
@@ -18,7 +18,7 @@
   }
 
   // YouTube pages routinely contain MULTIPLE <video> elements (inline-preview
-  // player from SPA nav, miniplayer remnants, ad-player variants) —
+  // player from SPA nav, miniplayer remnants, ad-player variants) -
   // document.querySelector('video') grabs the FIRST in DOM order, which can
   // be a dormant one (readyState 0) while the real player plays elsewhere.
   // Prefer the known real-player selector; fall back to the largest rendered
@@ -49,7 +49,7 @@
   // (Segment>Info>TimecodeScale, once, from the init segment; the first
   // Cluster>Timecode in each appended chunk after that). As of 0.1.10 this
   // is used ONLY as a logged cross-check against the buffered-range growth
-  // below (do they roughly agree?) — offscreen trusts mediabunny's own
+  // below (do they roughly agree?) - offscreen trusts mediabunny's own
   // decoded timestamps directly as video time (the container IS the media
   // presentation timeline; see offscreen-src.js's header for why), so
   // nothing here feeds into any word timestamp. See PIPELINE_NOTES "0.1.10".
@@ -63,11 +63,11 @@
     EBML_SEGMENT, EBML_INFO, EBML_CLUSTER, EBML_HEADER, EBML_SEEKHEAD, EBML_TRACKS,
     EBML_CUES, EBML_TAGS, EBML_CHAPTERS, EBML_ATTACHMENTS, EBML_BLOCKGROUP
   ];
-  // Leaf elements we recognize but don't otherwise need — required so the
+  // Leaf elements we recognize but don't otherwise need - required so the
   // well-formedness gate below (KNOWN ids only) doesn't reject legitimate
   // real structure it just has no other interest in.
   var KNOWN_LEAF_IDS = [EBML_TIMECODE_SCALE, EBML_TIMECODE, EBML_VOID, EBML_CRC32, EBML_SIMPLEBLOCK, EBML_POSITION, EBML_PREVSIZE];
-  // EBML "unsigned integer" element types are capped at 8 octets by spec —
+  // EBML "unsigned integer" element types are capped at 8 octets by spec -
   // both ids we actually read (TimecodeScale, Timecode) are this type.
   var UINT_IDS = [EBML_TIMECODE_SCALE, EBML_TIMECODE];
   function isKnownId(id) {
@@ -97,7 +97,7 @@
 
   // Walks the EBML tree looking for Info>TimecodeScale (updates
   // scaleState.value when found) and the FIRST Cluster>Timecode (returned in
-  // raw ticks, or null if none present in this chunk — continuation appends
+  // raw ticks, or null if none present in this chunk - continuation appends
   // that are pure lacing/blocks without their own new Cluster would have
   // none, which is fine, the caller just skips that segment for offset math).
   var CLUSTER_ID_BYTES = [0x1f, 0x43, 0xb6, 0x75];
@@ -119,7 +119,7 @@
     // offset, returning both what it found AND whether it hit a
     // malformed/unrecognized element before reaching `bytes.length` (the
     // caller uses `malformed` to decide whether it's worth re-syncing
-    // further into the buffer — see below).
+    // further into the buffer - see below).
     function tryFrom(startPos) {
       var result = null;
       var malformed = false;
@@ -139,19 +139,19 @@
           // BUG FIXED (0.1.11): a Cluster>Timecode must only be trusted when
           // parsed from a well-formed element context. A mid-cluster
           // CONTINUATION chunk (raw Block/SimpleBlock payload bytes, not a
-          // fresh element boundary) has no real element header at offset 0 —
+          // fresh element boundary) has no real element header at offset 0 -
           // its bytes are arbitrary, and the old scanner would still walk
           // them as if they were legitimate EBML, occasionally matching e.g.
           // byte 0xE7 (Timecode's own id) by pure coincidence and then
           // reading a garbage vint as that element's SIZE, producing values
           // like 1.45e259 seconds. That garbage then fed a plausibility-drop
           // guard that DROPPED REAL AUDIO. Fix: gate every element on (1) a
-          // recognized id and (2) size consistency — a known-size element's
+          // recognized id and (2) size consistency - a known-size element's
           // content must actually fit inside its enclosing scope, and the
           // two uint-typed ids we read (TimecodeScale, Timecode) can never
           // legitimately exceed 8 octets per the EBML spec. UNKNOWN-size
           // elements are exempt from the bounds check entirely (there is
-          // nothing to bound-check — that's the whole point of the
+          // nothing to bound-check - that's the whole point of the
           // sentinel), which matters a lot here: a live-streamed Cluster's
           // size is *always* the unknown-size sentinel in practice, and that
           // must remain a normal, valid, well-formed context to descend
@@ -167,7 +167,7 @@
             return;
           }
           // Descend into ANY master element regardless of known/unknown size
-          // — streamed/live Clusters commonly use EBML's "unknown size"
+          // - streamed/live Clusters commonly use EBML's "unknown size"
           // sentinel (the encoder doesn't know the cluster's total byte
           // length ahead of time), which is exactly the element containing
           // the Timecode we're looking for (see 0.1.10 history below this
@@ -195,15 +195,15 @@
     if (!first.malformed) return null; // cleanly ran out of well-formed data with nothing found -> nothing more to look for
 
     // RESYNC (0.1.12): position 0 hit unrecognized/inconsistent bytes before
-    // reaching the end of this append — e.g. the tail of a still-open
+    // reaching the end of this append - e.g. the tail of a still-open
     // Cluster's SimpleBlock stream carried over from a PREVIOUS append
     // (possibly a block whose declared size spans past this buffer
     // entirely). appendBuffer chunk boundaries do not follow EBML element
     // boundaries, so this same append may ALSO contain a genuine fresh
-    // Cluster later on. Search for the Cluster element's own 4-byte id — a
+    // Cluster later on. Search for the Cluster element's own 4-byte id - a
     // near-zero false-positive-rate pattern (unlike matching a single byte
     // like Timecode's own 0xE7, which is what caused the original 1e259
-    // bug) — and re-validate full well-formedness from each candidate
+    // bug) - and re-validate full well-formedness from each candidate
     // position via the SAME gated walk. A coincidental 4-byte match still
     // has to pass the whitelist/bounds/8-octet checks above to be trusted,
     // so this does not reopen the original vulnerability.
@@ -234,30 +234,30 @@
   // Finds the absolute video-time span this append's bytes landed at.
   //
   // BUG FIXED (0.1.24): the old version matched an after-range to a before-
-  // range by comparing STARTS within 0.5s — correct for the common case
+  // range by comparing STARTS within 0.5s - correct for the common case
   // (a range that only ever grows forward from a fixed start), but wrong
   // for ordinary long-video BUFFER EVICTION: YouTube continuously trims a
   // SourceBuffer's trailing edge while extending the front once the video
   // is long enough, on EVERY append (observed live:
-  // rangesBefore=[135.40,808.64] -> rangesAfter=[136.54,809.50] — ~1.14s
+  // rangesBefore=[135.40,808.64] -> rangesAfter=[136.54,809.50] - ~1.14s
   // trimmed off the START, ~0.86s appended at the END). The start no longer
   // matches within 0.5s, so the old code fell through to "no existing range
-  // matched" and reported the WHOLE after-range as growth — wrong both in
+  // matched" and reported the WHOLE after-range as growth - wrong both in
   // WHAT counts as new audio (nearly all of it was already fed and
   // transcribed earlier) and in isNewRange (flagged a genuine disjoint
-  // seek, when this is ordinary continuous playback) — which fired the
+  // seek, when this is ordinary continuous playback) - which fired the
   // 0.1.20 run-boundary logic on every single segment: hundreds of demux
   // runs per minute, each superseded before it could ever transcribe
   // anything, on any video long enough to trigger eviction. See
   // PIPELINE_NOTES "0.1.24".
   //
   // Fix: a REAL interval set-difference (after minus before), matching an
-  // after-range to a before-range by OVERLAP (not exact start proximity) —
+  // after-range to a before-range by OVERLAP (not exact start proximity) -
   // trim at the front is invisible to growth by construction (the trimmed
   // span simply isn't part of the after-range at all), and only the
   // genuinely new portion (typically the extended tail) is reported.
   // isNewRange is now determined by whether the after-range overlaps ANY
-  // before-range at all — true "no overlap with anything we already had"
+  // before-range at all - true "no overlap with anything we already had"
   // (a genuine backward/forward seek jump) vs. false for "same underlying
   // range, just trimmed and/or extended" (ordinary continuous playback,
   // eviction included). `trimmedS` reports how much was evicted off the
@@ -271,7 +271,7 @@
       var a = after[i];
       // Subtract every overlapping before-range from `a`, leaving only the
       // genuinely new portion(s). Track the before-range with the largest
-      // overlap too — that's "the same underlying range" for trim
+      // overlap too - that's "the same underlying range" for trim
       // detection (has its own start moved forward, i.e. been evicted?).
       var spans = [{ start: a.start, end: a.end }];
       var matchedBefore = null;
@@ -303,7 +303,7 @@
         var span = spans[m];
         if (span.end - span.start <= 0.001) continue; // negligible, floating-point noise
         // Prefer the span closest to the tail if an after-range somehow
-        // yields more than one new piece (not expected in practice — a
+        // yields more than one new piece (not expected in practice - a
         // single before-range overlap leaves at most one remaining piece,
         // the extended tail).
         if (!bestSpan || span.end > bestSpan.end) {
@@ -320,47 +320,47 @@
   // ---- capture-miss eviction (0.1.12) ------------------------------------
   // Deadlock class found by the user: (a) YouTube pre-buffers audio BEFORE
   // our hook attaches (initial page load buffering, or a "continue
-  // watching" resume jumping straight into an already-fetched region) —
+  // watching" resume jumping straight into an already-fetched region) -
   // that audio sits in the SourceBuffer's `.buffered` ranges but our
   // appendBuffer hook never saw those bytes and never will passively (the
   // player has no reason to re-fetch data it already has); (b) pause-catchup
-  // mode makes this WORSE — pausing stops the player from fetching/
+  // mode makes this WORSE - pausing stops the player from fetching/
   // appending ANYTHING further, so a capture-miss region right at the
   // playhead becomes a permanent deadlock: paused forever, waiting for
   // coverage that can structurally never arrive.
   //
   // Fix: track which spans of the buffered timeline we've actually CAPTURED
-  // (every non-ad append's own growth span — capture.js sees every append,
+  // (every non-ad append's own growth span - capture.js sees every append,
   // so this is ground truth, no cross-context plumbing needed), and
   // periodically compare against the SourceBuffer's actual `.buffered`
   // ranges near the playhead. A buffered-but-uncaptured span there can never
-  // be covered no matter what content.js/offscreen do — the only fix is to
+  // be covered no matter what content.js/offscreen do - the only fix is to
   // EVICT it (`sourceBuffer.remove(start,end)`), which the player treats
   // exactly like a normal quota-driven eviction: it notices the hole and
   // re-fetches/re-appends that span, and THIS TIME our hook is attached and
   // captures it for real.
   // REDESIGNED 0.1.13: the 0.1.12 version scanned blindly every 3s across a
   // 45s lookahead and evicted up to 30s at a time, guarded only 2s from the
-  // playhead — live evidence showed this actively CAUSING player stalls: 5
+  // playhead - live evidence showed this actively CAUSING player stalls: 5
   // evictions in 70s, one starting only 2.98s ahead of currentTime (inside
-  // the danger zone in practice — the remove()-to-refetch round trip isn't
+  // the danger zone in practice - the remove()-to-refetch round trip isn't
   // instant), and a PERSISTENT HOLE that was evicted but never refilled
   // (visible in every later rangesBefore), which the player then stalled on
   // when the playhead reached it. Per the minimal-footprint design
-  // principle (see PIPELINE_NOTES.md) — anything that mutates player/
+  // principle (see PIPELINE_NOTES.md) - anything that mutates player/
   // network state is a LAST RESORT, tightly rate-limited, only when the
   // user's experience is actually blocked, and this should be tried only
   // after content.js's own fallback ladder (muted playback, no player
   // mutation at all) has already had its chance. Redesigned as:
-  // - on-demand only (no blind periodic timer) — see the trigger call sites
+  // - on-demand only (no blind periodic timer) - see the trigger call sites
   //   below (an appendBuffer's own activity, or an explicit check request
   //   from content.js's STALL watchdog, which only fires after 15s of zero
-  //   coverage progress — i.e. genuinely last-resort, already naturally
+  //   coverage progress - i.e. genuinely last-resort, already naturally
   //   downstream of the 8s pause->mute fallback).
-  // - only within EVICT_LOOKAHEAD_S of the playhead (was 45s, now 10s) —
+  // - only within EVICT_LOOKAHEAD_S of the playhead (was 45s, now 10s) -
   //   "is or will soon be blocking", not "might matter eventually".
   // - a much wider guard band (5s, not 2s) that applies regardless of
-  //   paused/playing — simplicity and safety over squeezing a few extra
+  //   paused/playing - simplicity and safety over squeezing a few extra
   //   seconds.
   // - a smaller target chunk (10-15s, not up to 30s).
   // - a MUCH tighter rate limit (a "few per minute" per the minimal-
@@ -368,7 +368,7 @@
   // - explicit refill verification + a single micro-seek nudge if the
   //   removed span hasn't come back within EVICT_REFILL_CHECK_MS, plus a
   //   loud, purely-informational alarm if it's still missing as the
-  //   playhead approaches (see reconcilePendingEvictions) — this is what
+  //   playhead approaches (see reconcilePendingEvictions) - this is what
   //   actually prevents a hole from silently persisting like the 0.1.12 one
   //   did.
   var EVICT_LOOKAHEAD_S = 10; // last-resort: only a gap at/about to reach the playhead is worth evicting
@@ -426,7 +426,7 @@
   }
 
   // A micro-seek forces the player to re-evaluate its buffered state and,
-  // in practice, re-request around the current position — the standard way
+  // in practice, re-request around the current position - the standard way
   // to nudge an MSE-backed player after removing a range it thought it
   // already had. This is a real player-behavior mutation (not passive), so
   // it's only ever called as a last resort from reconcilePendingEvictions
@@ -443,7 +443,7 @@
   }
 
   // Tracks every eviction until it's confirmed refilled (by OUR hook, via
-  // evictionState.captured — not just `.buffered` having bytes, since only
+  // evictionState.captured - not just `.buffered` having bytes, since only
   // our own capture actually fixes the underlying problem) or the playhead
   // passes it (stale, nothing more we can usefully do). This is what
   // prevents the 0.1.12 "evicted and never refilled" persistent-hole bug:
@@ -452,9 +452,9 @@
     var now = Date.now();
     evictionState.pending = evictionState.pending.filter(function (p) {
       var stillMissing = subtractRanges([{ start: p.start, end: p.end }], evictionState.captured).length > 0;
-      if (!stillMissing) return false; // refilled and captured for real — done
+      if (!stillMissing) return false; // refilled and captured for real - done
       if (currentTime > p.end + 2) {
-        logLine('[PM-EVICT-STUCK] [' + p.start.toFixed(2) + ',' + p.end.toFixed(2) + ') never refilled before the playhead passed it — giving up on this span (will surface as a normal coverage/stall gap)');
+        logLine('[PM-EVICT-STUCK] [' + p.start.toFixed(2) + ',' + p.end.toFixed(2) + ') never refilled before the playhead passed it - giving up on this span (will surface as a normal coverage/stall gap)');
         return false; // playhead already past it; nothing more we can do
       }
       var age = now - p.evictedAtWall;
@@ -462,7 +462,7 @@
         p.nudged = true;
         nudgePlayer('[' + p.start.toFixed(2) + ',' + p.end.toFixed(2) + ') not refilled ' + Math.round(age / 1000) + 's after eviction');
       } else if (p.nudged && age > EVICT_REFILL_CHECK_MS * 2 && currentTime > p.start - EVICT_STUCK_HORIZON_S) {
-        logLine('[PM-EVICT-STUCK] [' + p.start.toFixed(2) + ',' + p.end.toFixed(2) + ') still not refilled ' + Math.round(age / 1000) + 's after eviction (already nudged) — playhead approaching at currentTime=' + currentTime.toFixed(2));
+        logLine('[PM-EVICT-STUCK] [' + p.start.toFixed(2) + ',' + p.end.toFixed(2) + ') still not refilled ' + Math.round(age / 1000) + 's after eviction (already nudged) - playhead approaching at currentTime=' + currentTime.toFixed(2));
       }
       return true;
     });
@@ -479,7 +479,7 @@
     var buffered = snapshotRanges(sb.buffered);
     var gaps = subtractRanges(buffered, evictionState.captured);
     // LAST RESORT gating: only a gap that's already at, or will be reached
-    // within EVICT_LOOKAHEAD_S of, the playhead — never speculative
+    // within EVICT_LOOKAHEAD_S of, the playhead - never speculative
     // eviction of something far ahead that might not even matter by the
     // time playback gets there.
     var relevant = gaps.filter(function (g) { return g.end > currentTime && g.start < currentTime + EVICT_LOOKAHEAD_S; });
@@ -499,18 +499,18 @@
     if (evictEnd - evictStart < 1) return; // nothing safely/usefully evictable right now (all inside the guard band, or a sliver not worth a remove() call)
     if (evictEnd - evictStart > EVICT_MAX_CHUNK_S) evictEnd = evictStart + EVICT_MAX_CHUNK_S;
 
-    logLine('[PM-EVICT] triggered by ' + (reason || 'append-activity') + ' — evicting smallest-useful span');
+    logLine('[PM-EVICT] triggered by ' + (reason || 'append-activity') + ' - evicting smallest-useful span');
     evictionState.recentEvictions.push(now);
     evictionState.queue.push({ start: evictStart, end: evictEnd });
     evictionState.pending.push({ start: evictStart, end: evictEnd, evictedAtWall: now, nudged: false });
     pumpEvictionQueue(sb, evictionState);
   }
 
-  // Ads run on a DIFFERENT media timeline than the main content — the one
+  // Ads run on a DIFFERENT media timeline than the main content - the one
   // legitimate case where a segment's container timestamp is NOT on the
   // video's own presentation timeline. Never transcribe them: check ONLY
   // the player's own ad-state class (0.1.11: the timecode-implausibility
-  // backstop that used to sit alongside this is deleted entirely — it was a
+  // backstop that used to sit alongside this is deleted entirely - it was a
   // heuristic on top of a parser that could itself produce garbage, and it
   // actively dropped real non-ad audio when the parser misfired; see
   // scanForTimecode's 0.1.11 fix above and PIPELINE_NOTES.md "0.1.11").
@@ -531,7 +531,7 @@
   // comment for the full rationale. capture.js runs first (document_start,
   // MAIN world, listed first in manifest.json) so it initiates: create a
   // MessageChannel, keep port1, hand content.js port2 via a one-time public
-  // handshake message (safe — nothing else can be listening yet at this
+  // handshake message (safe - nothing else can be listening yet at this
   // point in document_start). From then on `post()` sends over the private
   // port instead of the public broadcast; falls back to public
   // window.postMessage if the port was never established or ever breaks,
@@ -569,7 +569,7 @@
     window.postMessage(msg, location.origin);
   }
 
-  // capture.js runs in the MAIN world — a separate JS realm from content.js's
+  // capture.js runs in the MAIN world - a separate JS realm from content.js's
   // isolated world, so its console.log output, while visible in the SAME
   // DevTools console (same tab), physically cannot write into content.js's
   // log-ring buffer (no shared objects across worlds). Route every
@@ -581,7 +581,7 @@
   }
 
   // Registry for the on-demand eviction check request from content.js (see
-  // the 'message' listener below) — normally at most one audio SourceBuffer
+  // the 'message' listener below) - normally at most one audio SourceBuffer
   // is live at a time; the most recently instrumented one is "active".
   var activeEvictionSB = null;
   var activeEvictionState = null;
@@ -660,24 +660,24 @@
     var origChangeType = sb.changeType;
     var segmentCount = 0;
     var videoIdAtInit = currentVideoId();
-    // Cached init-segment bytes (0.1.20 bug #2) — the actual first append
+    // Cached init-segment bytes (0.1.20 bug #2) - the actual first append
     // for this SourceBuffer's current lifetime, kept so a later timeline
     // DISCONTINUITY (a NEW-RANGE growth with no fresh init segment of its
-    // own — a big forward or backward seek within the SAME SourceBuffer)
+    // own - a big forward or backward seek within the SAME SourceBuffer)
     // can be turned into a synthetic isInit segment reusing this exact
     // codec/track header. See finishAppendProcessing below.
     var cachedInitBytes = null;
     var timecodeScale = { value: 1000000 }; // Matroska default: 1e6 ns/tick = 1ms/tick; updated if Info>TimecodeScale is found
-    var chainSegsSinceLog = 0; // [PM-CHAIN] log-collapse state (0.1.15) — see the logging site below
+    var chainSegsSinceLog = 0; // [PM-CHAIN] log-collapse state (0.1.15) - see the logging site below
     var lastChainLogWall = Date.now();
-    var lastTrimLogWall = 0; // [PM-TRIM] throttle (0.1.24) — see finishAppendProcessing below
-    // Run-boundary sanity backstop (0.1.24) — see PIPELINE_NOTES "0.1.24":
+    var lastTrimLogWall = 0; // [PM-TRIM] throttle (0.1.24) - see finishAppendProcessing below
+    // Run-boundary sanity backstop (0.1.24) - see PIPELINE_NOTES "0.1.24":
     // a real live bug (fixed by 0.1.24's findGrowth rewrite) misclassified
     // ordinary buffer-eviction trim+extend as a brand-new disjoint range on
     // EVERY segment, firing a new demux run every single append. This is a
     // defense-in-depth backstop against THAT class of bug recurring for any
     // other reason: if run boundaries fire faster than a real seek pattern
-    // plausibly would, stop opening new ones — degraded (stuck on one run,
+    // plausibly would, stop opening new ones - degraded (stuck on one run,
     // possibly missing a genuine seek's own coverage) but alive beats churn
     // death (transcribing nothing at all, forever).
     var runBoundaryTimestamps = [];
@@ -688,7 +688,7 @@
     sb.addEventListener('updateend', function () { pumpEvictionQueue(sb, evictionState); });
     // Registered as the "active" audio SourceBuffer for the on-demand
     // eviction check triggered from content.js's stall watchdog (see the
-    // 'message' listener near the end of this file) — there is normally
+    // 'message' listener near the end of this file) - there is normally
     // only one at a time; the most recently instrumented one wins, matching
     // how videoIdAtInit-style "current" tracking already works elsewhere in
     // this file.
@@ -701,7 +701,7 @@
         logLine('changeType ' + mime + ' -> ' + newMime);
         mime = newMime;
         // FIXED (0.1.15): a codec/bitrate switch (quality change) is NOT a
-        // video change — this used to post a full 'reset', which
+        // video change - this used to post a full 'reset', which
         // content.js's resetSession() turns into releaseMute() (unmuting
         // an ACTIVE word mute mid-utterance, audible) and wiping otherwise-
         // still-valid session.intervals/coveredIntervals for no reason.
@@ -709,7 +709,7 @@
         // append after changeType() IS a genuine new init segment (real
         // browsers always re-init on changeType), so segmentCount=0 alone
         // makes capture.js correctly flag it isInit=true, which makes
-        // offscreen correctly start a fresh demux run for it — session-
+        // offscreen correctly start a fresh demux run for it - session-
         // level coverage/word-dedupe already span run boundaries by design
         // (see offscreen-src.js's header), so nothing there needs resetting
         // either.
@@ -718,11 +718,11 @@
       };
     }
 
-    // BUG FIXED (0.1.16): SourceBuffer.appendBuffer() is ASYNC — the browser
+    // BUG FIXED (0.1.16): SourceBuffer.appendBuffer() is ASYNC - the browser
     // does not actually apply the append (and grow `.buffered`) until the
     // 'updateend' event fires. The previous code diffed `.buffered`
     // synchronously, immediately after calling the original appendBuffer,
-    // which reads the OLD (pre-append) ranges every single time — growth was
+    // which reads the OLD (pre-append) ranges every single time - growth was
     // ALWAYS `none`, on every line, for the entire life of this codebase
     // (confirmed against historical logs). 0.1.14's picker redesign made
     // this fatal for the first time: it feeds `s.bufferedRanges` exclusively
@@ -753,18 +753,18 @@
       var rangesAfter = snapshotRanges(sbRef.buffered);
       var growth = findGrowth(item.rangesBefore, rangesAfter);
 
-      // This segment's bytes ARE reaching our hook — record its actual
+      // This segment's bytes ARE reaching our hook - record its actual
       // buffered span as "captured" so the eviction check above never
       // mistakes normal, currently-in-flight audio for a capture miss.
       if (growth) mergeRangeIntoList(evictionState.captured, growth.absStart, growth.absEnd);
 
       // RUN-BOUNDARY ON DISCONTINUITY (0.1.20 bug #2): a real, user-diagnosed
-      // bug — a backward seek (2588 -> 2464.94) captured segments fine
+      // bug - a backward seek (2588 -> 2464.94) captured segments fine
       // (findGrowth correctly reported a brand-new, disjoint NEW-RANGE), but
       // offscreen logged "[PM-SKIP] no decodable audio in this run at that
       // time yet" dozens of times: the new bytes were appended to the SAME
-      // SourceBuffer, so segmentCount never resets and isInit stays false —
-      // nothing ever told offscreen a NEW demux run was needed — but they
+      // SourceBuffer, so segmentCount never resets and isInit stays false -
+      // nothing ever told offscreen a NEW demux run was needed - but they
       // landed on offscreen's ONE PERSISTENT mediabunny Input for that run
       // (see offscreen-src.js's "0.1.6" streaming-Input design), which is a
       // SEQUENTIAL decoder: once it has consumed cluster timestamps for
@@ -772,22 +772,22 @@
       // A big FORWARD jump within one SourceBuffer has the same "no fresh
       // init segment" shape (see 0.1.14's original "jump forward = uncovered
       // forever" bug) and gets the identical fix here, even though a forward
-      // jump's own bytes are less likely to break the sequential decoder —
+      // jump's own bytes are less likely to break the sequential decoder -
       // safer to always open a fresh run on ANY disjoint NEW-RANGE than to
       // rely on direction.
       // Fix: offscreen already treats `isInit:true` as "open a fresh run"
-      // (see its pm-segment handler) — reuse that exact mechanism instead of
+      // (see its pm-segment handler) - reuse that exact mechanism instead of
       // adding a new wire message: whenever growth reports a NEW-RANGE that
       // ISN'T itself already a real init segment, resend the cached real
       // init segment's bytes as a synthetic isInit segment immediately
       // before this one. Offscreen demuxes the discontinuous bytes in their
       // own fresh run (same codec/track header, since it's the SAME cached
       // init bytes), while the old run(s) are left for the existing 0.1.15
-      // pruning (KEEP_RUNS=2) to reclaim — nothing here touches session-level
+      // pruning (KEEP_RUNS=2) to reclaim - nothing here touches session-level
       // coverage/word-dedupe, which already spans run boundaries by design.
       // [PM-TRIM] (0.1.24): throttled debug note whenever findGrowth detects
       // ordinary front-eviction (the matched before-range's start moved
-      // forward) — so a future log visibly distinguishes "this append is
+      // forward) - so a future log visibly distinguishes "this append is
       // just eviction trim+extend" from an actual run boundary, instead of
       // the two being indistinguishable the way they used to be.
       if (growth && growth.trimmedS > 0.001) {
@@ -838,7 +838,7 @@
           isSyntheticRunBoundary: true
         });
       } else if (isDiscontinuity) {
-        // Should not happen once the first real init segment has landed —
+        // Should not happen once the first real init segment has landed -
         // surfaced loudly rather than silently falling back to feeding the
         // discontinuous bytes into the existing (sequentially-stuck) run.
         logLine('[PM-RUN-BOUNDARY] NEW-RANGE growth detected but no cached init segment bytes available yet -- cannot open a clean new run');
@@ -901,23 +901,23 @@
         var currentTime = video ? video.currentTime : NaN;
         // 0.1.23: video.duration, relayed alongside currentTime, so offscreen
         // can detect end-of-stream and safely close a run's demux stream for
-        // final-tail flushing — see PIPELINE_NOTES "0.1.23" item 2.
+        // final-tail flushing - see PIPELINE_NOTES "0.1.23" item 2.
         var duration = video ? video.duration : NaN;
 
         var ab = toArrayBuffer(chunk);
         var localTicks = scanForTimecode(new Uint8Array(ab), timecodeScale);
         var localTimeSec = localTicks != null ? (localTicks * timecodeScale.value) / 1e9 : null;
 
-        // Drop ad audio at the source — never transcribe it. ONLY the
+        // Drop ad audio at the source - never transcribe it. ONLY the
         // player's own ad-state class is used for this (0.1.11: the
-        // timecode-implausibility backstop guard is DELETED entirely — it
+        // timecode-implausibility backstop guard is DELETED entirely - it
         // was a heuristic sitting on top of a parser that could itself
         // produce garbage (see scanForTimecode's 0.1.11 fix above), and it
         // actively DROPPED REAL, non-ad AUDIO when the parser misfired,
         // which is strictly worse than the rare ad-detection gap it was
         // meant to backstop. Ad exclusion is a player-state fact, not
         // something to infer from a timestamp). Evaluated synchronously at
-        // append time, before queuing anything — an ad segment never needs
+        // append time, before queuing anything - an ad segment never needs
         // growth info since it's dropped outright, not posted.
         var adShowing = isAdShowing();
         if (adShowing) {
@@ -931,7 +931,7 @@
         // Cache the real init segment's bytes (0.1.20 bug #2) so a later
         // timeline discontinuity (NEW-RANGE growth with no init segment of
         // its own) can be turned into a synthetic run-boundary reusing this
-        // exact codec/track header — see finishAppendProcessing above.
+        // exact codec/track header - see finishAppendProcessing above.
         if (isInit) cachedInitBytes = ab;
 
         pendingAppends.push({

@@ -1,4 +1,4 @@
-// content.js — isolated world, document_start. Loaded after
+// content.js - isolated world, document_start. Loaded after
 // shared/wordlist.js (owned by another agent, defines globalThis.PMWordlist)
 // and before captions.js.
 //
@@ -9,17 +9,17 @@
 //     profane words/phrases into padded/merged mute intervals using
 //     PMWordlist, and enforce muting on the <video> element proactively
 //     (setTimeout-armed against the schedule) with an rAF poll as backstop.
-//  3. Persist the mute schedule + coverage per videoId across seeks — only a
+//  3. Persist the mute schedule + coverage per videoId across seeks - only a
 //     real video change (RESET from capture.js) clears state.
 (function () {
   'use strict';
   var TAG = '[PM]';
-  // Padding presets (0.1.17) — PMWordlist.settings.padding ("tight"|"normal"|
+  // Padding presets (0.1.17) - PMWordlist.settings.padding ("tight"|"normal"|
   // "wide", default "normal", 8th settings key added by the wordlist agent's
   // UI). "normal" keeps the original 0.35/0.25 values (leading pad already
   // increased from a symmetric 0.25/0.25 after an early report of hearing
   // the first half of a word). Read fresh in applyWordsToIntervals (called
-  // per-window) — no onChanged wiring needed: existing armed intervals keep
+  // per-window) - no onChanged wiring needed: existing armed intervals keep
   // whatever padding they were built with, new windows just pick up
   // whatever's current the next time that function runs.
   var PADDING_PRESETS = {
@@ -69,7 +69,7 @@
   }
   function TERROR() {
     // Every error also lands in the PERSISTENT dev log (shared/devlog.js),
-    // not just this tab-lifetime ring buffer — an error is exactly the kind
+    // not just this tab-lifetime ring buffer - an error is exactly the kind
     // of evidence that is worthless if it dies with the tab before anyone
     // thinks to ask about it.
     devlog('logError', ringAppend(arguments));
@@ -79,7 +79,7 @@
   // ---- persistent dev log (shared/devlog.js) -------------------------------
   // Loaded immediately before this file in the SAME content_scripts `js`
   // array (manifest.json), so globalThis.PMDevlog is always present by the
-  // time any of this runs — the same guarantee this file already relies on
+  // time any of this runs - the same guarantee this file already relies on
   // for PMWordlist. Every call still goes through this guard anyway: the
   // dev log is diagnostic scaffolding, and it must never be able to break
   // muting. See shared/devlog.js's header for the pm_devlog schema and the
@@ -95,14 +95,14 @@
   }
 
   // Relayed offscreen 'diag' messages that are routine progress notices,
-  // not problems — kept out of the dev log's `errors` list so the capped
+  // not problems - kept out of the dev log's `errors` list so the capped
   // list stays a list of things that actually went wrong. Deliberately a
   // deny-list: anything not matched here is recorded.
   // ([PM-STAGE] per-stage progress, [PM-MODEL]/[PM-WARM] model selection
   // and warm-up, [PM-LANG] detection result, [PM-FIRST-COVERAGE] a
-  // success milestone.) Everything else offscreen relays — [PM-SKIP],
+  // success milestone.) Everything else offscreen relays - [PM-SKIP],
   // [PM-HANG], [PM-STALL], [PM-ERROR], [PM-DEMUX-ERR],
-  // [PM-UNANALYZABLE], [PM-NO-WINDOW], [PM-IDLE-GATE] — is kept: each of
+  // [PM-UNANALYZABLE], [PM-NO-WINDOW], [PM-IDLE-GATE] - is kept: each of
   // those describes a reason coverage may not arrive.
   var DEVLOG_DIAG_NOISE_RE = /^\s*\[PM-(STAGE|MODEL|WARM|LANG|FIRST-COVERAGE)\]/;
 
@@ -118,14 +118,14 @@
   // ACTUALLY configured to do at the moment this video started, which is
   // the first thing "why did word X get through" has to rule out. Records
   // the active word list's SOURCE and SIZE, never its contents (a custom
-  // list can be thousands of entries — see devlog.js's header).
+  // list can be thousands of entries - see devlog.js's header).
   function devlogSettingsSnapshot() {
     var pm = globalThis.PMWordlist;
     var s = (pm && pm.settings) || {};
     var lang = (pm && pm.activeLanguage) || 'en';
     var count = (pm && pm._state && pm._state.wordlist && pm._state.wordlist.length) || 0;
     // 0.1.29: the active English list is the built-in TIER plus the
-    // user's own additive words, so the source has to name both — a bare
+    // user's own additive words, so the source has to name both - a bare
     // "strictness:strict" no longer says whether the word in question
     // could have come from the user's own list. Still only counts and a
     // tier name, never contents.
@@ -149,7 +149,7 @@
 
   // ---- word matching (delegates entirely to shared/wordlist.js) -----------
   // 0.1.15 cleanup: the fallback wordlist/matching path (~55 LOC) this used
-  // to carry for "shared/wordlist.js hasn't loaded" is deleted —
+  // to carry for "shared/wordlist.js hasn't loaded" is deleted -
   // manifest.json's content_scripts entry lists shared/wordlist.js before
   // content.js in the SAME `js` array, and Chrome guarantees files within
   // one entry's `js` array execute in that listed order, so
@@ -169,11 +169,11 @@
   // of truth: {enabled, muteAudio, censorCaptions, safeMode, catchupMode}.
   // Its contract (CENSOR_NOTES.md) already guarantees `catchupMode` is
   // always exactly one of "mute"/"pause"/"play" and `safeMode` is already
-  // derived as `catchupMode !== "play"` on THEIR side — this file used to
+  // derived as `catchupMode !== "play"` on THEIR side - this file used to
   // carry its own duplicate copy of that same derivation (plus a legacy
   // pm_safeMode-only migration path that's been dead since the popup
   // stopped writing pm_safeMode at all) for a fallback settings object that,
-  // per the above, is never actually reachable. Deleted (0.1.15 cleanup) —
+  // per the above, is never actually reachable. Deleted (0.1.15 cleanup) -
   // just trust the contract directly.
   function currentSettings() {
     var pm = globalThis.PMWordlist;
@@ -190,13 +190,13 @@
   // pm_debugOverlay is a debugging-only knob owned entirely by this file
   // (not part of the wordlist agent's PMWordlist.settings contract), read
   // directly from chrome.storage.sync. (0.1.15 cleanup: pm_timeOffsetMs
-  // deleted — the manual calibration knob added in 0.1.7 was never actually
+  // deleted - the manual calibration knob added in 0.1.7 was never actually
   // measured/set away from 0; the debug overlay's raw per-word timestamp
   // strip already gives everything needed to measure an offset if one is
   // ever found, without a dead knob sitting in the settings surface.)
   var debugSettings = { debugOverlay: false };
   // pm_showStatus (0.1.15): shows/hides the always-on status pill (separate
-  // from the debug overlay) — default true, owned by the UI agent's popup
+  // from the debug overlay) - default true, owned by the UI agent's popup
   // toggle, read the same way as the other debugging-adjacent knobs above.
   var statusSettings = { showStatus: true };
   function loadDebugSettings() {
@@ -261,22 +261,22 @@
       lastCoverageGrowthWall: Date.now(),
       lastStallRequestWall: 0,
       // Updated on every 'heartbeat' from offscreen (sent while it's
-      // genuinely mid-transcription) — the stall watchdog requires BOTH no
+      // genuinely mid-transcription) - the stall watchdog requires BOTH no
       // coverage growth AND no recent heartbeat before firing, so a merely
       // slow attempt (long window, cold model, CPU contention) doesn't get
       // killed before it can finish.
       lastHeartbeatWall: Date.now(),
       // Fallback ladder (0.1.12): true while pause-catchup has been
       // downgraded to muted PLAYBACK for the CURRENT stall because pausing
-      // itself made no coverage progress — see tick(). Reset once covered.
+      // itself made no coverage progress - see tick(). Reset once covered.
       catchupFallbackActive: false,
       // DRM/undecodable content (0.1.15): set true on an 'unanalyzable' port
-      // message from offscreen — permanently suppresses safe-mode-uncovered
+      // message from offscreen - permanently suppresses safe-mode-uncovered
       // muting/pausing for this session (see runTickLogic()'s `uncovered`
       // computation) so a video that will never decode is never left
       // muted/paused forever waiting for coverage that can't arrive.
       unanalyzable: false,
-      // Status pill + mute counting (0.1.15) — per-video count of matched
+      // Status pill + mute counting (0.1.15) - per-video count of matched
       // intervals actually muted through; activeMuteCountKey tracks the
       // CURRENTLY-active counted interval so re-entering the SAME interval
       // later (e.g. after a seek-back replay) counts again, but sitting
@@ -284,22 +284,22 @@
       mutedCount: 0,
       activeMuteCountKey: null,
       lifetimeVideoCounted: false, // videosProtected (chrome.storage.local pm_stats) increments once per video, on its first counted mute
-      // [PM-CATCHUP-TIME] measurement (0.1.17) — set on a seek landing
+      // [PM-CATCHUP-TIME] measurement (0.1.17) - set on a seek landing
       // uncovered, cleared (and logged) once coverage reaches the playhead.
       catchupMeasureStart: null,
       catchupMeasureTargetT: null,
-      // Actionable status pill inputs (0.1.18) — mirrors what offscreen
+      // Actionable status pill inputs (0.1.18) - mirrors what offscreen
       // tracks internally, built here from data content.js ALREADY sees
       // flowing through it (capture.js's own segment growth info, and the
-      // rtf/computeMs already returned with every 'words' message) — no
+      // rtf/computeMs already returned with every 'words' message) - no
       // new pipeline plumbing needed, purely local bookkeeping for display.
-      bufferedRanges: [], // merged [{start,end}] — same interval-set concept as offscreen's s.bufferedRanges, built the same way from growthAbsStart/growthAbsEnd
-      lastBufferedGrowthWall: Date.now(), // last time bufferedRanges actually grew — "is capture still making progress" signal
+      bufferedRanges: [], // merged [{start,end}] - same interval-set concept as offscreen's s.bufferedRanges, built the same way from growthAbsStart/growthAbsEnd
+      lastBufferedGrowthWall: Date.now(), // last time bufferedRanges actually grew - "is capture still making progress" signal
       lastKnownRtf: null, // last computeMs-based rtf, for a rough ETA estimate
-      // 0.1.28 — the currently-open catch-up gap for the persistent dev
+      // 0.1.28 - the currently-open catch-up gap for the persistent dev
       // log ({start, end, mode}), or null. See trackDevlogGap() below.
       devlogGap: null,
-      language: null // 0.1.25 — detected language ('en', a real code, or null before/without detection); see handleLanguage()/addWords()
+      language: null // 0.1.25 - detected language ('en', a real code, or null before/without detection); see handleLanguage()/addWords()
     };
   }
 
@@ -309,11 +309,11 @@
     releaseMute('video-changed');
     clearArmedTimers();
     session = newSession(videoId);
-    unanalyzableNoticeShown = false; // a new video gets its own fresh chance (and notice) — see the 'unanalyzable' handler
+    unanalyzableNoticeShown = false; // a new video gets its own fresh chance (and notice) - see the 'unanalyzable' handler
     // Open this video's persistent dev-log entry. document.title is often
     // still the PREVIOUS page's title at this point on a YouTube SPA
     // navigation, and PMWordlist may not have finished its first async
-    // settings refresh — both are corrected by the updateMeta call in
+    // settings refresh - both are corrected by the updateMeta call in
     // logVideoInfoOnce below, which waits for the player to resolve.
     devlog('startVideo', videoId, {
       title: document.title,
@@ -324,7 +324,7 @@
     logVideoInfoOnce(videoId);
   }
 
-  // Mirrors capture.js's own currentVideoId() — used ONLY to force a reset
+  // Mirrors capture.js's own currentVideoId() - used ONLY to force a reset
   // at THIS file's own startup (see the call after connectPort() below),
   // independent of capture.js's video-id-change detection.
   function currentVideoIdFromLocation() {
@@ -337,7 +337,7 @@
   }
 
   // One line establishing ground truth for "which video, which element, how
-  // long" at the start of every session — the first thing worth checking
+  // long" at the start of every session - the first thing worth checking
   // when reconstructing a pasted log's timeline. getVideo() may not have
   // resolved yet at the exact moment of reset (video element not created),
   // so retry briefly.
@@ -390,12 +390,12 @@
 
   // ---- catch-up gap tracking (persistent dev log) --------------------------
   // A "gap" is a stretch of media time that PLAYED while the playhead was
-  // not inside any analyzed (covered) region — audio that reached the
+  // not inside any analyzed (covered) region - audio that reached the
   // <video> element without ever having been checked against the word list.
   //
   // In catch-up mode "play" that audio is genuinely audible and this is the
   // leak. In "mute"/"pause" the very same stretch is covered by a blanket
-  // mute (or never plays at all), so nothing leaks — but it is still
+  // mute (or never plays at all), so nothing leaks - but it is still
   // exactly the region that WOULD have leaked. Gaps are therefore recorded
   // in EVERY mode, with `mode` naming the one in force, so one record
   // answers both "what did play mode let through" and "what would play mode
@@ -434,7 +434,7 @@
 
   // ---- mute scheduling ------------------------------------------------------
   // Clamp per-word duration before padding (transformers.js word-timestamp
-  // smear mitigation — live testing showed some "words" reported as 5-15s
+  // smear mitigation - live testing showed some "words" reported as 5-15s
   // long on noisy content, far more than a plausible clean-audio pause), run
   // PMWordlist.findMatches, and build padded mute intervals. Pure function
   // (no session access) so it's reusable from both the normal incremental
@@ -478,7 +478,7 @@
     return { intervals: newIntervals, tokens: tokens, matched: matched };
   }
 
-  // Record raw tokens for the debug overlay (word strip near the playhead) —
+  // Record raw tokens for the debug overlay (word strip near the playhead) -
   // separate from the mute schedule since it needs EVERY word, not just
   // matches. Deduped by word+roundedStart so overlap-region re-transcriptions
   // don't accumulate duplicates; capped so a long session can't grow this
@@ -498,14 +498,14 @@
     }
   }
 
-  // Multilingual support (0.1.25) — applies a detected language to the
+  // Multilingual support (0.1.25) - applies a detected language to the
   // current session, once, only on an actual CHANGE (offscreen sends the
   // language on every 'words'/'resync-result' message once resolved, not
-  // just the first — this guards against redundant PMWordlist.setLanguage
+  // just the first - this guards against redundant PMWordlist.setLanguage
   // calls / duplicate [PM-LANG-APPLIED] noise on every single window).
   // PMWordlist.setLanguage is called defensively (the wordlist agent owns
   // per-language wordlist packs and may not have shipped this method yet,
-  // or ever, for a given build) — its absence must never break anything
+  // or ever, for a given build) - its absence must never break anything
   // else here.
   function applyDetectedLanguage(videoId, language) {
     if (!session || session.videoId !== videoId) return;
@@ -553,7 +553,7 @@
     // covering X was ever analyzed at all, how many words the transcript
     // held, what matched in it, and which padded intervals those matches
     // produced. The transcript TEXT itself is only stored when
-    // pm_devlogVerbose is on — devlog.js decides that, not this file.
+    // pm_devlogVerbose is on - devlog.js decides that, not this file.
     devlog('logWindow', {
       t0: windowStartS,
       t1: windowEndS,
@@ -569,7 +569,7 @@
     // offscreen's own "[PM] window ... text=[...]" log lives in the service
     // worker / offscreen document console, which is NOT visible to a
     // per-tab console reader (e.g. Chrome DevTools on the page, or
-    // automation reading the page's console) — this is the only place the
+    // automation reading the page's console) - this is the only place the
     // actual transcribed words are ever visible from the tab itself, which
     // matters for diagnosing "did the transcript even contain word X".
     var firstWordS = rawWords.length ? Math.min.apply(null, rawWords.map(function (w) { return w.start; })).toFixed(2) : 'NA';
@@ -580,7 +580,7 @@
         ' model=' + (model || 'NA') + // 0.1.25 -- RTF telemetry per model
         ' wallMs=' + (wallMs != null ? Math.round(wallMs) : 'NA') +
         // Split (0.1.18): wallMs used to bundle demux/decode + queue-wait-
-        // for-the-shared-worker-mutex + actual compute into one number — a
+        // for-the-shared-worker-mutex + actual compute into one number - a
         // live paste showed wallMs-derived rtf of 3-8 next to modelRtf of
         // 0.2-0.5, hiding that almost all of it was QUEUE wait (a stale
         // session's backlog competing for the same worker), not compute.
@@ -596,7 +596,7 @@
         }).join(',') + ']' +
         ' text=[' + rawWords.map(function (w) { return w.word; }).join(' ') + ']'
     );
-    // Machine-parseable per-word timestamps, tab-visible — the deterministic
+    // Machine-parseable per-word timestamps, tab-visible - the deterministic
     // caption-correlation check (verify/caption_correlate.mjs) reads these
     // rather than eyeballing the debug overlay. Emitted after clamping (the
     // times actually used for muting), one line per addWords batch.
@@ -605,7 +605,7 @@
 
   // Full resync after a port reconnect: offscreen sends everything it holds
   // for this session (words computed while the port was down must not be
-  // silently lost) — this REPLACES local state rather than merging, since it
+  // silently lost) - this REPLACES local state rather than merging, since it
   // is authoritative.
   function handleResync(videoId, words, coveredIntervals, language) {
     if (!session || session.videoId !== videoId) return;
@@ -650,7 +650,7 @@
   }
 
   // YouTube pages routinely contain MULTIPLE <video> elements (inline-preview
-  // player from SPA nav, miniplayer remnants, ad-player variants) — a naive
+  // player from SPA nav, miniplayer remnants, ad-player variants) - a naive
   // querySelector('video') grabs the FIRST in DOM order, which can be a
   // dormant one (readyState 0, currentTime frozen) while the real player
   // plays elsewhere, unmuted, unmonitored. Prefer the known real-player
@@ -688,7 +688,7 @@
   // Hand the dev log a media-clock source. It timestamps caption censor
   // events (logged from captions.js, which has no <video> of its own) and
   // errors, and picking the right <video> on a YouTube page is a solved
-  // problem here — see resolveRealVideo above — not one worth solving a
+  // problem here - see resolveRealVideo above - not one worth solving a
   // second time in another file.
   devlog('setTimeSource', function () {
     var v = getVideo();
@@ -698,11 +698,11 @@
   // ---- engage/release: every call is logged with an explicit reason so
   // there is never a silent "why is this muted" state. -----------------------
   //
-  // PRODUCT RULE — MUTE, NEVER BLEEP. This sets video.muted and nothing
+  // PRODUCT RULE - MUTE, NEVER BLEEP. This sets video.muted and nothing
   // else, deliberately. Do not "improve" this by mixing in a bleep tone,
   // a beep, or any replacement audio: the Family Movie Act (17 U.S.C.
   // §110(11)) protects making limited portions of a work IMPERCEPTIBLE
-  // during a private performance — it does not protect ADDING audio to
+  // during a private performance - it does not protect ADDING audio to
   // someone else's copyrighted work, which is what a bleep is. Silence is
   // the whole legal basis on which this extension operates. See
   // CENSOR_NOTES.md "Mute, never bleep" before touching this.
@@ -735,7 +735,7 @@
   // ---- mute counting + lifetime stats (0.1.15) -----------------------------
   // Per-video count (session.mutedCount) drives the status pill; lifetime
   // totals persist across videos/sessions in chrome.storage.local under
-  // pm_stats — schema is exactly {totalMuted, videosProtected} per the
+  // pm_stats - schema is exactly {totalMuted, videosProtected} per the
   // popup's contract. chrome.storage.local (not sync) since this is
   // write-frequent and sync has tighter per-item write-rate limits.
   var STATS_FLUSH_MS = 10000;
@@ -747,7 +747,7 @@
     session.mutedCount = (session.mutedCount || 0) + 1;
     var wordCount = interval.word.split(' ').length;
     // Ensure the counter and the existing MUTE log lines agree (per the
-    // coordinator's explicit ask) — this is a distinct, greppable line
+    // coordinator's explicit ask) - this is a distinct, greppable line
     // right alongside the MUTE engaged/released lines already logged by
     // engageMute()/releaseMute() for the same interval.
     TLOG(
@@ -781,7 +781,7 @@
       });
     } catch (e) {}
   }
-  // Flush on pagehide too — a throttled 10s timer alone would lose whatever
+  // Flush on pagehide too - a throttled 10s timer alone would lose whatever
   // hadn't flushed yet if the tab/page goes away first.
   window.addEventListener('pagehide', function () {
     if (statsFlushTimer) {
@@ -792,7 +792,7 @@
     // Same deal for the dev log: close whatever gap was still open at the
     // moment the page went away and force its final write. devlog.js has
     // its own pagehide listener, but it was registered when devlog.js
-    // loaded — i.e. BEFORE this one — so it would otherwise flush a state
+    // loaded - i.e. BEFORE this one - so it would otherwise flush a state
     // that is missing the last (and often longest) gap.
     closeDevlogGap();
     devlog('flushNow');
@@ -847,13 +847,13 @@
               var vt = v.currentTime;
               // FIXED (0.1.15): this used to release purely on
               // !inMutedInterval(vt), WITHOUT the coverage check tick()
-              // applies — releasing a word-level mute at its own end time
+              // applies - releasing a word-level mute at its own end time
               // even while the playhead had ALSO drifted into (or the
               // schedule was armed slightly ahead of) an uncovered safe-mode
               // region left that region briefly unmuted: a real audio leak,
               // worst when the tab is backgrounded and this armed timer is
               // the ONLY thing firing (rAF is throttled/suspended while
-              // hidden — see the visibilitychange backstop below). Mirror
+              // hidden - see the visibilitychange backstop below). Mirror
               // tick()'s exact release condition instead of a narrower one.
               var settingsNow = currentSettings();
               var stillUncovered = settingsNow.safeMode && !isCovered(vt);
@@ -879,7 +879,7 @@
 
   // ---- orphaned-content-script UX: when the extension is reloaded/updated
   // (dev iteration, or an auto-update), any already-injected content script
-  // instance is orphaned — chrome.runtime.connect()/sendMessage() start
+  // instance is orphaned - chrome.runtime.connect()/sendMessage() start
   // throwing "Extension context invalidated," and it silently stops doing
   // anything at all (no mute, no captions censoring) with zero visible
   // signal to the user. Reported live twice now (mistaken for a real bug).
@@ -895,12 +895,12 @@
   function showContextInvalidBanner() {
     if (contextInvalidBannerShown) return;
     contextInvalidBannerShown = true;
-    TERROR(TAG, 'extension context invalidated (extension was reloaded/updated) — this page needs a refresh to re-enable profanity muting');
+    TERROR(TAG, 'extension context invalidated (extension was reloaded/updated) - this page needs a refresh to re-enable profanity muting');
     var video = getVideo();
     var container = video ? video.closest('.html5-video-player') || video.parentElement : document.body;
     if (!container) return;
     var banner = document.createElement('div');
-    banner.textContent = 'Profanity Muter was updated — refresh this page to re-enable';
+    banner.textContent = 'Profanity Muter was updated - refresh this page to re-enable';
     banner.style.cssText =
       'position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:2147483647;' +
       'background:#c0392b;color:#fff;font:12px/1.4 sans-serif;padding:5px 12px;border-radius:4px;' +
@@ -913,7 +913,7 @@
     container.appendChild(banner);
   }
 
-  // DRM/undecodable content (0.1.15) — see the 'unanalyzable' port message
+  // DRM/undecodable content (0.1.15) - see the 'unanalyzable' port message
   // handler. Never left silent: a rented/protected movie that can't be
   // transcribed should say so, not just quietly stop muting.
   var unanalyzableNoticeShown = false;
@@ -924,7 +924,7 @@
     var container = video ? video.closest('.html5-video-player') || video.parentElement : document.body;
     if (!container) return;
     var notice = document.createElement('div');
-    notice.textContent = "Profanity Muter can't analyze this video's audio (protected content) — muting disabled for this video";
+    notice.textContent = "Profanity Muter can't analyze this video's audio (protected content) - muting disabled for this video";
     notice.style.cssText =
       'position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:2147483647;' +
       'background:#555;color:#fff;font:12px/1.4 sans-serif;padding:5px 12px;border-radius:4px;' +
@@ -960,7 +960,7 @@
   // ---- pm_debugOverlay: an instrument for measuring the reported "off by
   // one word" / small systematic timing offset. Shows current t, coverage
   // status, a ±5s strip of raw transcript words with live/matched
-  // highlighting, and upcoming scheduled mute intervals — the user reads a
+  // highlighting, and upcoming scheduled mute intervals - the user reads a
   // word's highlight moment against when they actually hear it to measure
   // lead/lag. Deliberately plain DOM (no framework), pointer-events:none,
   // updated on its own ~4Hz timer independent of tick()'s rAF loop so it
@@ -1017,7 +1017,7 @@
       ' videoId=' + (session ? session.videoId : 'none') +
       ' t=' + (video ? video.currentTime.toFixed(2) : 'NA') +
       ' copiedAt=' + new Date().toISOString() + '\n' +
-      '(paste this whole block — every line needed to reconstruct the pipeline timeline is here)\n';
+      '(paste this whole block - every line needed to reconstruct the pipeline timeline is here)\n';
     var body = logRing.map(function (entry) { return new Date(entry.wallTime).toISOString() + ' ' + entry.line; }).join('\n');
     var text = header + body;
     var done = function (ok) {
@@ -1065,10 +1065,10 @@
       .map(function (iv) { return '[' + iv.start.toFixed(2) + '-' + iv.end.toFixed(2) + '] ' + escapeHtml(iv.word); })
       .join('  ');
 
-    // Coverage indicator alignment (0.1.23) — see PIPELINE_NOTES "0.1.23"
+    // Coverage indicator alignment (0.1.23) - see PIPELINE_NOTES "0.1.23"
     // item 3: this used to show only the PLAYHEAD POINT's coverage
     // (COVERED/UNCOVERED), while the status pill judges the whole
-    // [t, t+PROTECT_MARGIN] HORIZON — the two surfaces could disagree
+    // [t, t+PROTECT_MARGIN] HORIZON - the two surfaces could disagree
     // confusingly (overlay says "COVERED" the instant t itself is covered,
     // while the pill still shows "Analyzing" because the horizon ahead
     // isn't). Now shows BOTH, using the exact same clampedHorizonEnd() the
@@ -1105,7 +1105,7 @@
   // Poll the setting rather than wiring a dedicated onChanged branch: cheap,
   // and naturally handles PMWordlist-vs-fallback source switching too.
   // Gated on `enabled` too (0.1.13): pm_enabled=false must turn the debug
-  // overlay off along with everything else — it was previously gated only
+  // overlay off along with everything else - it was previously gated only
   // on pm_debugOverlay, so it (and its own console chatter) stayed visible
   // even with the whole extension "disabled", which is exactly the kind of
   // visible-when-it-shouldn't-be state this fix targets.
@@ -1115,34 +1115,34 @@
   }, 500);
 
   // ---- status pill (0.1.15, made ACTIONABLE in 0.1.18) ---------------------
-  // Small, always-on, subtle indicator — separate from the debug overlay
+  // Small, always-on, subtle indicator - separate from the debug overlay
   // (which is off by default and verbose). Hideable via pm_showStatus.
   //
   // User feedback on the plain 0.1.15 pill: when uncovered, there was no way
   // to tell whether pausing-and-waiting would make progress (audio already
   // captured, just queued/processing) or whether they needed to keep
   // playing (to make YouTube fetch more audio in the first place). The
-  // generic "Analyzing…" collapsed two very different situations — plus a
-  // third, rarer one — into one unhelpful label. Now data-driven:
+  // generic "Analyzing…" collapsed two very different situations - plus a
+  // third, rarer one - into one unhelpful label. Now data-driven:
   //   - "Protected": coverage extends >=5s past the playhead. Nothing to do.
-  //   - "Analyzing — safe to pause (~Ns)": the playhead's own region IS
-  //     captured (in bufferedRanges) and just hasn't been transcribed yet —
+  //   - "Analyzing - safe to pause (~Ns)": the playhead's own region IS
+  //     captured (in bufferedRanges) and just hasn't been transcribed yet -
   //     pausing is fine, it WILL finish; ETA is remaining-uncovered-audio
   //     near the playhead times the last measured rtf, capped at 30s.
   //   - "Buffering + analyzing…": NOT captured yet, but capture is actively
-  //     growing (a segment landed in the last ~3s) — still fine to wait,
+  //     growing (a segment landed in the last ~3s) - still fine to wait,
   //     YouTube is still fetching.
   //   - "Press play to load audio": NOT captured, and NO capture growth for
-  //     ~4s — YouTube has stopped fetching (e.g. paused before the buffer
+  //     ~4s - YouTube has stopped fetching (e.g. paused before the buffer
   //     reached this position). This is the ONE state needing user action.
   //   - "Off": DRM/unanalyzable (unchanged from before).
-  // This is presentation only — every input (bufferedRanges, coverage,
+  // This is presentation only - every input (bufferedRanges, coverage,
   // growth recency, rtf) already exists; see the bookkeeping added above.
   var statusPillEl = null;
   var STATUS_GROWTH_RECENT_MS = 3000; // capture actively growing if a segment landed within this long
   var STATUS_GROWTH_STALLED_MS = 4000; // capture has stopped fetching if nothing landed for this long
   // 0.1.19: the pill's whole state/ETA judges only the playhead's own
-  // protection horizon, never the full uncovered backlog further ahead —
+  // protection horizon, never the full uncovered backlog further ahead -
   // see the "0.1.19" PIPELINE_NOTES entry for why that distinction matters
   // (transcription intentionally trails buffering, so "everything ahead of
   // the playhead" is never fully covered during normal playback).
@@ -1157,10 +1157,10 @@
     return Math.max(0, hi - lo - coveredS);
   }
 
-  // Live-stream detection (0.1.21) — a live user session (audio/mp4,
-  // codecs="mp4a.40.2") showed the pill sitting forever on "Analyzing —
+  // Live-stream detection (0.1.21) - a live user session (audio/mp4,
+  // codecs="mp4a.40.2") showed the pill sitting forever on "Analyzing -
   // safe to pause" for a live stream, which is a lie: full live-stream
-  // support is explicitly deferred (see PIPELINE_NOTES.md "0.1.21") — the
+  // support is explicitly deferred (see PIPELINE_NOTES.md "0.1.21") - the
   // pipeline still transcribes best-effort against whatever DVR buffer
   // exists, but coverage racing a moving live edge is not the same
   // guarantee "Protected"/"Analyzing" imply for on-demand video, and the
@@ -1182,11 +1182,11 @@
   // End-of-video clamp (0.1.22), factored out (0.1.23) so the pill
   // (computeStatusState) and the debug overlay's "coverage=" line
   // (renderDebugOverlay) can never disagree about what the playhead
-  // "protection horizon" even IS — see PIPELINE_NOTES "0.1.23" item 3: the
+  // "protection horizon" even IS - see PIPELINE_NOTES "0.1.23" item 3: the
   // two surfaces used different notions of coverage (pill: whole-horizon;
   // overlay: playhead point only) and could contradict each other
   // confusingly. Both now call this SAME function. A user report showed the
-  // pill stuck on "Analyzing" forever at the end of a video — the
+  // pill stuck on "Analyzing" forever at the end of a video - the
   // [t, t+PROTECT_MARGIN] horizon extends past video.duration into audio
   // that doesn't exist and can never be captured/transcribed, so a raw
   // uncovered-check against the UNCLAMPED horizon could never succeed even
@@ -1211,7 +1211,7 @@
     var t = video.currentTime;
     var horizonEnd = clampedHorizonEnd(video, t);
     // "Protected" means the whole [t, t+margin] window is covered, not just
-    // its two endpoints — a gap in the middle (real, given how transcription
+    // its two endpoints - a gap in the middle (real, given how transcription
     // windows land) must not read as protected.
     if (uncoveredDurationWithin(session.coveredIntervals, t, horizonEnd) <= COVERAGE_EPS) {
       return { kind: 'protected' };
@@ -1227,10 +1227,10 @@
     }
 
     if (playheadRange) {
-      // Captured already — just queued/processing. ETA from how much of
-      // the playhead's own protection HORIZON — not the whole captured
+      // Captured already - just queued/processing. ETA from how much of
+      // the playhead's own protection HORIZON - not the whole captured
       // range, which can (and normally does) extend far past the horizon
-      // since buffering intentionally leads transcription — is still
+      // since buffering intentionally leads transcription - is still
       // uncovered.
       var uncoveredAheadS = uncoveredDurationWithin(session.coveredIntervals, t, Math.min(horizonEnd, playheadRange.end));
       var rtf = session.lastKnownRtf != null ? Math.min(0.85, Math.max(0.1, session.lastKnownRtf)) : 0.3;
@@ -1241,7 +1241,7 @@
     var sinceGrowthMs = Date.now() - (session.lastBufferedGrowthWall || 0);
     if (sinceGrowthMs < STATUS_GROWTH_RECENT_MS) return { kind: 'buffering' };
     if (sinceGrowthMs >= STATUS_GROWTH_STALLED_MS) return { kind: 'needs-play' };
-    return { kind: 'buffering' }; // brief in-between window (recent < x < stalled) — still assume progress, avoid label flicker
+    return { kind: 'buffering' }; // brief in-between window (recent < x < stalled) - still assume progress, avoid label flicker
   }
 
   function renderStatusPill() {
@@ -1259,14 +1259,14 @@
     if (!statusPillEl) return;
     var label;
     if (status.kind === 'off') label = '🛡 Off';
-    else if (status.kind === 'live') label = '🛡 Live — limited support';
+    else if (status.kind === 'live') label = '🛡 Live - limited support';
     else if (status.kind === 'protected') label = '🛡 Protected';
-    else if (status.kind === 'analyzing-safe') label = '🛡 Analyzing — safe to pause (~' + status.etaS + 's)';
+    else if (status.kind === 'analyzing-safe') label = '🛡 Analyzing - safe to pause (~' + status.etaS + 's)';
     else if (status.kind === 'buffering') label = '🛡 Buffering + analyzing…';
     else if (status.kind === 'needs-play') label = '🛡 Press play to load audio';
     else label = '🛡 Analyzing…';
     // Multilingual support (0.1.25): show the detected language once known,
-    // whenever it's not English — e.g. "🛡 Protected · es". Omitted for
+    // whenever it's not English - e.g. "🛡 Protected · es". Omitted for
     // English (the default/common case needs no extra label) and for the
     // 'off' state (transcription has been given up on entirely; language
     // isn't meaningful there).
@@ -1306,7 +1306,7 @@
   var loggedDisabledLine = false;
   function handleEnabledChanged(newEnabled) {
     if (newEnabled) {
-      // Re-enabling mid-page resumes cleanly from existing session state —
+      // Re-enabling mid-page resumes cleanly from existing session state -
       // safe mode already protects whatever gap formed while disabled
       // (isCovered() correctly reports "uncovered" for anything not
       // covered), so there is nothing to reset. Just resume relaying
@@ -1324,7 +1324,7 @@
       loggedDisabledLine = true;
       TLOG(TAG, '[PM] disabled');
     }
-    // Release any active protection immediately — don't wait for tick() to
+    // Release any active protection immediately - don't wait for tick() to
     // notice (its body already short-circuits entirely on !enabled, so it
     // would otherwise never release anything it had already engaged).
     // clearArmedTimers() matters here too: a previously-armed word-mute
@@ -1339,14 +1339,14 @@
     setStatusPillActive(false);
     // Tell offscreen to idle this session's transcription CPU, and stop
     // relaying any further segments from capture.js (which keeps its own
-    // lightweight hook installed regardless — it has no knowledge of
+    // lightweight hook installed regardless - it has no knowledge of
     // pm_enabled and doesn't need it; only content.js's relay stops).
     if (session) safePortPost({ type: 'disable', videoId: session.videoId });
   }
 
   // Synchronous catch-up-mode transition (0.1.11: fixes "lags super hard" /
   // gets permanently stuck when switching pause<->mute mid-catchup). Called
-  // directly from the storage.onChanged handler with the NEW mode value —
+  // directly from the storage.onChanged handler with the NEW mode value -
   // never waits for tick()'s rAF cadence. Every call it makes
   // (engageMute/releaseMute/pauseForCatchup/resumeFromCatchup) is already
   // idempotent/guarded against the current state, so this is safe to invoke
@@ -1358,14 +1358,14 @@
     var settings = currentSettings();
     if (!settings.enabled) return;
 
-    // catchupFallbackActive is a pause-mode-specific concept (see tick()) —
+    // catchupFallbackActive is a pause-mode-specific concept (see tick()) -
     // clear it when leaving pause mode so a stale flag doesn't linger and
     // confuse a later re-entry into pause mode.
     if (newMode !== 'pause') session.catchupFallbackActive = false;
 
     // Leaving "pause": tick() only ever calls resumeFromCatchup() from
     // inside its OWN 'pause'-mode branch, so a video paused-for-catchup and
-    // then switched to 'mute'/'play' would otherwise stay paused forever —
+    // then switched to 'mute'/'play' would otherwise stay paused forever -
     // nothing else in tick() touches catchupPausedByUs. Resume right away.
     if (newMode !== 'pause' && catchupPausedByUs) {
       resumeFromCatchup('catchup-mode-changed-away-from-pause');
@@ -1376,7 +1376,7 @@
 
     if (newMode === 'pause') {
       // A forced mute from the old 'mute' strategy's uncovered-region reason
-      // is now the wrong protection mechanism — release it immediately and
+      // is now the wrong protection mechanism - release it immediately and
       // pause instead (word-level mutes are untouched: those still use
       // mute in every catchupMode and are left exactly as they are).
       if (session.forcedMute && session.muteReason === 'safe-mode-uncovered') {
@@ -1425,7 +1425,7 @@
   }
 
   // Fallback ladder (0.1.12): resumes playback like resumeFromCatchup(), but
-  // deliberately does NOT hide the "Analyzing audio…" overlay — the fallback
+  // deliberately does NOT hide the "Analyzing audio…" overlay - the fallback
   // is still actively protecting this stall via muted playback instead of a
   // pause, and hiding the overlay here would look like protection ended
   // when it didn't. Caller (tick()) is responsible for hiding the overlay
@@ -1447,7 +1447,7 @@
       if (!(ev.target instanceof HTMLVideoElement)) return;
       if (suppressNextPauseEvent) { suppressNextPauseEvent = false; return; }
       if (catchupPausedByUs) {
-        catchupPausedByUs = false; // user (or something else) paused independently — never fight it
+        catchupPausedByUs = false; // user (or something else) paused independently - never fight it
         showAnalyzingOverlay(false);
         TLOG(TAG, 'catchup-pause ownership cleared: external pause observed');
       }
@@ -1475,12 +1475,12 @@
     var now = Date.now();
     if (now - session.lastStallRequestWall < STALL_MS) return; // throttle repeated requests
     session.lastStallRequestWall = now;
-    TWARN(TAG, '[PM-STALL] no coverage growth for ' + STALL_MS + 'ms while playing an uncovered region — requesting pipeline restart');
+    TWARN(TAG, '[PM-STALL] no coverage growth for ' + STALL_MS + 'ms while playing an uncovered region - requesting pipeline restart');
     safePortPost({ type: 'restart', videoId: session.videoId });
     // Capture-miss eviction (0.1.13) is on-demand ONLY, gated on this exact
     // signal (per the minimal-footprint principle: mutating player/network
     // state is a last resort, tried only after 15s of genuinely zero
-    // progress — well downstream of the 8s pause->mute fallback ladder,
+    // progress - well downstream of the 8s pause->mute fallback ladder,
     // which is tried first and is non-mutating). capture.js (MAIN world)
     // owns the actual buffered/captured bookkeeping and decides locally
     // whether a real capture-miss gap exists near the playhead; this is
@@ -1493,7 +1493,7 @@
   // Mute/coverage enforcement logic, split out from tick()'s rAF scheduling
   // (0.1.15) so the backgrounded-tab backstop below can invoke this exact
   // logic directly without ALSO enqueueing extra requestAnimationFrame
-  // chains (rAF stays suspended/throttled while hidden regardless — calling
+  // chains (rAF stays suspended/throttled while hidden regardless - calling
   // this doesn't fight that, it's just a separate, additional trigger for
   // the SAME enforcement).
   function runTickLogic() {
@@ -1503,7 +1503,7 @@
       var t = video.currentTime;
       var hit = inMutedInterval(t);
       // `&& !session.unanalyzable`: DRM/undecodable content (0.1.15) never
-      // gets any real coverage, ever — without this, safe mode would mute/
+      // gets any real coverage, ever - without this, safe mode would mute/
       // pause this video forever waiting for transcription that offscreen
       // has already given up on (see the 'unanalyzable' handler above).
       var uncovered = settings.safeMode && !isCovered(t) && !session.unanalyzable;
@@ -1512,7 +1512,7 @@
       // "uncovered -> covered" latency after a seek is a measured fact, not
       // an impression. Resolves on plain isCovered(t) (not the `uncovered`
       // var above, which also folds in unrelated settings/unanalyzable
-      // state) — coverage reaching the playhead is the actual thing being
+      // state) - coverage reaching the playhead is the actual thing being
       // timed, regardless of catch-up mode configuration.
       if (session.catchupMeasureStart != null && isCovered(t)) {
         var catchupMs = Date.now() - session.catchupMeasureStart;
@@ -1526,7 +1526,7 @@
 
       // Release decisions are based on the CURRENT hit/uncovered state, never
       // on the stored muteReason string. A previous version gated release on
-      // "muteReason === 'safe-mode-uncovered'" / "starts with 'word:'" — a
+      // "muteReason === 'safe-mode-uncovered'" / "starts with 'word:'" - a
       // word interval landing while already forced-muted for
       // safe-mode-uncovered (or vice versa) left muteReason stale, so once
       // BOTH causes had actually ended, neither release check's string match
@@ -1535,13 +1535,13 @@
       // on a cold seek, but a word-hit inside that same still-uncovered
       // window pinned muteReason at 'safe-mode-uncovered' (never mind, at
       // 'word:X') and the mute never released. muteReason is now purely
-      // informational (logging) — never a release condition.
+      // informational (logging) - never a release condition.
       if (settings.catchupMode === 'pause') {
         // Word-level muting still always uses mute, even in pause mode.
         // Guarded against catchupFallbackActive: while the fallback ladder
         // below has downgraded to muted playback for an uncovered region,
         // this branch must NOT release that mute just because there's no
-        // word-hit right now — the covered-region branch further down is
+        // word-hit right now - the covered-region branch further down is
         // what ends the fallback (and does so more carefully, see there).
         if (hit && settings.muteAudio && !session.forcedMute) {
           engageMute('word:' + hit.word, hit);
@@ -1551,22 +1551,22 @@
 
         if (uncovered && !hit) {
           if (session.catchupFallbackActive) {
-            // Already downgraded for this stall — keep protecting via mute
+            // Already downgraded for this stall - keep protecting via mute
             // until coverage catches up (engageMute no-ops if already
             // forced, e.g. from an overlapping word-hit).
             if (!session.forcedMute) engageMute('safe-mode-uncovered');
           } else {
             pauseForCatchup();
-            // Fallback ladder (0.1.12): a real deadlock class exists here —
+            // Fallback ladder (0.1.12): a real deadlock class exists here -
             // (a) pausing stops YouTube from fetching/appending anything
             // further, and (b) a region YouTube buffered BEFORE our hook
             // attached can never be captured passively no matter how long we
             // wait (see capture.js's eviction mechanism, which this pairs
             // with). If pause-catchup makes zero coverage progress for
-            // FALLBACK_STALL_MS, downgrade to muted PLAYBACK instead —
+            // FALLBACK_STALL_MS, downgrade to muted PLAYBACK instead -
             // playing is what makes YouTube resume buffering/appending (and
             // is what lets capture.js's eviction check see currentTime
-            // advance) — keeping the "Analyzing audio…" overlay up so
+            // advance) - keeping the "Analyzing audio…" overlay up so
             // protection still reads as active.
             if (catchupPausedByUs && Date.now() - session.lastCoverageGrowthWall > FALLBACK_STALL_MS) {
               TWARN(
@@ -1584,7 +1584,7 @@
             session.catchupFallbackActive = false;
             showAnalyzingOverlay(false);
             // Only release here if there's no word-hit in progress right
-            // now — if there is, leave forcedMute alone and let the normal
+            // now - if there is, leave forcedMute alone and let the normal
             // word-interval-ended branch above release it later (its guard
             // no longer applies once catchupFallbackActive is false).
             if (!hit && session.forcedMute && session.muteReason === 'safe-mode-uncovered') {
@@ -1607,7 +1607,7 @@
 
       // Continuous mute enforcement (0.1.12): a live user report showed
       // "MUTE engaged t=0.00 safe-mode-uncovered" that was never released in
-      // the log, yet the user HEARD AUDIO — YouTube's own player writes
+      // the log, yet the user HEARD AUDIO - YouTube's own player writes
       // video.muted during init/element churn, silently defeating our
       // one-shot write while session.forcedMute stayed true, so tick()
       // believed protection was still active and never did anything further
@@ -1616,7 +1616,7 @@
       // every tick while forcedMute is intended (a cheap property write),
       // and log loudly if it had actually drifted. This also naturally
       // re-applies to a newly-resolved <video> element, since getVideo()
-      // re-resolves every tick already — no separate hook needed.
+      // re-resolves every tick already - no separate hook needed.
       if (session.forcedMute) {
         if (video.muted !== true) {
           TWARN(
@@ -1629,7 +1629,7 @@
       }
 
       // Mute counting (0.1.15): count once per word/phrase interval per
-      // actual playthrough — a "playthrough" of an interval is tracked via
+      // actual playthrough - a "playthrough" of an interval is tracked via
       // activeMuteCountKey (set while the playhead is inside it, cleared
       // once it leaves), so re-entering the SAME interval later (a seek
       // back and replay) counts again, but sitting inside one interval
@@ -1649,23 +1649,23 @@
 
       // Mode-independent stall input (0.1.20 bug #3): `uncovered` above folds
       // in `settings.safeMode`, which is derived as `catchupMode !== 'play'`
-      // — so in "play" mode `uncovered` is ALWAYS false and `stalling` below
+      // - so in "play" mode `uncovered` is ALWAYS false and `stalling` below
       // could never fire, no matter how long the pipeline had genuinely
       // died. A live user session confirmed this: after a decode-confusion
       // skip storm (see bug #2), zero transcription windows for 3+ minutes
-      // in "play" mode with no recovery attempt ever made — safeMode gates
+      // in "play" mode with no recovery attempt ever made - safeMode gates
       // whether WE mute/pause for an uncovered region (a presentation
       // decision), but the underlying pipeline can stall regardless of that
       // setting, and "play" mode had no path to notice at all. Judged
       // independently of safeMode/catchupMode here; additionally requires
       // that audio is actually CAPTURED at the playhead already (via the
-      // same session.bufferedRanges the status pill uses) — otherwise this
+      // same session.bufferedRanges the status pill uses) - otherwise this
       // would fire constantly whenever the playhead is simply ahead of
       // capture itself (normal, not a pipeline stall) rather than only when
       // audio exists and transcription genuinely isn't happening.
       var playheadUncovered = !isCovered(t) && !session.unanalyzable;
 
-      // Persistent record of unanalyzed playback (0.1.28) — see
+      // Persistent record of unanalyzed playback (0.1.28) - see
       // trackDevlogGap above. Uses playheadUncovered, NOT the `uncovered`
       // var earlier in this function, which folds in settings.safeMode and
       // so is always false in "play" mode: the mode whose leak this exists
@@ -1687,10 +1687,10 @@
       );
       if (stalling) {
         // Require BOTH no coverage growth AND no recent heartbeat before
-        // firing — a heartbeat means offscreen is genuinely still working
+        // firing - a heartbeat means offscreen is genuinely still working
         // (just slow: a long window, cold model load, CPU contention), and
         // restarting it mid-attempt would only make it slower (see
-        // PIPELINE_NOTES "0.1.6" — this used to kill and restart in-flight
+        // PIPELINE_NOTES "0.1.6" - this used to kill and restart in-flight
         // attempts on a long-running video before they could ever finish).
         var coverageStale = Date.now() - session.lastCoverageGrowthWall > STALL_MS;
         var heartbeatStale = Date.now() - session.lastHeartbeatWall > STALL_MS;
@@ -1713,13 +1713,13 @@
   requestAnimationFrame(tick);
 
   // Backgrounded-tab protection (0.1.15): rAF suspends/heavily throttles
-  // while the document is hidden, but audio keeps playing regardless — a
+  // while the document is hidden, but audio keeps playing regardless - a
   // backgrounded tab is exactly where a stale mute/pause decision (or a
   // missed release) matters most, since the user has no visual cue
   // anything is wrong. Chrome's own "intensive throttling" of background
   // timers explicitly EXEMPTS tabs playing audible media, so a plain 1s
   // setInterval keeps firing reliably here even hidden. Runs the exact same
-  // enforcement logic as the rAF loop — never a separate/divergent path.
+  // enforcement logic as the rAF loop - never a separate/divergent path.
   var backgroundBackstopInterval = null;
   document.addEventListener('visibilitychange', function () {
     if (document.hidden) {
@@ -1732,7 +1732,7 @@
   });
 
   // Seek/rate changes invalidate the proactively-armed timer delays (they
-  // were computed against the old currentTime/rate) — re-arm, but do NOT
+  // were computed against the old currentTime/rate) - re-arm, but do NOT
   // touch session.intervals/coveredIntervals: already-transcribed words and
   // coverage stay valid across a seek.
   document.addEventListener(
@@ -1756,24 +1756,24 @@
         else if (settings.muteAudio) engageMute('safe-mode-uncovered');
       }
       // [PM-CATCHUP-TIME] measurement (0.1.17): only meaningful to measure
-      // when the seek actually landed somewhere uncovered — an already-
+      // when the seek actually landed somewhere uncovered - an already-
       // covered seek has a trivial/zero catch-up time not worth logging.
       // Overwritten by a later seek before this one resolves (rare, but
-      // simplest correct behavior — no stale/misattributed measurement).
+      // simplest correct behavior - no stale/misattributed measurement).
       if (seekUncovered) {
         session.catchupMeasureStart = Date.now();
         session.catchupMeasureTargetT = video.currentTime;
       } else {
         session.catchupMeasureStart = null;
       }
-      // Seek preemption (0.1.18): tell offscreen the playhead just jumped —
+      // Seek preemption (0.1.18): tell offscreen the playhead just jumped -
       // it bumps this session's generation counter so any window ALREADY
       // in flight for the old position has its result discarded (can't
       // abort a running WASM call, but its output is now stale) and its
       // maybeProcess loop stops picking any FURTHER old-region windows
       // instead of grinding through a whole queue before reaching the new
       // playhead (a live log showed an 8s wait behind exactly this).
-      // Coverage/session state is untouched — "seek keeps everything".
+      // Coverage/session state is untouched - "seek keeps everything".
       safePortPost({ type: 'seek', videoId: session.videoId, currentTime: video.currentTime });
       armSchedule();
     },
@@ -1788,13 +1788,13 @@
     true
   );
   // FIXED (0.1.15): no re-arm on 'play' left stale timer delays after a
-  // pause/resume in an already-covered region — armSchedule()'s delays are
+  // pause/resume in an already-covered region - armSchedule()'s delays are
   // computed against currentTime/playbackRate AT ARM TIME, and a pause can
   // sit for an arbitrary length of wall time before resuming, so every
   // previously-armed delay is now wrong by however long the pause lasted
   // (upcoming mutes firing early relative to the NEW resume point, or a
   // past-due one never firing at all since its setTimeout already elapsed
-  // while paused). Cheap and idempotent — same as the seeking/ratechange
+  // while paused). Cheap and idempotent - same as the seeking/ratechange
   // handlers already do.
   document.addEventListener(
     'play',
@@ -1806,7 +1806,7 @@
   );
 
   // ---- background port, with reconnect on drop (SW idles after ~30s and
-  // gets respawned by Chrome on the next connect/message — offscreen state
+  // gets respawned by Chrome on the next connect/message - offscreen state
   // survives that, so reconnecting resumes cleanly without losing coverage). -
   var port = null;
   var reconnectAttempts = 0;
@@ -1822,7 +1822,7 @@
     // Orphaned content script (extension was reloaded/updated after this
     // page loaded): chrome.runtime.id throws/is undefined, and connect()
     // would too. Detect it up front rather than retrying forever with no
-    // visible signal — this trap has burned real debugging time twice.
+    // visible signal - this trap has burned real debugging time twice.
     if (!isExtensionContextValid()) {
       showContextInvalidBanner();
       return;
@@ -1843,7 +1843,7 @@
         handleResync(msg.videoId, msg.words, msg.coveredIntervals, msg.language);
       } else if (msg.type === 'language') {
         // 0.1.25: snappier-UI push, sent once right when detection resolves
-        // — the same 'words'/'resync-result' path above is the authoritative
+        // - the same 'words'/'resync-result' path above is the authoritative
         // source (applyDetectedLanguage is idempotent past the first
         // real change either way).
         applyDetectedLanguage(msg.videoId, msg.language);
@@ -1851,13 +1851,13 @@
         if (session && session.videoId === msg.videoId) session.lastHeartbeatWall = Date.now();
       } else if (msg.type === 'diag') {
         // Tab-visible diagnostics relayed from offscreen (skipped windows,
-        // demux errors, stall notices) — anything that can block coverage
+        // demux errors, stall notices) - anything that can block coverage
         // indefinitely must be visible here, not just in the offscreen
         // document's own (user-inaccessible) console.
         TWARN(TAG, '[from offscreen]', msg.text);
         // Pipeline problems (skipped windows, demux failures, stall
         // notices) arrive here as a relayed message rather than a thrown
-        // exception, so TERROR's own dev-log hook never sees them — and
+        // exception, so TERROR's own dev-log hook never sees them - and
         // they are among the most direct answers there are to "why was
         // that stretch never analyzed". Record them explicitly, minus the
         // routine progress chatter this same channel also carries (see
@@ -1866,7 +1866,7 @@
         // [PM-MODEL]/[PM-WARM] progress notices, which would eventually
         // push real failures out of the capped list. The filter is an
         // explicit deny-list of known-informational prefixes, never an
-        // allow-list of known-bad ones — an unrecognized message is kept,
+        // allow-list of known-bad ones - an unrecognized message is kept,
         // so the worst case is noise rather than blindness.
         if (!DEVLOG_DIAG_NOISE_RE.test(msg.text)) {
           devlog('logError', '[offscreen] ' + msg.text);
@@ -1874,8 +1874,8 @@
       } else if (msg.type === 'unanalyzable') {
         if (session && session.videoId === msg.videoId && !session.unanalyzable) {
           session.unanalyzable = true;
-          TWARN(TAG, '[PM-UNANALYZABLE] offscreen gave up transcribing this video (likely DRM/protected content) — releasing safe-mode protection');
-          devlog('logError', '[PM-UNANALYZABLE] offscreen gave up transcribing this video (likely DRM/protected content) — safe-mode protection released for the rest of it');
+          TWARN(TAG, '[PM-UNANALYZABLE] offscreen gave up transcribing this video (likely DRM/protected content) - releasing safe-mode protection');
+          devlog('logError', '[PM-UNANALYZABLE] offscreen gave up transcribing this video (likely DRM/protected content) - safe-mode protection released for the rest of it');
           clearArmedTimers();
           releaseMute('unanalyzable');
           if (catchupPausedByUs) resumeFromCatchup('unanalyzable');
@@ -1894,27 +1894,27 @@
       reconnectAttempts++;
       var delay = Math.min(5000, 300 * reconnectAttempts);
       // Normal MV3 service-worker idle behavior (SW idles ~30s, Chrome
-      // respawns it on the next connect) — not a warning-worthy condition,
+      // respawns it on the next connect) - not a warning-worthy condition,
       // and console.warn here was polluting the extension's Errors page in
       // chrome://extensions with routine, harmless noise.
       TLOG(TAG, 'background port disconnected, reconnecting in ' + delay + 'ms (attempt ' + reconnectAttempts + ')');
       setTimeout(connectPort, delay);
     });
     // Whether this is the first connect or a reconnect after a drop, ask for
-    // a full resync — cheap when there's nothing yet, and guarantees no
+    // a full resync - cheap when there's nothing yet, and guarantees no
     // words computed while the port was down are silently lost.
     if (session) safePortPost({ type: 'resync', videoId: session.videoId });
   }
   connectPort();
   // FIX (0.1.18): stale cross-refresh work. A plain page REFRESH of the
   // SAME video does not change capture.js's own tracked video id, so its
-  // 'reset' message (sent only on an ACTUAL video-id change) never fired —
+  // 'reset' message (sent only on an ACTUAL video-id change) never fired -
   // meaning the offscreen session for this tabId:videoId key survived the
   // refresh untouched, in-flight/queued work and all. A live user log
   // showed the previous page-session's stale, still-running work draining
   // into the new page load and blocking the transcribe lane for 7+ seconds.
-  // Force a reset unconditionally on THIS file's own startup — i.e. on
-  // every page load, not just a detected video-id change — so offscreen
+  // Force a reset unconditionally on THIS file's own startup - i.e. on
+  // every page load, not just a detected video-id change - so offscreen
   // always starts this tab clean regardless of whether it thinks the video
   // id moved. Paired with offscreen-src.js's generation-counter fix, which
   // additionally discards any results from work that was ALREADY in flight
@@ -1925,17 +1925,17 @@
   // ---- receive segments from capture.js (MAIN world) ------------------------
   // Postmessage bridge hardening (0.1.15): the public `window.postMessage`
   // broadcast this channel used exclusively is, by construction, readable
-  // AND forgeable by any page script with its own 'message' listener —
+  // AND forgeable by any page script with its own 'message' listener -
   // including a forged 'segment' (garbage bytes) or, worse, something that
   // could manufacture false coverage and defeat safe mode. capture.js runs
   // at document_start in the MAIN world, which Chrome guarantees executes
   // before the page's own scripts get a chance to run (the same guarantee
   // this whole extension already depends on for patching
-  // MediaSource.prototype before YouTube's own player code runs) — so a
+  // MediaSource.prototype before YouTube's own player code runs) - so a
   // MessagePort handed over synchronously at that same moment is safe from
   // any page script racing to intercept it. capture.js initiates the
   // handshake (transferring port2); once acknowledged, ALL further traffic
-  // is trusted ONLY over that private port — the public broadcast handler
+  // is trusted ONLY over that private port - the public broadcast handler
   // below stops processing anything once `securePort` is set. If the
   // handshake never completes for some reason (e.g. `MessageChannel`
   // unavailable), the public path remains the fallback rather than a
@@ -1950,10 +1950,10 @@
       try {
         securePort.postMessage({ type: 'ack' });
       } catch (e) {}
-      TLOG(TAG, '[PM-SECURE-CHANNEL] private port established with capture.js — public postMessage no longer trusted for segment/reset');
+      TLOG(TAG, '[PM-SECURE-CHANNEL] private port established with capture.js - public postMessage no longer trusted for segment/reset');
       return;
     }
-    if (securePort) return; // secure channel active — the public broadcast is untrusted from here on
+    if (securePort) return; // secure channel active - the public broadcast is untrusted from here on
     handleCaptureMessage(ev.data);
   });
 
@@ -1961,14 +1961,14 @@
     if (!data) return;
 
     if (data.type === 'chainlog') {
-      // capture.js runs in a separate JS realm (MAIN world) — its console
+      // capture.js runs in a separate JS realm (MAIN world) - its console
       // output can't write into this file's log-ring buffer directly, so it
       // posts here instead. Already printed to the console by capture.js
       // itself; only ring-buffer it (avoid double-printing the same line).
       // Suppressed while disabled (0.1.13): capture.js keeps its lightweight
       // hook installed regardless (it has no knowledge of pm_enabled), but
       // its chain-dump lines would otherwise keep flooding the ring buffer
-      // for no purpose while the extension is off — the standing rule is a
+      // for no purpose while the extension is off - the standing rule is a
       // single informational "[PM] disabled" line, not continued noise.
       if (currentSettings().enabled) ringAppend([data.text]);
       return;
@@ -1981,7 +1981,7 @@
 
     if (data.type === 'segment') {
       // pm_enabled=false (0.1.13): stop relaying segments to background/
-      // offscreen entirely — capture.js can keep capturing (harmless,
+      // offscreen entirely - capture.js can keep capturing (harmless,
       // invisible), but content.js must not spend any further CPU/messaging
       // on it while disabled.
       if (!currentSettings().enabled) return;
@@ -1990,7 +1990,7 @@
       }
       // Status-pill inputs (0.1.18): mirror offscreen's own bufferedRanges/
       // growth-recency tracking here too, purely from data already flowing
-      // through this relay — no new message needed.
+      // through this relay - no new message needed.
       if (typeof data.growthAbsStart === 'number' && typeof data.growthAbsEnd === 'number' && !Number.isNaN(data.growthAbsStart) && !Number.isNaN(data.growthAbsEnd)) {
         mergeRangeInto(session.bufferedRanges, data.growthAbsStart, data.growthAbsEnd);
         session.lastBufferedGrowthWall = Date.now();
@@ -2008,7 +2008,7 @@
         growthAbsStart: data.growthAbsStart,
         growthAbsEnd: data.growthAbsEnd,
         growthIsNewRange: data.growthIsNewRange,
-        wallTime: data.wallTime, // capture.js's own Date.now() at capture — used by [PM-FIRST-COVERAGE]'s relay-latency milestone
+        wallTime: data.wallTime, // capture.js's own Date.now() at capture - used by [PM-FIRST-COVERAGE]'s relay-latency milestone
         dataB64: uint8ToBase64(bytes)
       });
     }

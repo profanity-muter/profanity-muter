@@ -2,23 +2,23 @@
 // mute pipeline. Reuses the launch pattern from ../../spike-capture/verify.js
 // and ../../spike-whisper/run_playwright.mjs (headful, --load-extension,
 // --mute-audio; console captured from the page, the offscreen document
-// (via relayed [bg] logs — offscreen isn't reliably exposed as its own
+// (via relayed [bg] logs - offscreen isn't reliably exposed as its own
 // Playwright page target), and the service worker).
 //
 // Two scenarios:
-//  1. Steve Jobs' 2005 Stanford speech (clean audio) — exercises coverage
+//  1. Steve Jobs' 2005 Stanford speech (clean audio) - exercises coverage
 //     tracking + seek mechanics: play a bit, seek FORWARD past the buffered/
 //     covered region, seek BACKWARD into an already-covered region. Known
 //     blocker (see PIPELINE_NOTES.md "Findings"): shared/wordlist.js's
 //     refresh() passes `pm_wordlist: undefined` as a chrome.storage.get()
 //     default, which appears to make that key drop out of the request
-//     entirely, so a custom pm_wordlist never actually loads — confirmed via
+//     entirely, so a custom pm_wordlist never actually loads - confirmed via
 //     readback (chrome.storage.sync has the right value) vs
 //     PMWordlist._state (still the built-in DEFAULT_WORDLIST) diverging.
 //     Word-triggered mute assertions therefore live in scenario 2 instead,
 //     which uses real profanity already in DEFAULT_WORDLIST.
 //  2. Regression case (o-7Fvkq-Nug, "shit" ~64s reported missed by v1): seek
-//     to ~50s (before any coverage exists there — tests capture/demux after
+//     to ~50s (before any coverage exists there - tests capture/demux after
 //     a cold seek) and play through ~78s, logging the raw transcript tokens
 //     for the 55-75s window verbatim, and checking whether a mute interval
 //     was scheduled/engaged around 64s.
@@ -34,7 +34,7 @@ const EXT_DIR = path.resolve(__dirname, '..');
 // Reusing a profile across code edits was observed to make Chrome keep
 // running a stale cached service worker (and stale message shapes) despite
 // --load-extension reading capture.js/content.js fresh from disk each
-// launch — background.js edits silently had zero effect for several runs
+// launch - background.js edits silently had zero effect for several runs
 // until this was discovered. Costs a fresh Whisper model download per run;
 // worth it for correctness. Set PM_REUSE_PROFILE=1 to opt back into a fixed
 // profile (e.g. for fast local iteration once you trust the code is stable).
@@ -146,7 +146,7 @@ async function main() {
   let sw = context.serviceWorkers()[0];
   if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 20000 }).catch(() => null);
   if (!sw) {
-    console.error('No service worker detected — cannot get extension id, aborting');
+    console.error('No service worker detected - cannot get extension id, aborting');
     await context.close();
     process.exit(1);
   }
@@ -155,7 +155,7 @@ async function main() {
   const extId = sw.url().split('/')[2];
 
   // =========================================================================
-  // Scenario 1: Steve Jobs speech — coverage + seek mechanics
+  // Scenario 1: Steve Jobs speech - coverage + seek mechanics
   // =========================================================================
   await seedStorage(context, extId, { pm_enabled: true, pm_safeMode: true, pm_muteAudio: true, pm_wordlist: ['college', 'connected', 'dots'] });
 
@@ -191,7 +191,7 @@ async function main() {
   await collectFor(page1, S1_POST_SEEK_BACK_MS, s1BackSamples);
 
   // =========================================================================
-  // Scenario 2: regression video — real "shit" ~64s, cold seek to 50s
+  // Scenario 2: regression video - real "shit" ~64s, cold seek to 50s
   // =========================================================================
   await seedStorage(context, extId, { pm_enabled: true, pm_safeMode: true, pm_muteAudio: true, pm_wordlist: [] }); // empty -> DEFAULT_WORDLIST (includes "shit"), also sidesteps the pm_wordlist:undefined-default bug for this case since we WANT defaults
 
@@ -207,7 +207,7 @@ async function main() {
 
   // YouTube plays pre-roll/mid-roll ADS first on this video, and ads ignore
   // a `.currentTime = 50` assignment (their own short timeline just keeps
-  // playing) — a one-shot seek right after nav can silently land on an ad
+  // playing) - a one-shot seek right after nav can silently land on an ad
   // instead of the real content. Keep retrying the seek on every sample
   // until it actually sticks (checked by currentTime settling near the
   // target while no ad is showing), which is robust to however many ads
@@ -229,7 +229,7 @@ async function main() {
           if (v.paused && !adShowing) v.play().catch(function () {});
           var justLanded = !alreadyLanded && !adShowing && Math.abs(v.currentTime - t) < 3;
           // Only re-assert the seek BEFORE it has ever landed (ads ignore it,
-          // so keep retrying). Once landed once, never seek again — let
+          // so keep retrying). Once landed once, never seek again - let
           // playback progress naturally, however far currentTime drifts.
           if (!alreadyLanded && !adShowing && !justLanded) v.currentTime = t;
           return { t: v.currentTime, paused: v.paused, muted: v.muted, readyState: v.readyState, adShowing: adShowing, justLanded: justLanded };
@@ -241,7 +241,7 @@ async function main() {
       s2Samples.push({ wall: Date.now(), ...state });
       if (state.justLanded && !s2SeekLanded) {
         s2SeekLanded = true;
-        console.log('S2: seek landed on real content at t=' + state.t.toFixed(2) + ' — no further re-seeking');
+        console.log('S2: seek landed on real content at t=' + state.t.toFixed(2) + ' - no further re-seeking');
       }
     }
     await new Promise((r) => setTimeout(r, 1000));
@@ -285,7 +285,7 @@ async function main() {
   console.log('S1 post-forward-seek samples (first 8):', JSON.stringify(s1FwdSamples.slice(0, 8)));
 
   // Backward seek should NOT stay stuck safe-mode-muted for long (coverage
-  // already exists there from the initial play) — check muted goes false
+  // already exists there from the initial play) - check muted goes false
   // quickly.
   const quickUnmuteAfterBackSeek = s1BackSamples.some((s, idx) => idx < 4 && !s.muted);
   console.log('Backward seek into covered region resolves to unmuted quickly:', quickUnmuteAfterBackSeek);
@@ -312,11 +312,11 @@ async function main() {
 
   let s2Diagnosis = 'unknown';
   if (!rawTranscriptHasShitLike && s2AllWindowLines.length > 0) {
-    s2Diagnosis = 'transcription mishear or capture gap after seek — no "shit"-like token appears anywhere in the raw transcript for windows overlapping [50,75)';
+    s2Diagnosis = 'transcription mishear or capture gap after seek - no "shit"-like token appears anywhere in the raw transcript for windows overlapping [50,75)';
   } else if (rawTranscriptHasShitLike && !muteNear64) {
-    s2Diagnosis = 'wordlist-matching miss (or timing miss) — raw transcript contains a shit-like token but no MUTE engaged near t=64';
+    s2Diagnosis = 'wordlist-matching miss (or timing miss) - raw transcript contains a shit-like token but no MUTE engaged near t=64';
   } else if (rawTranscriptHasShitLike && muteNear64) {
-    s2Diagnosis = 'fixed — token present and mute engaged near t=64';
+    s2Diagnosis = 'fixed - token present and mute engaged near t=64';
   } else if (s2AllWindowLines.length === 0) {
     s2Diagnosis = 'no transcription windows landed at all for scenario 2 (capture/demux failure after cold seek)';
   }

@@ -6,24 +6,24 @@
 // shared schema used by shared/wordlist.js and captions.js. pm_wordlist
 // is DEPRECATED as of 0.1.29: read for migration, never written.
 //
-// pm_multilingual (boolean, default true) — "Filter other languages"
+// pm_multilingual (boolean, default true) - "Filter other languages"
 // toggle. This popup only stores the setting; the audio pipeline's
 // Whisper-based language detection reads it (via
 // PMWordlist.settings.multilingual) to decide whether to call
 // PMWordlist.setLanguage(lang) when it detects non-English speech.
 // pm_strictness/pm_additionalWords (the whole Built-in list + My
-// additional words area below) is an ENGLISH-ONLY concept — it has no
+// additional words area below) is an ENGLISH-ONLY concept - it has no
 // effect on which words are filtered for any other language a pack was
 // loaded for; every non-English pack always uses its own full (core +
 // extended) word list. The word list section below shows which non-English pack, if any, is currently
 // active (via chrome.storage.LOCAL's pm_activeLanguage, written by
-// shared/wordlist.js's setLanguage() — see "Active non-English language
+// shared/wordlist.js's setLanguage() - see "Active non-English language
 // pack display" further down).
 //
 // WORD LIST MODEL (0.1.29 redesign)
 // ---------------------------------
-// pm_strictness is now a LEVEL — "none" | "standard" | "strict", default
-// "strict" — selecting how much of the BUILT-IN list is switched on, and
+// pm_strictness is now a LEVEL - "none" | "standard" | "strict", default
+// "strict" - selecting how much of the BUILT-IN list is switched on, and
 // the user's own words are a separate, ADDITIVE list in
 // pm_additionalWords. The effective list is always tier + additions; see
 // shared/wordlist.js's resolveSettingsFromStorage for the resolution and
@@ -36,7 +36,7 @@
 //
 // That is why the old "Custom" mode is gone. It meant "use my list
 // INSTEAD of the built-ins", so the only way to add a single word was to
-// switch to Custom — which seeded the textarea with the entire built-in
+// switch to Custom - which seeded the textarea with the entire built-in
 // list to edit down, i.e. adding "poop" to the filter required showing a
 // child's parent a screenful of slurs first. It also silently froze the
 // user's copy of the built-ins at whatever shipped that day. Additive
@@ -46,7 +46,7 @@
 // deliberately gone: no seeding the textarea from DEFAULT_WORDLIST, no
 // "switch to custom for editing" auto-mode-change on unmask/save, no
 // hasSavedCustomWordlist bookkeeping, and no reading of pm_wordlist for
-// display. This popup never writes pm_wordlist again either — the
+// display. This popup never writes pm_wordlist again either - the
 // deprecated key is left exactly as it was found, for rollback.
 //
 // PARENTAL LOCK (0.1.29)
@@ -54,7 +54,7 @@
 // When chrome.storage.sync's pm_lock is set, the popup opens LOCKED:
 // every settings control is `disabled` and a password field is shown.
 // Unlocking applies to this popup session only (no persisted unlocked
-// flag — closing the popup re-locks). Enforcement is one rule in one
+// flag - closing the popup re-locks). Enforcement is one rule in one
 // place: persistSettings() is the ONLY function in this file that writes
 // to storage, and it asks PMLock.mayWriteSettings() before doing so, so
 // there are no per-handler checks to keep in sync and a future options
@@ -67,20 +67,20 @@
 // export a log and send it to whoever can read it. It only reads
 // storage, and it exposes nothing a settings change could.
 //
-// The lock is a deterrent, not security — see shared/lock.js's header,
+// The lock is a deterrent, not security - see shared/lock.js's header,
 // and the caption shown under the control says so to the user in as many
 // words.
 //
 // Separately, the STATS section reads/writes chrome.storage.LOCAL (not
 // sync) key pm_stats ({totalMuted, videosProtected}), written by the
-// audio pipeline. This is a different storage AREA on purpose — stats
+// audio pipeline. This is a different storage AREA on purpose - stats
 // are per-install telemetry, not something that should sync across a
-// user's devices — so it's handled independently of the settings
+// user's devices - so it's handled independently of the settings
 // load()/save() flow above, with its own chrome.storage.onChanged
 // listener filtered to areaName === "local".
 //
 // pm_safeMode has been merged into pm_catchupMode ("mute" | "pause" |
-// "play") and is NEVER written by this popup anymore — there is no
+// "play") and is NEVER written by this popup anymore - there is no
 // separate Safe mode toggle. It is still read once, by
 // shared/wordlist.js's resolveSettingsFromStorage, purely to migrate a
 // legacy `pm_safeMode === false` (old "safe mode off") forward into
@@ -89,7 +89,7 @@
 //
 // Word list handling:
 //   - The textarea is always the source of truth for the user's
-//     ADDITIONAL words — it holds them whether or not it's visible.
+//     ADDITIONAL words - it holds them whether or not it's visible.
 //   - A masked, read-only view is shown by default (each entry
 //     rendered as asterisks matching its shape) so opening the popup
 //     never flashes explicit text. "Show words to edit" swaps to the
@@ -99,26 +99,26 @@
 //   - Save writes exactly what's in the textarea to pm_additionalWords,
 //     including an intentionally-emptied list.
 //
-// BUG FIX (2026-08-30) — "clicking the icon doesn't load the settings
+// BUG FIX (2026-08-30) - "clicking the icon doesn't load the settings
 // UI properly": chrome.storage.sync.get() is a real async round trip,
 // not an instant local read (it can hit sync's own rate limits/quota
-// errors, or just take a moment) — but every control's HTML started in
+// errors, or just take a moment) - but every control's HTML started in
 // its "off"/empty state, only becoming correct once that callback
 // resolved. Two consequences: (1) on ANY storage error
-// (chrome.runtime.lastError — quota exceeded, sync disabled, a
+// (chrome.runtime.lastError - quota exceeded, sync disabled, a
 // transient failure), load()'s callback bailed out immediately,
 // permanently leaving every toggle looking off and the word list
 // area completely empty, with only a small, easy-to-miss "Failed to
-// load settings" status line — this reproduced 100% with a simulated
+// load settings" status line - this reproduced 100% with a simulated
 // storage error and looked exactly like "the settings UI doesn't load
 // very well". (2) Even without an error, there was a real window
 // (however brief) after the popup opens but before storage.get()
 // resolves where the same broken-looking all-off/empty state was
-// visible, and popups are dismissed on blur — a user who clicks away
+// visible, and popups are dismissed on blur - a user who clicks away
 // during that window never sees it "load" at all. Fix: the HTML now
 // ships with its real defaults already `checked`, and popup.js
 // synchronously pre-renders the default word list and default
-// catch-up mode BEFORE ever calling chrome.storage.sync.get() — so the
+// catch-up mode BEFORE ever calling chrome.storage.sync.get() - so the
 // popup is fully correct and usable the instant it paints, with zero
 // dependency on storage latency. The async load() call then only ever
 // needs to *reconcile* to the user's actual saved settings if they
@@ -184,7 +184,7 @@
   // NOTE (0.1.29): the defaultWordlist() and coreWordlist() accessors
   // that used to live here are deleted, not merely unused. They existed
   // solely to put the built-in lists' CONTENTS on screen, which is the
-  // one thing this popup must never do — leaving them around as
+  // one thing this popup must never do - leaving them around as
   // convenient helpers is how that comes back.
 
   function catchupModes() {
@@ -323,7 +323,7 @@
   // The user's OWN additional words, as currently held in the textarea.
   // This is the only list this popup ever renders. There is deliberately
   // no function here that returns the built-in tier's contents for
-  // display — see the header.
+  // display - see the header.
   function additionalWordsForDisplay() {
     return parseWordlist(wordlistEl.value);
   }
@@ -347,13 +347,13 @@
 
   // Mask a single entry, preserving spaces (so a masked phrase still
   // reads as multiple words) but turning every other character into
-  // an asterisk — no letters, shape only.
+  // an asterisk - no letters, shape only.
   function maskEntry(entry) {
     return entry.replace(/\S/g, "*");
   }
 
   // The summary line above the list. States the LEVEL and how many words
-  // the user has added — never a built-in count, and never built-in
+  // the user has added - never a built-in count, and never built-in
   // contents. "Strict list, plus 3 of your own" tells a parent everything
   // they need without putting the built-ins on screen; a built-in count
   // would only invite "which 123 words?".
@@ -373,7 +373,7 @@
   function updateWordlistHint() {
     if (getStrictness() === "none") {
       wordlistHintEl.textContent =
-        'No built-in list is on — only the words below are filtered. One word or phrase per line; click "Show words to edit" to change them.';
+        'No built-in list is on - only the words below are filtered. One word or phrase per line; click "Show words to edit" to change them.';
     } else {
       wordlistHintEl.textContent =
         'Words you add here are filtered on top of the built-in list, one word or phrase per line. They\'re masked until you click "Show words to edit".';
@@ -390,8 +390,8 @@
       empty.className = "pm-masked-empty";
       empty.textContent =
         getStrictness() === "none"
-          ? "(nothing to filter — no built-in list and no words of your own)"
-          : "(no words of your own yet — the built-in list is still on)";
+          ? "(nothing to filter - no built-in list and no words of your own)"
+          : "(no words of your own yet - the built-in list is still on)";
       maskedListEl.appendChild(empty);
       return;
     }
@@ -425,7 +425,7 @@
   }
 
   // The textarea is now ALWAYS the user's own editable list, in every
-  // level — so unmasking is just unmasking. The old
+  // level - so unmasking is just unmasking. The old
   // switchToCustomForEditing() path (which flipped strictness to
   // "custom" and seeded the textarea with the built-ins before revealing
   // it) is gone with the mode it served.
@@ -435,14 +435,14 @@
   }
 
   // Fires on every Built-in list radio click. The level no longer has any
-  // effect on what the textarea holds — only on the summary line and the
-  // hint — so this just re-renders and saves.
+  // effect on what the textarea holds - only on the summary line and the
+  // hint - so this just re-renders and saves.
   function onStrictnessChange() {
     renderMasked();
     saveTogglesOnly();
   }
 
-  // Synchronous, correct-by-default render — runs immediately, before
+  // Synchronous, correct-by-default render - runs immediately, before
   // any chrome.storage.sync call, so the popup is fully usable and
   // visually correct (real default word list shown, defaults selected)
   // the instant it paints, independent of storage latency or errors.
@@ -453,7 +453,7 @@
   function renderDefaultsSynchronously() {
     // Empty, not seeded: a fresh install has no additional words, and the
     // built-ins must never appear here. (This line used to be
-    // `defaultWordlist().join("\n")` — the single biggest source of
+    // `defaultWordlist().join("\n")` - the single biggest source of
     // built-in contents leaking onto the screen, since it ran on EVERY
     // popup open before storage had even been read.)
     wordlistEl.value = "";
@@ -470,7 +470,7 @@
       setStatus("Storage unavailable");
       return;
     }
-    // Array form, NOT the "defaults object" form — a defaults object
+    // Array form, NOT the "defaults object" form - a defaults object
     // with an `undefined`-valued key (e.g. { pm_wordlist: undefined })
     // silently drops that key from the request, so it ALWAYS comes
     // back undefined even when a real value was saved. That was the
@@ -501,9 +501,9 @@
         // so on error we simply leave it as-is (showing built-in
         // defaults, exactly what shared/wordlist.js itself falls back
         // to at runtime when it can't read storage either) and only
-        // add the status message — never blank a working UI.
+        // add the status message - never blank a working UI.
         if (chrome.runtime && chrome.runtime.lastError) {
-          setStatus("Couldn't load saved settings — showing defaults");
+          setStatus("Couldn't load saved settings - showing defaults");
           return;
         }
         items = items || {};
@@ -516,7 +516,7 @@
         // Invalid/unset pm_catchupMode falls back to the default
         // ("mute") UNLESS the legacy pm_safeMode was explicitly saved
         // as false, in which case the radio group should reflect the
-        // migrated "play" choice — same rule as
+        // migrated "play" choice - same rule as
         // resolveSettingsFromStorage in shared/wordlist.js, duplicated
         // here just for what the popup *displays* (the popup never
         // writes pm_safeMode itself; once the user picks any option
@@ -541,14 +541,14 @@
         // implementation (see resolveFromStorage's comment). A user
         // upgrading from the old "custom" schema therefore sees their
         // existing list appear in "My additional words" with the
-        // built-in level set to None — the same effective filtering they
+        // built-in level set to None - the same effective filtering they
         // had before, now expressed in the new model.
         var resolved = resolveFromStorage(items);
         if (resolved) {
           setStrictness(resolved.strictness);
           wordlistEl.value = resolved.additionalWords.join("\n");
         }
-        // Always refresh (not just `if (masked)`) — the mode note/hint
+        // Always refresh (not just `if (masked)`) - the mode note/hint
         // are visible regardless of masked/unmasked state.
         renderMasked();
       }
@@ -557,7 +557,7 @@
 
   // ---- the single storage-write funnel (and the lock's enforcement point) ----
   //
-  // EVERY write this popup makes goes through here — settings, the word
+  // EVERY write this popup makes goes through here - settings, the word
   // list, and the stats reset (which targets the `local` area instead;
   // hence the `area` argument). That is the whole point: the parental
   // lock is checked in exactly one place, so it cannot be forgotten on a
@@ -578,7 +578,7 @@
       return false;
     }
     if (blocked) {
-      setStatus("Locked — enter the password to change settings");
+      setStatus("Locked - enter the password to change settings");
       return false;
     }
     var target =
@@ -597,7 +597,7 @@
   // The settings every save path writes. Collected in one place so save()
   // and saveTogglesOnly() cannot drift apart in which keys they cover.
   //
-  // pm_safeMode is intentionally NOT written — it's been merged into
+  // pm_safeMode is intentionally NOT written - it's been merged into
   // pm_catchupMode; once pm_catchupMode is explicitly saved,
   // resolveSettingsFromStorage always prefers it and never looks at
   // pm_safeMode again. pm_wordlist is intentionally NOT written either
@@ -620,7 +620,7 @@
   function save() {
     var values = currentSettingsValues();
     // Written exactly as typed, including an intentionally emptied list.
-    // Saving no longer changes the level in any way — adding words is
+    // Saving no longer changes the level in any way - adding words is
     // orthogonal to which built-in tier is on.
     values.pm_additionalWords = parseWordlist(wordlistEl.value);
     persistSettings(values, function (failed) {
@@ -628,7 +628,7 @@
         setStatus("Save failed");
         return;
       }
-      // Always refresh (not just `if (masked)`) — the summary line's
+      // Always refresh (not just `if (masked)`) - the summary line's
       // "plus N of your own" count is visible regardless of masked or
       // unmasked state.
       renderMasked();
@@ -642,7 +642,7 @@
   // IMPORTANT for perceived responsiveness: the checkbox/radio's own
   // visual flip is pure CSS driven off `:checked` (see popup.css) and
   // already happened, natively, before this "change" handler even
-  // runs — this function must stay fire-and-forget. Never make the
+  // runs - this function must stay fire-and-forget. Never make the
   // toggle's visual state (or re-check/re-render any input here) wait
   // on the chrome.storage.sync.set() callback; the callback below is
   // ONLY allowed to touch the status text, never re-read storage or
@@ -659,7 +659,7 @@
   }
 
   // "Restore defaults" (0.1.29 semantics): back to the shipped starting
-  // point — the Strict built-in level, and none of your own words. It no
+  // point - the Strict built-in level, and none of your own words. It no
   // longer loads the built-in list into the textarea, because the
   // built-in list is not the user's list any more and its contents are
   // never shown. Unlike the old version this writes immediately rather
@@ -688,7 +688,7 @@
   //
   // shared/wordlist.js's PMWordlist.setLanguage() (called by the audio
   // pipeline's Whisper-based language detection, when pm_multilingual is
-  // on) runs in the YouTube TAB's isolated-world content-script realm —
+  // on) runs in the YouTube TAB's isolated-world content-script realm -
   // a completely separate JS context from this popup page, so this
   // popup can't just read PMWordlist.activeLanguage directly. Instead,
   // setLanguage() persists {lang, quality, available} to
@@ -717,7 +717,7 @@
     var name = LANGUAGE_NAMES[info.lang] || info.lang;
     var qualityLabel = info.quality === "community" ? "community-sourced" : "curated";
     var text = info.available === false
-      ? "Detected language not supported yet (" + name + ") — using your English list only"
+      ? "Detected language not supported yet (" + name + ") - using your English list only"
       : "Also filtering: " + name + " (" + qualityLabel + " word list)";
     activeLanguageNoteEl.textContent = text;
     activeLanguageNoteEl.classList.remove("pm-hidden");
@@ -736,7 +736,7 @@
   //
   // pm_stats = {totalMuted, videosProtected}, written by the audio
   // pipeline as it runs. May be entirely absent (fresh install, or the
-  // pipeline hasn't muted anything yet) — render zeros in that case
+  // pipeline hasn't muted anything yet) - render zeros in that case
   // rather than leaving the line blank or erroring. Numbers are
   // sanitized (Number(...) with a NaN->0 fallback) so a malformed
   // stored value can't break the display.
@@ -773,7 +773,7 @@
     var zeroed = { totalMuted: 0, videosProtected: 0 };
     // Routed through the same funnel as every other write (with
     // area: "local", since stats are per-install and not synced) so the
-    // parental lock covers it too — wiping the "words muted all-time"
+    // parental lock covers it too - wiping the "words muted all-time"
     // counter is exactly the kind of evidence-destroying change the lock
     // exists to prevent.
     var attempted = persistSettings(
@@ -785,7 +785,7 @@
       "local"
     );
     // Render zeros immediately (fire-and-forget, same rule as the
-    // toggles) — but only once the write was actually accepted.
+    // toggles) - but only once the write was actually accepted.
     if (attempted) renderStats(zeroed);
   }
 
@@ -793,7 +793,7 @@
   //
   // State lives in exactly two variables: `lockRecord` (the stored
   // {salt, hash}, or null) and `unlockedThisSession`. The decision that
-  // depends on them is not made here — it is PMLock.mayWriteSettings(),
+  // depends on them is not made here - it is PMLock.mayWriteSettings(),
   // called from persistSettings(), so there is one rule in one place.
   // Everything in this section is UI around that one rule.
   //
@@ -804,7 +804,7 @@
   var lockRecord = null;
   var unlockedThisSession = false;
   // Whether pm_lock has actually been read yet. Until it has, we do NOT
-  // know there is no lock — `lockRecord === null` at that point means
+  // know there is no lock - `lockRecord === null` at that point means
   // "unknown", not "unlocked". Without this, the milliseconds between
   // the popup painting and loadLock()'s callback are a real bypass: a
   // fast click on a toggle would sail through maySaveSettings() and
@@ -868,7 +868,7 @@
       if (rows[r].classList.contains("pm-row--lock")) continue;
       rows[r].classList.toggle("pm-row--locked", locked);
     }
-    // The masked list must stay masked while locked — revealing the
+    // The masked list must stay masked while locked - revealing the
     // user's own word list is itself something the lock should cover.
     if (locked && !masked) showMasked();
   }
@@ -884,7 +884,7 @@
     }
 
     // WebCrypto missing (shouldn't happen on an extension page, which is
-    // a secure context — guarded anyway): offer nothing rather than a
+    // a secure context - guarded anyway): offer nothing rather than a
     // button that can't work, and say why.
     if (api && typeof api.available === "function" && !api.available() && !hasLock) {
       show(lockSetupEl, false);
@@ -913,7 +913,7 @@
       if (chrome.runtime && chrome.runtime.lastError) {
         // Can't tell whether a lock exists. Fail OPEN, not closed: a
         // transient sync error must not leave a parent unable to unlock
-        // their own settings, and the lock is a deterrent anyway — the
+        // their own settings, and the lock is a deterrent anyway - the
         // alternative (treat an unreadable record as locked) turns a
         // flaky sync quota into "your settings are bricked".
         lockRecord = null;
@@ -948,7 +948,7 @@
           }
           lockRecord = record;
           // Setting a password does NOT immediately lock the parent out
-          // of the popup they're standing in front of — they stay
+          // of the popup they're standing in front of - they stay
           // unlocked for this session; the next open is locked.
           unlockedThisSession = true;
           lockNewEl.value = "";
@@ -984,7 +984,7 @@
     if (!hasStorage) return;
     // Only reachable while unlocked (the button lives in the unlocked
     // panel), but check the same central rule anyway rather than trusting
-    // the DOM state — removing the lock is itself a settings change.
+    // the DOM state - removing the lock is itself a settings change.
     if (!maySaveSettings()) {
       setLockStatus("Unlock first");
       return;
@@ -1004,7 +1004,7 @@
   // ---- Onboarding, review prompt, share (0.1.30) --------------------------
   //
   // Three surfaces, one storage read. All three decisions are made by the
-  // pure predicates in shared/moments.js — this section only renders what
+  // pure predicates in shared/moments.js - this section only renders what
   // it is told, and every gate lives in one unit-tested place rather than
   // as conditionals grown into the UI.
   function momentsApi() {
@@ -1034,7 +1034,7 @@
     openExtensionPage("onboarding/onboarding.html");
   }
 
-  // Always available, and deliberately not lock-gated — same rule as
+  // Always available, and deliberately not lock-gated - same rule as
   // "Copy debug log", which it sits beside: reporting a problem changes
   // no setting, and a child who hits a problem must still be able to send
   // the details to whoever can act on them.
@@ -1056,14 +1056,14 @@
   }
 
   // CHROME WEB STORE POLICY lives with the predicate, in
-  // shared/moments.js — read it there before touching any of this. The
+  // shared/moments.js - read it there before touching any of this. The
   // short version, restated at the point of use because it constrains
   // this code specifically:
-  //   * at most once, ever — showing the card WRITES pm_reviewPrompt, so
+  //   * at most once, ever - showing the card WRITES pm_reviewPrompt, so
   //     it can never be shown again even if the user neither clicks nor
   //     dismisses (closing the popup counts as having been asked);
   //   * dismissal is permanent, and "No thanks" is a real dismissal;
-  //   * no incentive is offered, and no rating is solicited first — both
+  //   * no incentive is offered, and no rating is solicited first - both
   //     buttons are equally available and nothing is gated on either;
   //   * it is a card inside the popup, never a tab or a notification.
   function renderReviewPrompt(items) {
@@ -1083,7 +1083,7 @@
 
     // Record it as shown IMMEDIATELY, not on click. If this waited for a
     // button, a user who simply closed the popup would be asked again on
-    // every open — which is exactly the repeated nagging the "at most
+    // every open - which is exactly the repeated nagging the "at most
     // once" rule exists to prevent. Being asked once and walking away IS
     // an answer.
     markReviewPromptShown(false);
@@ -1122,7 +1122,7 @@
   function onReviewNo() {
     markReviewPromptShown(true);
     hideReviewCard();
-    setStatus("Thanks — we won't ask again");
+    setStatus("Thanks - we won't ask again");
   }
 
   function shareWithFriend() {
@@ -1173,7 +1173,7 @@
   // caption censor events, errors) as JSON, so "why did word X get
   // through on video Y" can be answered from evidence after the fact
   // instead of from memory. Written by the content scripts via
-  // shared/devlog.js — see that file's header for the schema. Read-only
+  // shared/devlog.js - see that file's header for the schema. Read-only
   // here; the popup never edits or clears it.
   function copyDevlog() {
     if (!hasLocalStorage) {
@@ -1187,7 +1187,7 @@
       }
       var log = items && items.pm_devlog;
       // An absent key is the ordinary "nothing watched yet" case, not a
-      // failure — say so plainly rather than copying "undefined" to the
+      // failure - say so plainly rather than copying "undefined" to the
       // clipboard and letting it look like the log is broken.
       if (!log || !log.videos || !log.videos.length) {
         setStatus("No debug log yet");
@@ -1229,7 +1229,7 @@
         }
       });
     } catch (e) {
-      // ignore — non-fatal if listener registration fails
+      // ignore - non-fatal if listener registration fails
     }
   }
 
@@ -1246,7 +1246,7 @@
     paddingEls[pi].addEventListener("change", saveTogglesOnly);
   }
   // Strictness radios get their OWN handler, not the generic
-  // saveTogglesOnly — changing strictness changes which word list is
+  // saveTogglesOnly - changing strictness changes which word list is
   // ACTIVE, so (unlike every other toggle/radio) it must also
   // re-render the masked word-list view. This is a deliberate,
   // narrowly-scoped exception to the "toggle/radio saves never touch
@@ -1263,7 +1263,7 @@
   lockSetEl.addEventListener("click", setLockPassword);
   lockUnlockEl.addEventListener("click", unlock);
   lockRemoveEl.addEventListener("click", removeLockPassword);
-  // Enter submits the field it's typed in — a password field that
+  // Enter submits the field it's typed in - a password field that
   // ignores Enter feels broken.
   openOnboardingEl.addEventListener("click", openOnboarding);
   finishSetupEl.addEventListener("click", openOnboarding);
@@ -1286,7 +1286,7 @@
   // Render the lock UI synchronously first (setup panel showing) for the
   // same correct-by-default reason as everything else here, then
   // reconcile once storage answers. A write attempted inside that window
-  // is deferred, not allowed — see lockStateLoaded.
+  // is deferred, not allowed - see lockStateLoaded.
   renderLockUI();
   loadLock();
   // Note the deliberate absence of a synchronous pre-render here, unlike
@@ -1294,7 +1294,7 @@
   // hidden in the HTML and are only ever revealed by a real storage read.
   // The popup's usual "render correct defaults immediately" rule would
   // mean flashing "Finish setup" at someone who finished setup weeks ago,
-  // on every single open — and the honest default for "have you
+  // on every single open - and the honest default for "have you
   // acknowledged?" is "we don't know yet", which shows nothing.
   loadMoments();
 })();

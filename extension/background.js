@@ -1,12 +1,12 @@
-// background.js — MV3 service worker. Owns the offscreen document (Whisper +
-// demux run there, see spike-whisper/SPIKE_NOTES.md — inference does not work
+// background.js - MV3 service worker. Owns the offscreen document (Whisper +
+// demux run there, see spike-whisper/SPIKE_NOTES.md - inference does not work
 // reliably in a service worker) and routes segment bytes / transcript results
 // between each tab's content.js port and the single shared offscreen doc.
 //
 // The service worker itself is expendable: MV3 idles it after ~30s and Chrome
 // respawns it on the next event (onConnect/onMessage). Session state that
 // must survive a respawn (accumulated audio bytes, coverage, dedupe) lives in
-// the offscreen document, not here — this file only routes and can be torn
+// the offscreen document, not here - this file only routes and can be torn
 // down and rebuilt freely.
 'use strict';
 
@@ -15,7 +15,7 @@ var videoIdByTabId = new Map(); // tabId -> last known videoId (0.1.15: needed t
 var creatingOffscreen = null;
 
 // Any error in this file must not stay invisible in the SW's own
-// (user-inaccessible) console — broadcast to every connected tab so it
+// (user-inaccessible) console - broadcast to every connected tab so it
 // shows up in the "Copy logs" output.
 function broadcastDiag(text) {
   console.error('[PM-BG]', text);
@@ -46,7 +46,7 @@ async function ensureOffscreenDocument() {
       justification: 'Streaming WebM demux + on-device Whisper transcription for profanity muting.'
     })
     .then(function () {
-      // A genuinely FRESH offscreen document was just created — any prior
+      // A genuinely FRESH offscreen document was just created - any prior
       // in-memory session state (including every session's modelId) is
       // gone. Previously this only got re-pushed on the next video-change
       // 'reset' message, so a respawn (e.g. onInstalled's force-recreate)
@@ -71,7 +71,7 @@ function resendModelConfigToAllTabs() {
 // Belt-and-suspenders against a stale offscreen document surviving a reload:
 // onInstalled fires specifically on an extension install/update/reload (not
 // on routine SW idle-respawns), so force-close any existing offscreen doc
-// there before recreating — guarantees a fresh one running the CURRENT
+// there before recreating - guarantees a fresh one running the CURRENT
 // code, rather than possibly reusing an old one still running pre-reload
 // logic (best-effort; closeDocument() throwing "no such document" is fine).
 chrome.runtime.onInstalled.addListener(function () {
@@ -89,7 +89,7 @@ chrome.runtime.onInstalled.addListener(function () {
 //
 // Two jobs, in this order of importance:
 //
-//  1. pm_installedAt — stamped once, and only if absent. It gates the review
+//  1. pm_installedAt - stamped once, and only if absent. It gates the review
 //     prompt's "installed >= 7 days" rule (see shared/moments.js). Written on
 //     UPDATE too, not just install, so the ~zero existing 0.1.29 installs get
 //     a date at all; the honest consequence is that they wait 7 days from the
@@ -142,10 +142,10 @@ chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
 
 function sendModelConfig(tabId, videoId) {
   try {
-    // pm_multilingual (0.1.25, default true — the wordlist agent owns the
+    // pm_multilingual (0.1.25, default true - the wordlist agent owns the
     // popup toggle for this) read the same way pm_model already is: once
     // per video reset, not reactively mid-video (matches pm_model's own
-    // existing behavior — a mid-video toggle takes effect on the NEXT video).
+    // existing behavior - a mid-video toggle takes effect on the NEXT video).
     chrome.storage.sync.get({ pm_model: 'base', pm_multilingual: true }, function (items) {
       if (chrome.runtime.lastError) return;
       chrome.runtime
@@ -188,7 +188,7 @@ chrome.runtime.onConnect.addListener(function (port) {
       });
     } else if (msg.type === 'resync') {
       // content.js just (re)connected its port (fresh page load, or
-      // recovering from a port drop) — ask offscreen to resend everything it
+      // recovering from a port drop) - ask offscreen to resend everything it
       // holds for this session so nothing computed while disconnected is lost.
       ensureOffscreenDocument().then(function () {
         chrome.runtime.sendMessage({ type: 'pm-resync', tabId: tabId, videoId: msg.videoId }).catch(function () {});
@@ -220,7 +220,7 @@ chrome.runtime.onConnect.addListener(function (port) {
     } else if (msg.type === 'disable' || msg.type === 'enable') {
       // pm_enabled=false (0.1.13): idle the session's transcription CPU
       // entirely rather than just having content.js stop acting on results
-      // — offscreen keeps running the model-warm-up/model-cache machinery
+      // - offscreen keeps running the model-warm-up/model-cache machinery
       // (cheap, no per-window work), it just stops picking new windows.
       ensureOffscreenDocument().then(function () {
         chrome.runtime.sendMessage({ type: 'pm-' + msg.type, tabId: tabId, videoId: msg.videoId }).catch(function () {});
@@ -240,7 +240,7 @@ chrome.runtime.onConnect.addListener(function (port) {
 
 // Memory leak fix (0.1.15): closing a YouTube tab previously left its
 // offscreen session (bytes, runs, coverage, word history) resident forever
-// — nothing ever told offscreen the tab was gone. No need to spin up a
+// - nothing ever told offscreen the tab was gone. No need to spin up a
 // fresh offscreen doc just to tell it this; if none exists there's nothing
 // to clean up either.
 chrome.tabs.onRemoved.addListener(function (tabId) {
@@ -300,7 +300,7 @@ chrome.runtime.onMessage.addListener(function (msg) {
     }
   } else if (msg.type === 'pm-diag') {
     // Tab-visible diagnostics: anything offscreen determined could block
-    // coverage indefinitely (a skipped window, a demux error, a stall) —
+    // coverage indefinitely (a skipped window, a demux error, a stall) -
     // routed to the tab's own console so it's never silently invisible.
     var diagPort = portsByTabId.get(msg.tabId);
     if (diagPort) {
@@ -312,7 +312,7 @@ chrome.runtime.onMessage.addListener(function (msg) {
     }
   } else if (msg.type === 'pm-unanalyzable') {
     // DRM/undecodable content (0.1.15): offscreen gave up transcribing this
-    // video entirely — relay to content.js so it can release safe-mode
+    // video entirely - relay to content.js so it can release safe-mode
     // muting and show a player notice, rather than leaving a rented/
     // protected video permanently muted with no way to actually analyze it.
     var uaPort = portsByTabId.get(msg.tabId);
@@ -334,11 +334,11 @@ chrome.runtime.onMessage.addListener(function (msg) {
     }
     console.log('[PM-BG] resync-result relayed:', (msg.words || []).length, 'words,', (msg.coveredIntervals || []).length, 'covered intervals');
   } else if (msg.type === 'pm-language') {
-    // 0.1.25: sent once, right when detection resolves — a snappier-UI
+    // 0.1.25: sent once, right when detection resolves - a snappier-UI
     // nice-to-have on top of the language field already carried on every
     // 'words'/'resync-result' message (that's the authoritative source;
     // this is not relied upon alone, since ordering between two separate
-    // sendMessage calls isn't guaranteed — see PIPELINE_NOTES "0.1.23"'s
+    // sendMessage calls isn't guaranteed - see PIPELINE_NOTES "0.1.23"'s
     // ordering caveat).
     var langPort = portsByTabId.get(msg.tabId);
     if (langPort) {

@@ -1,5 +1,5 @@
 // shared/devlog.js
-// Plain script (NOT an ES module) — loaded as an isolated-world content
+// Plain script (NOT an ES module) - loaded as an isolated-world content
 // script AFTER shared/wordlist.js and BEFORE content.js/captions.js (see
 // manifest.json content_scripts order). Defines globalThis.PMDevlog.
 //
@@ -9,7 +9,7 @@
 // fact is: "why did word X get through on video Y?". Everything needed to
 // answer it already existed in memory at the time (the analyzed windows,
 // the matches found in each, the padded mute intervals, which regions
-// played while still unanalyzed) — but all of it lived only in the
+// played while still unanalyzed) - but all of it lived only in the
 // per-tab console ring buffer in content.js, which dies with the tab and
 // is only recoverable if the user happened to click "Copy logs" BEFORE
 // navigating away. By the time anyone asks the question, the evidence is
@@ -23,7 +23,7 @@
 // mute intervals, unanalyzed-playback gaps, caption censor events,
 // errors), not the running commentary.
 //
-// Storage schema (chrome.storage.LOCAL — NOT synced; this is per-install
+// Storage schema (chrome.storage.LOCAL - NOT synced; this is per-install
 // diagnostic data, write-frequent, and can approach 256KB):
 //
 //   pm_devlog  { version: 1, videos: Entry[] }   default absent -> treated
@@ -34,18 +34,18 @@
 //              adding a duplicate.
 //
 //   Entry = {
-//     videoId:    string        — the YouTube `v` param (or pathname), the
+//     videoId:    string        - the YouTube `v` param (or pathname), the
 //                                 same id content.js keys its session on
-//     title:      string|null   — document.title at session start (refined
+//     title:      string|null   - document.title at session start (refined
 //                                 once the player has actually resolved,
 //                                 since at document_start it is often still
 //                                 the pre-navigation title)
-//     startedAt:  number        — Date.now() when the video's session began
-//     version:    string        — extension version from the manifest
+//     startedAt:  number        - Date.now() when the video's session began
+//     version:    string        - extension version from the manifest
 //     settings:   {enabled, strictness, wordlistSource, wordCount,
 //                  additionalWordCount, catchupMode, muteAudio,
 //                  censorCaptions, padding}
-//                                 — RESOLVED settings snapshot at video
+//                                 - RESOLVED settings snapshot at video
 //                                 start (see below). Deliberately NOT the
 //                                 full word list: a custom list can be
 //                                 thousands of entries and is the single
@@ -59,32 +59,32 @@
 //                                 list is tier + additions and a bare tier
 //                                 name no longer says where a match could
 //                                 have come from.
-//     windows:    Window[]      — one per analyzed audio window
-//     gaps:       Gap[]         — unanalyzed-playback periods
-//     captions:   CaptionEvent[]— caption censor events
-//     captionCount: number      — TOTAL caption censor events, including
+//     windows:    Window[]      - one per analyzed audio window
+//     gaps:       Gap[]         - unanalyzed-playback periods
+//     captions:   CaptionEvent[]- caption censor events
+//     captionCount: number      - TOTAL caption censor events, including
 //                                 ones dropped from `captions` by the cap
 //                                 below (so the list being short never
 //                                 reads as "captions weren't censoring")
-//     errors:     ErrorEvent[]  — TERROR/pipeline errors
-//     truncated:  boolean       — true once the size guard has dropped
+//     errors:     ErrorEvent[]  - TERROR/pipeline errors
+//     truncated:  boolean       - true once the size guard has dropped
 //                                 anything from this entry (see
 //                                 enforceSizeCap); a consumer must never
 //                                 read a truncated entry as complete
 //   }
 //
 //   Window = {
-//     t0, t1:              number  — media-time span of the analyzed window
-//     transcriptWordCount: number  — how many words the transcript held
-//     matches:             [{word, t}]        — matched word/phrase + the
+//     t0, t1:              number  - media-time span of the analyzed window
+//     transcriptWordCount: number  - how many words the transcript held
+//     matches:             [{word, t}]        - matched word/phrase + the
 //                                               media time it starts at
-//     muteIntervals:       [{start, end}]     — the PADDED intervals those
+//     muteIntervals:       [{start, end}]     - the PADDED intervals those
 //                                               matches produced
-//     text?:               string  — full transcript, ONLY when
+//     text?:               string  - full transcript, ONLY when
 //                                    pm_devlogVerbose is on (see below)
 //   }
 //
-//   Gap = {start, end, mode}  — a period during which playback advanced
+//   Gap = {start, end, mode}  - a period during which playback advanced
 //                               while the playhead was NOT covered by any
 //                               analyzed region: exactly the audio that
 //                               catch-up mode "play" lets through
@@ -94,23 +94,23 @@
 //                               play mode leak" and "what would it have
 //                               leaked if I turned it on".
 //
-//   CaptionEvent = {t, original, censored}  — one word actually rewritten
+//   CaptionEvent = {t, original, censored}  - one word actually rewritten
 //                               in the caption DOM, at media time `t`.
 //                               Per-WORD, not per-segment: storing whole
 //                               caption segments would put a transcript of
 //                               the video in storage, which is exactly what
 //                               the verbose flag exists to gate.
 //
-//   ErrorEvent = {t, wall, text} — `t` is media time (or null if unknown),
+//   ErrorEvent = {t, wall, text} - `t` is media time (or null if unknown),
 //                               `wall` is Date.now().
 //
 // Storage schema (chrome.storage.sync):
-//   pm_devlogVerbose  boolean  default false — when true, each Window also
+//   pm_devlogVerbose  boolean  default false - when true, each Window also
 //                     carries its full `text` transcript. Off by default
-//                     for two reasons, in this order: (1) privacy — a
+//                     for two reasons, in this order: (1) privacy - a
 //                     verbatim transcript of everything watched is a very
 //                     different thing to leave sitting in storage than a
-//                     list of matched profanity, and (2) size — transcripts
+//                     list of matched profanity, and (2) size - transcripts
 //                     dominate the 256KB budget and would evict the
 //                     structural evidence that actually answers the "why
 //                     did X get through" question. There is no popup UI for
@@ -123,7 +123,7 @@
 // it is not a user-facing setting and nothing else needs to see it.
 //
 // Like shared/wordlist.js, this file is written so the pure logic works
-// with zero dependency on chrome.* — see PMDevlogCore below — so it can be
+// with zero dependency on chrome.* - see PMDevlogCore below - so it can be
 // required directly under Node for unit tests (test/devlog_test.js). All
 // chrome.storage wiring is guarded so a context without chrome.* (Node, a
 // stripped page) never throws.
@@ -134,7 +134,7 @@
   // ---- tunables ----------------------------------------------------------
   // MAX_VIDEOS is the product requirement (last 10 videos). The rest are
   // per-entry sanity ceilings that keep a single very long video from
-  // filling the whole budget by itself before the size guard ever runs —
+  // filling the whole budget by itself before the size guard ever runs -
   // the size guard is the backstop, these are the routine bound. A 3-hour
   // video analyzed in ~10s windows produces ~1000 windows, so 600 keeps
   // the most recent ~1.7 hours of analysis for a worst-case long video and
@@ -146,7 +146,7 @@
   var MAX_CAPTIONS = 400;
   var MAX_ERRORS = 100;
   // ~256KB serialized. Measured against JSON.stringify's output length
-  // (UTF-16 code units, not bytes) — deliberately the cheap approximation
+  // (UTF-16 code units, not bytes) - deliberately the cheap approximation
   // rather than a TextEncoder round trip on every flush; for ASCII-ish
   // English content the two agree, and for content where they don't, the
   // code-unit count is an UNDER-estimate of bytes only for astral-plane
@@ -158,13 +158,13 @@
   // chrome.runtime.connect during content.js's own startup, which happens
   // BEFORE its first resetSession call) are held here and attached to the
   // first entry created. Without this, the single most diagnostic class of
-  // error — the pipeline failing to come up at all — would be the one class
+  // error - the pipeline failing to come up at all - would be the one class
   // that never makes it into the log.
   var MAX_PENDING_ERRORS = 20;
 
   // ---- flush batching ----------------------------------------------------
   // chrome.storage.local has a write budget and this module is fed from an
-  // rAF-cadence tick loop and a per-window transcription callback — writing
+  // rAF-cadence tick loop and a per-window transcription callback - writing
   // on every event would be both wasteful and, on a busy video, close to
   // rate-limiting. Everything mutates an in-memory entry; storage sees at
   // most one read-modify-write every FLUSH_MS, plus one final flush on
@@ -173,7 +173,7 @@
   var FLUSH_MS = 5000;
 
   // ======================================================================
-  // PURE CORE — no chrome.*, no DOM, no timers. Everything below this line
+  // PURE CORE - no chrome.*, no DOM, no timers. Everything below this line
   // that touches the browser goes through it. Exported for Node tests.
   // ======================================================================
 
@@ -221,7 +221,7 @@
   // Upsert `entry` into `log` as the NEWEST video and trim the ring to
   // MAX_VIDEOS. Re-watching a video already present updates that entry in
   // place (by videoId) and moves it to the newest slot instead of creating
-  // a duplicate — otherwise a page refresh, which starts a fresh session
+  // a duplicate - otherwise a page refresh, which starts a fresh session
   // for the same videoId, would burn two of the ten slots on one video.
   function mergeEntry(log, entry, maxVideos) {
     maxVideos = maxVideos || MAX_VIDEOS;
@@ -251,7 +251,7 @@
   // The video-dropping phase deliberately stops at one video rather than
   // emptying the ring: the newest entry is the video the user is watching
   // right now, i.e. the one they are almost certainly asking about, so it
-  // is never dropped whole — it gets trimmed from the inside instead.
+  // is never dropped whole - it gets trimmed from the inside instead.
   //
   // Within-entry trimming walks oldest-video-first and, inside each,
   // drops the oldest windows (the largest field by far, especially in
@@ -260,7 +260,7 @@
   // mistake a trimmed entry for a complete one.
   //
   // NOTE: entries are trimmed IN PLACE (normalizeLog copies the videos
-  // array, not the entries in it). That is deliberate — the newest entry
+  // array, not the entries in it). That is deliberate - the newest entry
   // is the live in-memory `current` object, and a window dropped to fit the
   // budget should stay dropped rather than being re-serialized on the next
   // flush and re-dropped forever.
@@ -350,7 +350,7 @@
   // its single-token path (a regex replace of one token with censorWord's
   // output) preserve the whitespace-separated token COUNT. The one path
   // that does not is substringMode (used only by packs configured for it),
-  // which can collapse or reshape tokens — that case is detected by the
+  // which can collapse or reshape tokens - that case is detected by the
   // length mismatch and reported as "unknown", so the caller records a
   // count without inventing a per-word attribution it cannot actually make.
   // Returns [] when nothing changed.
@@ -388,7 +388,7 @@
   };
 
   // ======================================================================
-  // BROWSER WIRING — in-memory current entry + batched storage flush.
+  // BROWSER WIRING - in-memory current entry + batched storage flush.
   // ======================================================================
 
   // Only the CURRENT video's entry is held in memory. The ring itself lives
@@ -403,7 +403,7 @@
   var flushTimer = null;
   var pendingErrors = [];
   // Media-time source, installed by content.js (which owns <video>
-  // resolution — there are routinely several <video> elements on a YouTube
+  // resolution - there are routinely several <video> elements on a YouTube
   // page and picking the wrong one is a solved problem over there, not one
   // worth solving twice). Until it is set, timestamps record as null rather
   // than as a wrong number.
@@ -508,7 +508,7 @@
 
   // Begin a new video's entry. Flushes the outgoing entry first, so the
   // video the user just left is durable before its in-memory copy is
-  // dropped — a video change is exactly when the previous video's evidence
+  // dropped - a video change is exactly when the previous video's evidence
   // becomes the thing worth keeping.
   function startVideo(videoId, meta) {
     meta = meta || {};
@@ -562,13 +562,13 @@
 
   // Record a caption censor pass. Takes the BEFORE and AFTER text of a
   // single caption node and stores only the words that actually changed
-  // (see diffCensored) — never the surrounding caption text, which would
+  // (see diffCensored) - never the surrounding caption text, which would
   // amount to persisting a transcript of the video.
   function logCaptionCensor(original, censored) {
     if (!current) return;
     var pairs = diffCensored(original, censored);
     if (pairs === null) {
-      // Token counts didn't align (substringMode pack) — count it, but
+      // Token counts didn't align (substringMode pack) - count it, but
       // don't guess at which word became which.
       current.captionCount++;
       markDirty();

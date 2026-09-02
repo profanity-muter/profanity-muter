@@ -8,7 +8,7 @@
 // The eligibility matrix is the reason this file exists. Every gate on
 // the review prompt is a Chrome Web Store policy obligation or a product
 // promise ("we will not ask you until you have a basis for an opinion"),
-// and none of them are observable from the UI until the day they fire —
+// and none of them are observable from the UI until the day they fire -
 // weeks after install, on someone else's machine. Pure predicate plus an
 // injected clock means the whole matrix is checkable in milliseconds.
 
@@ -105,7 +105,7 @@ test("shouldAutoOpenOnboarding: only on a genuine first install", () => {
   assert.strictEqual(M.shouldAutoOpenOnboarding("install", false), true);
   // Already opened once -> never again, even on a reinstall event.
   assert.strictEqual(M.shouldAutoOpenOnboarding("install", true), false);
-  // An update must never seize a tab — the user didn't ask for it.
+  // An update must never seize a tab - the user didn't ask for it.
   assert.strictEqual(M.shouldAutoOpenOnboarding("update", undefined), false);
   assert.strictEqual(M.shouldAutoOpenOnboarding("chrome_update", undefined), false);
   assert.strictEqual(M.shouldAutoOpenOnboarding("shared_module_update", undefined), false);
@@ -117,7 +117,7 @@ test("shouldAutoOpenOnboarding: only on a genuine first install", () => {
 const MATRIX = [
   ["all gates met", {}, true, "eligible"],
 
-  // Already prompted — the "at most once, ever" rule. The record's mere
+  // Already prompted - the "at most once, ever" rule. The record's mere
   // existence disqualifies, whichever button (if any) created it.
   ["already prompted, not dismissed", { reviewPrompt: { shownAt: NOW - DAY, dismissed: false } }, false, "already-prompted"],
   ["already prompted and dismissed", { reviewPrompt: { shownAt: NOW - DAY, dismissed: true } }, false, "already-prompted"],
@@ -195,7 +195,7 @@ test("makeReviewPromptRecord records when and how it ended", () => {
 
 test("a record made by simply SHOWING the card already disqualifies forever", () => {
   // The popup writes pm_reviewPrompt the moment the card renders, not on
-  // click — otherwise closing the popup would re-ask on every open.
+  // click - otherwise closing the popup would re-ask on every open.
   const shown = M.makeReviewPromptRecord(false, NOW);
   const v = M.reviewPromptEligibility(eligibleInput({ reviewPrompt: shown }));
   assert.strictEqual(v.eligible, false);
@@ -237,7 +237,7 @@ test("the support address is a role address, never a personal mailbox", () => {
 test("the share blurb is the agreed copy, and carries the link", () => {
   assert.strictEqual(
     M.SHARE_TEXT,
-    "I use Profanity Muter to auto-mute swearing in YouTube videos — " +
+    "I use Profanity Muter to auto-mute swearing in YouTube videos - " +
       "free, runs entirely on your device: " +
       M.STORE_URL
   );

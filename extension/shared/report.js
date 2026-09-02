@@ -12,8 +12,8 @@
 // video, no extension version, and no clue what to do with it next.
 //
 // This module assembles the whole thing into one object and one mail
-// draft. It is pure — no chrome.*, no DOM, no clock (the caller passes
-// `now`) — so every branch that matters (consent honoured, truncation,
+// draft. It is pure - no chrome.*, no DOM, no clock (the caller passes
+// `now`) - so every branch that matters (consent honoured, truncation,
 // mailto shape) is unit-testable without a browser.
 //
 // WHY CLIPBOARD + PASTE, AND NOT AN ATTACHMENT
@@ -25,7 +25,7 @@
 // on the clipboard and the mail body carries only the user's own words
 // plus an instruction to paste. That is a genuinely worse experience than
 // an attachment and there is no way around it in an extension without
-// running a server to receive uploads — which would mean sending users'
+// running a server to receive uploads - which would mean sending users'
 // data somewhere, which this extension does not do. The UI says all of
 // this in plain words rather than pretending the paste step is normal.
 //
@@ -34,9 +34,9 @@
 // The debug log is included ONLY on an explicit, visible checkbox, and
 // the report records that decision either way (`debugLogIncluded`), so
 // whoever reads it can tell "no log" from "log withheld". The log's own
-// contents are already privacy-shaped by shared/devlog.js — matched words
+// contents are already privacy-shaped by shared/devlog.js - matched words
 // and timings, settings, never full transcripts unless the user
-// deliberately turned on pm_devlogVerbose — and the UI says exactly that
+// deliberately turned on pm_devlogVerbose - and the UI says exactly that
 // next to the checkbox rather than asking for blind consent.
 
 (function (root) {
@@ -60,7 +60,7 @@
   var TRUNCATE_TO_VIDEOS = 3;
 
   var PASTE_INSTRUCTION =
-    "The full diagnostic report has been copied to your clipboard — " +
+    "The full diagnostic report has been copied to your clipboard - " +
     "please paste it below this line before sending.";
 
   function serializedSize(value) {
@@ -73,7 +73,7 @@
 
   // Trim a devlog to fit. Returns {devlog, truncated, videosIncluded,
   // originalVideos, originalBytes}. Never throws, and never returns
-  // something unserializable — a log we can't measure is dropped
+  // something unserializable - a log we can't measure is dropped
   // entirely rather than silently breaking the whole report.
   function truncateDevlog(devlog, maxBytes) {
     maxBytes = typeof maxBytes === "number" ? maxBytes : MAX_LOG_BYTES;
@@ -111,7 +111,7 @@
   }
 
   // The human-readable note about what happened to the log. Always
-  // present, and always says something — "why is there no log in here"
+  // present, and always says something - "why is there no log in here"
   // is otherwise the first question a reader has to ask the user, which
   // costs a whole round trip with someone who is already frustrated.
   function debugLogNote(includeLog, trim) {
@@ -172,7 +172,7 @@
   }
 
   // The mail draft. Deliberately carries ONLY the user's own words, the
-  // video, and the paste instruction — see the header for why the log
+  // video, and the paste instruction - see the header for why the log
   // cannot travel in here.
   function buildMailto(input) {
     input = input || {};
@@ -197,8 +197,8 @@
     // The address is NOT percent-encoded: `mailto:support@example.com` is
     // the canonical form every client understands, whereas the escaped
     // `%40` version is technically legal but has a history of confusing
-    // desktop mail handlers. Only the subject and body — which carry
-    // arbitrary user text — get encoded.
+    // desktop mail handlers. Only the subject and body - which carry
+    // arbitrary user text - get encoded.
     return (
       "mailto:" +
       email +
@@ -212,7 +212,7 @@
   // Best-effort watch URL for the newest devlog entry, used to prefill
   // the "which video" field so the user doesn't have to go and find it.
   // videoId is usually a YouTube `v` param, but content.js falls back to
-  // a pathname for non-watch pages — anything that isn't a plain id is
+  // a pathname for non-watch pages - anything that isn't a plain id is
   // left alone rather than glued into a URL that would be wrong.
   function latestVideoUrl(devlog) {
     if (!devlog || !Array.isArray(devlog.videos) || !devlog.videos.length) return "";

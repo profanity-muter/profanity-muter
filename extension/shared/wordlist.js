@@ -1,10 +1,10 @@
 // shared/wordlist.js
-// Plain script (NOT an ES module) — loaded as the first isolated-world
+// Plain script (NOT an ES module) - loaded as the first isolated-world
 // content script, before captions.js. Defines globalThis.PMWordlist.
 //
 // Storage schema (chrome.storage.sync):
-//   pm_enabled        boolean   default true  — master on/off
-//   pm_additionalWords string[] default unset -> [] — the user's OWN
+//   pm_enabled        boolean   default true  - master on/off
+//   pm_additionalWords string[] default unset -> [] - the user's OWN
 //                                words, ADDED ON TOP of the built-in tier
 //                                selected by pm_strictness. This is the
 //                                only word-list key the popup writes as
@@ -26,20 +26,20 @@
 //                                a rollback finds it intact. Once
 //                                pm_additionalWords has been saved, this
 //                                key is never an active source again.
-//   pm_muteAudio      boolean   default true  — audio-pipeline toggle
-//   pm_censorCaptions boolean   default true  — caption-censoring toggle
-//   pm_catchupMode    "mute" | "pause" | "play"  default "mute" — the
+//   pm_muteAudio      boolean   default true  - audio-pipeline toggle
+//   pm_censorCaptions boolean   default true  - caption-censoring toggle
+//   pm_catchupMode    "mute" | "pause" | "play"  default "mute" - the
 //                                ONE setting for what happens in parts
 //                                of the video not yet analyzed:
-//                                  "mute"  — mute audio until caught up
-//                                  "pause" — pause playback (full
+//                                  "mute"  - mute audio until caught up
+//                                  "pause" - pause playback (full
 //                                            protection: nothing
 //                                            unanalyzed ever plays)
-//                                  "play"  — let it play unanalyzed
+//                                  "play"  - let it play unanalyzed
 //                                            (old "safe mode off")
 //                                Any other/invalid stored value
 //                                defaults to "mute". The popup no
-//                                longer writes pm_safeMode at all —
+//                                longer writes pm_safeMode at all -
 //                                this single setting replaced it.
 //   pm_safeMode       boolean   DEPRECATED, read-only (migration path).
 //                                No longer written by the popup. Only
@@ -50,11 +50,11 @@
 //                                the user's old choice) instead of the
 //                                "mute" default. See
 //                                resolveSettingsFromStorage.
-//   pm_debugOverlay   boolean   default false — shows an on-player
+//   pm_debugOverlay   boolean   default false - shows an on-player
 //                                diagnostic overlay (consumed by the
 //                                audio pipeline's content.js, not by
 //                                this file) with live analysis status.
-//   pm_showStatus     boolean   default true — shows an on-player
+//   pm_showStatus     boolean   default true - shows an on-player
 //                                status pill (consumed by the audio
 //                                pipeline's content.js, not by this
 //                                file). Distinct from pm_debugOverlay:
@@ -71,7 +71,7 @@
 //                                                mishears/religious
 //                                                exclamations)
 //                                The active list is ALWAYS this tier PLUS
-//                                pm_additionalWords, deduped — the user's
+//                                pm_additionalWords, deduped - the user's
 //                                words are additive, never a replacement
 //                                (0.1.29 redesign; before that, a third
 //                                mode "custom" replaced the built-ins with
@@ -83,30 +83,30 @@
 //                                is still understood as a legacy stored
 //                                value and migrated (see the full
 //                                migration table in
-//                                resolveSettingsFromStorage — including
+//                                resolveSettingsFromStorage - including
 //                                why legacy "custom" with no saved list
 //                                migrates to "strict", not "none").
-//   pm_onboarded      boolean  default false — the onboarding tab has been
+//   pm_onboarded      boolean  default false - the onboarding tab has been
 //                                AUTO-OPENED once (set by background.js on
 //                                a genuine install). NOT the same as
-//                                "finished onboarding" — see
+//                                "finished onboarding" - see
 //                                pm_ackNotPerfect.
-//   pm_ackNotPerfect  {version, timestamp} | absent — the user explicitly
+//   pm_ackNotPerfect  {version, timestamp} | absent - the user explicitly
 //                                acknowledged that this extension will not
 //                                catch every word. Gates the popup's
 //                                "Finish setup" banner (shown until it
 //                                exists) and its share row (shown only
 //                                once it does).
-//   pm_installedAt    number (epoch ms) | absent — install time, stamped
+//   pm_installedAt    number (epoch ms) | absent - install time, stamped
 //                                once by background.js. Gates the review
 //                                prompt's 7-day rule.
-//   pm_reviewPrompt   {shownAt, dismissed} | absent — the review prompt
+//   pm_reviewPrompt   {shownAt, dismissed} | absent - the review prompt
 //                                has been shown. Its existence alone
 //                                means it is never shown again.
 //                                pm_onboarded/pm_ackNotPerfect/
 //                                pm_installedAt/pm_reviewPrompt are all
 //                                owned by shared/moments.js plus the popup
-//                                and onboarding pages — deliberately NOT
+//                                and onboarding pages - deliberately NOT
 //                                in this file's STORAGE_KEYS and NOT part
 //                                of the PMWordlist.settings contract:
 //                                nothing in the matching path or the
@@ -118,23 +118,23 @@
 //                                mail client. Nothing about it is
 //                                persisted, and nothing is transmitted by
 //                                the extension itself.
-//   pm_lock           {salt: string, hash: string} | absent — the
+//   pm_lock           {salt: string, hash: string} | absent - the
 //                                optional PARENTAL LOCK (0.1.29). When
 //                                present, the popup opens with every
 //                                setting disabled until the password is
 //                                entered; unlock lasts for that popup
 //                                session only. Owned entirely by
 //                                shared/lock.js and popup/popup.js, which
-//                                read/write it directly — deliberately
+//                                read/write it directly - deliberately
 //                                NOT in this file's STORAGE_KEYS and NOT
 //                                part of the PMWordlist.settings contract,
 //                                since nothing in the matching path or
 //                                the content scripts consults it. hash is
 //                                SHA-256(salt + password), hex; the
 //                                plaintext password is never stored. It
-//                                is a deterrent, not security — see
+//                                is a deterrent, not security - see
 //                                shared/lock.js's header.
-//   pm_devlogVerbose  boolean  default false — when true, the persistent
+//   pm_devlogVerbose  boolean  default false - when true, the persistent
 //                                dev log (shared/devlog.js, key pm_devlog
 //                                in chrome.storage.LOCAL) also stores each
 //                                analyzed window's FULL transcript text,
@@ -144,14 +144,14 @@
 //                                size (transcripts dominate the log's
 //                                256KB budget). Owned entirely by
 //                                shared/devlog.js, which reads it
-//                                directly — it is deliberately NOT in
+//                                directly - it is deliberately NOT in
 //                                this file's STORAGE_KEYS and NOT part of
 //                                the PMWordlist.settings contract: it is
 //                                a debugging escape hatch with no popup
 //                                UI, set from the extension console with
 //                                chrome.storage.sync.set({pm_devlogVerbose:
 //                                true}), not a user-facing setting.
-//   pm_padding        "tight" | "normal" | "wide"  default "normal" —
+//   pm_padding        "tight" | "normal" | "wide"  default "normal" -
 //                                how much surrounding audio the mute
 //                                interval pads around a matched word.
 //                                Consumed entirely by the audio
@@ -159,39 +159,39 @@
 //                                math; this file only stores/validates/
 //                                exposes the setting.
 //
-// chrome.storage.LOCAL (separate area, not synced — see popup/popup.js):
+// chrome.storage.LOCAL (separate area, not synced - see popup/popup.js):
 //   pm_stats   {totalMuted: number, videosProtected: number}  written by
 //              the audio pipeline; may be absent (popup shows zeros).
 //              Not read or written by this file.
 //   pm_activeLanguage {lang, quality, available}  written by this file's
 //              setLanguage(); read by the popup to show the active
 //              non-English pack.
-//   pm_devlog  {version: 1, videos: Entry[]}  the persistent dev log —
+//   pm_devlog  {version: 1, videos: Entry[]}  the persistent dev log -
 //              a ring buffer of the last 10 videos watched (analyzed
 //              windows + their matched words, padded mute intervals,
 //              unanalyzed-playback gaps, caption censor events, errors),
 //              capped at ~256KB serialized. Written by shared/devlog.js
 //              from content.js/captions.js; read by the popup's "Copy
-//              debug log" button. Not read or written by this file — see
+//              debug log" button. Not read or written by this file - see
 //              shared/devlog.js's header for the full Entry schema and
 //              the reasoning behind what it does and doesn't store (it
 //              never stores the word list, and only stores transcripts
 //              when pm_devlogVerbose is on).
 //
 // This file is written so the pure matching logic works with zero
-// dependency on chrome.* — see PMWordlistCore below — so it can be
+// dependency on chrome.* - see PMWordlistCore below - so it can be
 // required/loaded directly under Node for unit tests. The chrome.storage
 // wiring is all guarded so a page/context without chrome.* never throws.
 
 (function (root) {
   "use strict";
 
-  // Curated default list. Real, editable content (not a placeholder) —
+  // Curated default list. Real, editable content (not a placeholder) -
   // the popup loads this verbatim into its textarea the first time
   // pm_wordlist has never been saved. Alphabetized. Deliberately
   // excludes a handful of common-word-derivative entries (e.g.
   // "tosser"/"beaner"/"cracker") whose suffix-stemmed roots collide
-  // with ordinary English words ("toss"/"bean"/"crack[er]") — see
+  // with ordinary English words ("toss"/"bean"/"crack[er]") - see
   // CENSOR_NOTES.md "Default list & known collisions" for the full
   // rationale and the accepted collisions we kept anyway (e.g. "ass",
   // "hell", "chink", "dyke", "tranny", "retard" also have innocuous
@@ -221,7 +221,7 @@
 
   // EXTENDED_WORDLIST is the subset of DEFAULT_WORDLIST that's
   // euphemisms/ASR-mishears/religious exclamations rather than clear
-  // profanity/slurs/crude terms — the two groups pm_strictness ("standard"
+  // profanity/slurs/crude terms - the two groups pm_strictness ("standard"
   // vs "strict") switches between. CORE_WORDLIST is everything else,
   // computed below by filtering EXTENDED_WORDLIST out of DEFAULT_WORDLIST
   // (so there's one source of truth for the full list's contents; this
@@ -243,7 +243,7 @@
   //   "strict"   -> DEFAULT_WORDLIST (CORE + EXTENDED, the full defaults)
   //
   // The user's own words are no longer a MODE that replaces the built-ins
-  // — they are ADDITIVE, stored separately in pm_additionalWords, and the
+  // - they are ADDITIVE, stored separately in pm_additionalWords, and the
   // active list is always `tier(level) + additionalWords` (deduped). This
   // replaced the old third mode, "custom", which meant "use pm_wordlist
   // INSTEAD of the built-ins".
@@ -252,7 +252,7 @@
   //   1. The built-in lists' CONTENTS must never be shown in the UI. Under
   //      the old model the only way to add one word was to switch to
   //      "custom", which seeded the textarea with the entire built-in list
-  //      for the user to edit — i.e. the feature REQUIRED displaying a
+  //      for the user to edit - i.e. the feature REQUIRED displaying a
   //      screenful of slurs to anyone who wanted to add "poop". With an
   //      additive list, the popup shows the user's own words and nothing
   //      else, ever.
@@ -261,7 +261,7 @@
   //      list. Additive words keep tracking the shipped tier.
   //
   // "custom" is no longer a valid stored level, but is still UNDERSTOOD by
-  // resolveSettingsFromStorage as a legacy value to migrate off — see the
+  // resolveSettingsFromStorage as a legacy value to migrate off - see the
   // full migration table there.
   var STRICTNESS_MODES = ["none", "standard", "strict"];
   var LEGACY_STRICTNESS_CUSTOM = "custom";
@@ -279,7 +279,7 @@
   //
   // Dedupe is case-insensitive and whitespace-normalized because that is
   // how matching itself treats entries (normalizeToken/buildStemSet
-  // lowercase everything) — without it, a user adding "Damn" while on the
+  // lowercase everything) - without it, a user adding "Damn" while on the
   // strict tier would produce two entries that stem identically, which is
   // harmless for matching but makes every count shown in the UI wrong by
   // one. Tier entries win position (they come first); the user's list
@@ -337,19 +337,19 @@
   // extended }, matchConfig: { stemming: "en-suffix"|"none",
   // foldDiacritics: bool, substringMode: bool, wildcards: bool } }.
   //
-  // English is pack "en" — inlined here (CORE_WORDLIST/EXTENDED_WORDLIST
+  // English is pack "en" - inlined here (CORE_WORDLIST/EXTENDED_WORDLIST
   // above), matching exactly its pre-pack-architecture behavior via
   // EN_MATCH_CONFIG. Every OTHER language pack is a plain JSON file under
   // shared/packs/<lang>.json, loaded on demand via fetch(chrome.runtime.
   // getURL(...)) the first time PMWordlist.setLanguage(lang) is called
-  // for it (see "Lazy pack loading" below) — packs never bloat every
+  // for it (see "Lazy pack loading" below) - packs never bloat every
   // page load, only the one that actually needs a non-English pack.
   //
   // pm_strictness (standard/strict/custom) and the user's custom
   // pm_wordlist are an ENGLISH-ONLY concept: they only apply while the
   // active language is "en". Any other active pack always uses its own
   // full word list (core + extended combined, same idea as English's
-  // "strict") — there is no per-pack strictness split and the custom
+  // "strict") - there is no per-pack strictness split and the custom
   // list is not consulted at all while a non-English pack is active.
   var EN_MATCH_CONFIG = {
     stemming: "en-suffix",
@@ -394,7 +394,7 @@
 
   // Minimum length a suffix-stripped stem must have to be kept. Without
   // this, short entries like "ass" would strip their trailing "s" down
-  // to "as" — a common, entirely innocent English word — and flag it.
+  // to "as" - a common, entirely innocent English word - and flag it.
   var MIN_STEM_LENGTH = 3;
 
   // Explicit safe-word override, checked before any stem-set lookup.
@@ -406,7 +406,7 @@
   // happen to coincide with an unrelated profane list entry. The
   // concrete case that surfaced this: adding the euphemism "dang"
   // (4 letters, itself intentionally profane as a whole word) means
-  // ordinary "danger" — an extremely common, entirely innocent word —
+  // ordinary "danger" - an extremely common, entirely innocent word -
   // now also strips via the "-er" suffix rule to "dang" and would
   // otherwise be flagged. This is a structural risk of any
   // suffix-stripping stemmer as the word list grows: the fix isn't to
@@ -422,13 +422,13 @@
   //   - "blood"/"blooded" strip via a mild-profanity entry's own "-y"
   //     suffix stripping (that entry -> its root -> "blood").
   //   - "buggy" strips via another entry's "-er"-stripped root -> "-y".
-  //   - "cumin" (the spice — a real cooking-content risk) strips via
+  //   - "cumin" (the spice - a real cooking-content risk) strips via
   //     the dropped-g heuristic to a 3-letter slang entry.
   //   - "spiced"/"spicer"/"spicing"/"spicy" (all common cooking-content
   //     words) strip via "-ed"/"-er"/"-ing"/"-y" to a slur entry's
   //     4-letter root.
   // Every one of these is an extremely common, zero-ambiguity English
-  // word with no real profane double-meaning — unlike some other
+  // word with no real profane double-meaning - unlike some other
   // scan hits (documented separately in CENSOR_NOTES.md as accepted,
   // over-censoring-is-fine collisions) which retain a plausible link
   // to their root entry.
@@ -447,7 +447,7 @@
 
   // Strip leading/trailing punctuation/whitespace, lowercase. Asterisks
   // are treated as meaningful "core" characters (wildcard markers), not
-  // punctuation, so they survive normalization — see isProfaneCore.
+  // punctuation, so they survive normalization - see isProfaneCore.
   // A trailing apostrophe (e.g. "fuckin'") is also stripped, since it's
   // almost always a dropped-g marker or a stray quote rather than part
   // of the word itself.
@@ -457,7 +457,7 @@
   // non-English packs (accented Spanish "coño", etc.) without changing
   // English behavior at all (\p{L} already covers a-z; ASCII digits are
   // \p{N}). foldDiacritics (per the active pack's matchConfig, default
-  // false — preserves exact pre-pack-architecture behavior when omitted)
+  // false - preserves exact pre-pack-architecture behavior when omitted)
   // additionally strips combining diacritical marks via NFD
   // decomposition, so e.g. "coño"/"dios" match consistently regardless
   // of accents in the source text vs. the word-list entry.
@@ -475,20 +475,20 @@
 
   // Return the set of "stems" for a normalized word: the word itself,
   // the word with any of the common suffixes stripped off (only when
-  // the result is long enough to still be meaningful — see
-  // MIN_STEM_LENGTH), and — for dropped-g forms like "fuckin"/"goin" —
+  // the result is long enough to still be meaningful - see
+  // MIN_STEM_LENGTH), and - for dropped-g forms like "fuckin"/"goin" -
   // the "g"-restored form and its own ing-stripped stem. This is
   // intentionally simple (no linguistic correctness), just enough to
   // let "damns"/"damned"/"damning" match "damn", and "fuckin"/"fuckin'"
   // match "fucking"/"fuck", in both directions (applied to both list
   // entries and input tokens).
-  // matchConfig controls whether suffix-stemming applies at all —
+  // matchConfig controls whether suffix-stemming applies at all -
   // defaults to EN_MATCH_CONFIG ("en-suffix") when omitted, so every
   // pre-existing call site (which always passed just `word`) keeps
   // producing byte-for-byte the same stems as before the pack
   // architecture existed. Community-tier packs (matchConfig.stemming ===
   // "none") have no per-language stemmer built, so a "stem" is just the
-  // word itself — the pack's own data file is expected to list common
+  // word itself - the pack's own data file is expected to list common
   // inflected forms explicitly instead (this is what the curated
   // Spanish pack does).
   function stemsOf(word, matchConfig) {
@@ -527,7 +527,7 @@
   //     followed by nothing but asterisks (e.g. "f***", "a**", "s***")
   //     matches ANY candidate stem starting with that same letter whose
   //     length is within +/-1 of the token's length. This is looser on
-  //     purpose — a bare "f***" gives no positional information beyond
+  //     purpose - a bare "f***" gives no positional information beyond
   //     "starts with f, is about this long", so we err toward matching
   //     (over-censoring) rather than requiring an exact-length aligned
   //     match. Rule 1 already covers the same-length case; rule 2 only
@@ -571,8 +571,8 @@
   }
 
   // Build a Set of every stem of every list entry (single-token entries
-  // only — multi-word phrases are handled separately by censorText).
-  // matchConfig defaults to EN_MATCH_CONFIG when omitted — see stemsOf.
+  // only - multi-word phrases are handled separately by censorText).
+  // matchConfig defaults to EN_MATCH_CONFIG when omitted - see stemsOf.
   function buildStemSet(wordlist, matchConfig) {
     matchConfig = matchConfig || EN_MATCH_CONFIG;
     var set = new Set();
@@ -587,7 +587,7 @@
   }
 
   // Substring matching, for languages with no reliable whitespace word
-  // boundaries (matchConfig.substringMode — Chinese/Japanese/Thai/Korean
+  // boundaries (matchConfig.substringMode - Chinese/Japanese/Thai/Korean
   // community packs). `stemSet` here holds whole (possibly multi-
   // character) list entries verbatim (no stemming), and `norm` is the
   // already-normalized token/text being checked; a match is any entry
@@ -605,7 +605,7 @@
   }
 
   // Substring-mode packs (no reliable word boundaries) don't use the
-  // phrase machinery at all — a multi-character list entry already
+  // phrase machinery at all - a multi-character list entry already
   // matches as a substring via isProfaneSubstring, so "phrases" would be
   // redundant with the plain stem set for those packs.
   function buildPhraseList(wordlist, matchConfig) {
@@ -632,7 +632,7 @@
 
   // Index phrases by their first (normalized) word, so findMatchesCore
   // only ever compares against phrases that could plausibly start at
-  // the current token — O(tokens) overall rather than O(tokens *
+  // the current token - O(tokens) overall rather than O(tokens *
   // phrases). Each bucket is sorted longest-first (by word count) so
   // the longest phrase starting at a position wins.
   function buildPhraseIndex(wordlist, matchConfig) {
@@ -654,7 +654,7 @@
   // [{index, length}]
   //
   // `tokens` is an array of already-transcribed words in order (as the
-  // audio pipeline produces them). Returns one entry per match — either
+  // audio pipeline produces them). Returns one entry per match - either
   // a multi-word phrase (length = word count) or a single profane word
   // (length = 1, via the same isProfane/wildcard logic as isProfane()).
   // Linear time: each token does one Map lookup plus, at most, a short
@@ -707,7 +707,7 @@
   // Is `word` (a single token, possibly with punctuation) profane
   // against the given stem set? Tokens containing '*' are routed to
   // the wildcard matcher (see rules documented above) instead of exact
-  // stem lookup — only when matchConfig.wildcards is true. matchConfig
+  // stem lookup - only when matchConfig.wildcards is true. matchConfig
   // defaults to EN_MATCH_CONFIG when omitted, so every pre-existing
   // 2-arg call site keeps its exact prior behavior.
   function isProfaneCore(word, stemSet, matchConfig) {
@@ -715,7 +715,7 @@
     var norm = normalizeToken(word, matchConfig.foldDiacritics);
     if (!norm) return false;
     // SAFE_WORDS is an English-specific set of verified stemming-collision
-    // fixes (see its own comment above) — only meaningful for the "en"
+    // fixes (see its own comment above) - only meaningful for the "en"
     // pack's suffix-stemming matcher, not other-language packs.
     if (matchConfig.stemming === "en-suffix" && SAFE_WORDS.has(norm)) {
       return false;
@@ -736,7 +736,7 @@
   // Unicode-aware "core word character" regex pieces, used by both
   // censorWord and censorTextCore's tokenizer. \p{L}/\p{N} (any
   // letter/digit in any language) replaces the old plain a-z0-9 class so
-  // non-English packs' accented/non-Latin text censors correctly — for
+  // non-English packs' accented/non-Latin text censors correctly - for
   // English this is exactly equivalent (\p{L} already covers a-z, case
   // included, so the old /i flag is no longer even needed here).
   var CORE_CHAR_CLASS = "\\p{L}\\p{N}'*";
@@ -766,10 +766,10 @@
     return lead + coreChars[0] + "*".repeat(Math.max(coreChars.length - 1, 1)) + trail;
   }
 
-  // censorTextCore(text, stemSet, phrases, matchConfig) — matchConfig
+  // censorTextCore(text, stemSet, phrases, matchConfig) - matchConfig
   // defaults to EN_MATCH_CONFIG when omitted (pre-pack-architecture call
   // sites keep exact prior behavior). Substring-mode packs (no reliable
-  // word boundaries — CJK/Thai community packs) skip the token-regex
+  // word boundaries - CJK/Thai community packs) skip the token-regex
   // path entirely and instead scan the raw text for each list entry as
   // a literal substring, longest-first so overlapping entries censor as
   // their most specific match.
@@ -861,7 +861,7 @@
   // form (a list of key names), never the "defaults object" form with
   // an `undefined`-valued key. Chrome's defaults-object form works by
   // merging the *own enumerable keys* of the object you pass in with
-  // whatever storage returns — but a key whose value is `undefined`
+  // whatever storage returns - but a key whose value is `undefined`
   // is, for all practical purposes, treated as absent from that
   // request (this was the exact bug reported: pm_wordlist: undefined
   // in the defaults object meant `items.pm_wordlist` came back
@@ -871,7 +871,7 @@
   // that trap entirely and is unit-testable without chrome.* at all.
   //
   // A saved EMPTY array for pm_wordlist ([]) is honored as "no words"
-  // — only a truly absent/undefined pm_wordlist falls back to
+  // - only a truly absent/undefined pm_wordlist falls back to
   // DEFAULT_WORDLIST (see rebuildFrom's matching comment).
   //
   // pm_catchupMode + legacy pm_safeMode migration:
@@ -880,7 +880,7 @@
   //   2. Otherwise, if pm_catchupMode has never been saved but the
   //      legacy pm_safeMode was explicitly saved as `false` (the user
   //      had turned safe mode off under the old two-setting schema),
-  //      migrate that choice forward as catchupMode "play" — old
+  //      migrate that choice forward as catchupMode "play" - old
   //      "safe mode off" meant unanalyzed audio plays, which is
   //      exactly what "play" means now. This runs ONCE, implicitly,
   //      every time settings are resolved until the user picks a
@@ -888,25 +888,25 @@
   //      permanently since pm_catchupMode becomes saved).
   //   3. Otherwise (nothing saved at all, or pm_catchupMode is
   //      corrupted/mistyped/wrong-type) default to "mute".
-  // pm_safeMode itself is no longer written by the popup — it is only
+  // pm_safeMode itself is no longer written by the popup - it is only
   // ever read here, for this migration.
   //
   // `safeMode` is kept in the returned shape too, but it is now a
   // DERIVED boolean (`catchupMode !== "play"`), not read independently
-  // from storage — this preserves the PMWordlist.settings.safeMode
+  // from storage - this preserves the PMWordlist.settings.safeMode
   // contract that content.js (the audio-pipeline agent's file) already
   // consumes, unchanged, even though there's no longer a separate
   // pm_safeMode toggle in the popup.
   //
   // pm_debugOverlay defaults to false (unlike the other booleans, which
-  // default to true) — it's an opt-in diagnostic aid, off unless the
+  // default to true) - it's an opt-in diagnostic aid, off unless the
   // user explicitly turns it on.
   //
   // pm_showStatus defaults to true (like most other booleans, unlike
-  // pm_debugOverlay) — it's a lightweight on-player status pill shown
+  // pm_debugOverlay) - it's a lightweight on-player status pill shown
   // by default, not an opt-in diagnostic.
   //
-  // pm_strictness (LEVEL) + pm_additionalWords (ADDITIVE) — 0.1.29
+  // pm_strictness (LEVEL) + pm_additionalWords (ADDITIVE) - 0.1.29
   // ---------------------------------------------------------------
   // The active English list is always:
   //
@@ -931,7 +931,7 @@
   //
   //   2. pm_additionalWords has NEVER been saved -> migrate, from
   //      whatever the pre-0.1.29 schema left behind. `hasSavedWordlist`
-  //      means Array.isArray(pm_wordlist) — true even for [], which was
+  //      means Array.isArray(pm_wordlist) - true even for [], which was
   //      an intentionally-emptied list under the old rules.
   //
   //      a. pm_strictness === "custom" (legacy) AND a saved pm_wordlist
@@ -947,7 +947,7 @@
   //         DEFAULT_WORDLIST rather than to an empty list, and level
   //         "strict" with no additions IS DEFAULT_WORDLIST. Mapping it
   //         to "none" instead would silently disable all filtering for
-  //         these users — the one migration outcome that must never
+  //         these users - the one migration outcome that must never
   //         happen.
   //
   //      c. pm_strictness === "none"/"standard"/"strict" (valid new
@@ -960,7 +960,7 @@
   //         saved pm_wordlist exists -> level "none", additionalWords =
   //         pm_wordlist. This is the pre-strictness-feature schema (a
   //         saved list and nothing else), which used to migrate to
-  //         "custom" and therefore meant "that list, no built-ins" —
+  //         "custom" and therefore meant "that list, no built-ins" -
   //         "none" + that list is the identical outcome.
   //
   //      e. Nothing saved at all -> level "strict", additionalWords =
@@ -969,20 +969,20 @@
   // pm_wordlist is deliberately left UNTOUCHED in storage by all of the
   // above (nothing here writes, and the popup no longer writes it
   // either). It is no longer an active source once pm_additionalWords
-  // has been saved — it is kept purely so a rollback to 0.1.28 finds the
+  // has been saved - it is kept purely so a rollback to 0.1.28 finds the
   // user's old list exactly where it left it.
   //
   // pm_padding is a simple, independent three-way setting with no
-  // interaction with anything else — validated and defaulted exactly
+  // interaction with anything else - validated and defaulted exactly
   // like pm_catchupMode, just with no migration path (there was no
   // prior padding concept to migrate from).
   //
-  // pm_multilingual (2026-08-30) is a simple boolean, default true —
+  // pm_multilingual (2026-08-30) is a simple boolean, default true -
   // "Filter other languages (auto-detect)". This file only stores/
   // exposes it (PMWordlist.settings.multilingual); the audio pipeline's
   // Whisper-based language detection reads it to decide whether to call
   // PMWordlist.setLanguage(lang) at all when it detects non-English
-  // speech. It has no effect on which word list is active by itself —
+  // speech. It has no effect on which word list is active by itself -
   // setLanguage() is what actually switches packs.
   function resolveSettingsFromStorage(items) {
     items = items || {};
@@ -1028,7 +1028,7 @@
       strictness = items.pm_strictness;
       additionalWords = [];
     } else if (hasSavedWordlist) {
-      // Rule 2d: pre-strictness-feature schema — a saved list meant "that
+      // Rule 2d: pre-strictness-feature schema - a saved list meant "that
       // list, no built-ins".
       strictness = "none";
       additionalWords = sanitizeAdditionalWords(items.pm_wordlist);
@@ -1055,7 +1055,7 @@
       strictness: strictness,
       padding: padding,
       multilingual: items.pm_multilingual !== false,
-      // The user's OWN words, resolved/migrated and sanitized — what the
+      // The user's OWN words, resolved/migrated and sanitized - what the
       // popup renders in "My additional words". Never contains built-ins.
       additionalWords: additionalWords,
       // The EFFECTIVE list: tier + additionalWords, deduped. This is what
@@ -1112,7 +1112,7 @@
     lang: "en",
     matchConfig: EN_MATCH_CONFIG,
     // Last wordlist resolveSettingsFromStorage computed for "en" (per
-    // pm_strictness/pm_wordlist) — cached here even while a non-English
+    // pm_strictness/pm_wordlist) - cached here even while a non-English
     // pack is active, so switching setLanguage("en") back doesn't have
     // to wait for another refresh() to restore the right strictness/
     // custom selection. See setLanguage below.
@@ -1129,8 +1129,8 @@
 
   // Minimal, stable-shape settings object handed to other content
   // scripts (the audio pipeline's content.js reads PMWordlist.settings
-  // directly). Deliberately exactly these eleven keys — no internal
-  // Set/Map/array fields — so consumers can safely read or even
+  // directly). Deliberately exactly these eleven keys - no internal
+  // Set/Map/array fields - so consumers can safely read or even
   // serialize it without pulling in wordlist/stemSet/phrase internals.
   // The SAME object reference is mutated in place on every refresh()
   // so a reference a consumer captured once stays live.
@@ -1146,7 +1146,7 @@
     padding: DEFAULT_PADDING,
     multilingual: DEFAULT_MULTILINGUAL,
     // 0.1.29: how many words the user added on top of the built-in tier.
-    // A COUNT, not the array — `settings` stays free of arrays/Sets so
+    // A COUNT, not the array - `settings` stays free of arrays/Sets so
     // consumers can serialize it (content.js's dev-log settings snapshot
     // reads exactly this, and must never carry word-list contents).
     additionalWordCount: 0
@@ -1175,7 +1175,7 @@
   // Note: pm_wordlist is respected AS-IS (even an empty array, meaning
   // "no words") whenever the key has actually been saved. Built-in
   // defaults are only used when the key has never been saved at all
-  // (items.pm_wordlist === undefined — see refresh()'s storage.get
+  // (items.pm_wordlist === undefined - see refresh()'s storage.get
   // default below). matchConfig defaults to EN_MATCH_CONFIG (so plain
   // rebuildFrom(list) calls, as before the pack architecture, are
   // unaffected).
@@ -1195,7 +1195,7 @@
     }
     return new Promise(function (resolve) {
       try {
-        // Array form, NOT the "defaults object" form — see
+        // Array form, NOT the "defaults object" form - see
         // resolveSettingsFromStorage's comment for why. Defaulting is
         // applied ourselves, in code, on the raw result.
         chrome.storage.sync.get(STORAGE_KEYS, function (items) {
@@ -1219,7 +1219,7 @@
           // which language is currently active, so a later
           // setLanguage("en") can restore it immediately (see below).
           state.enWordlist = resolved.wordlist;
-          // pm_strictness/pm_wordlist are an "en"-only concept — while a
+          // pm_strictness/pm_wordlist are an "en"-only concept - while a
           // non-English pack is active, storage changes to them are
           // cached above but must NOT rebuild the active (non-English)
           // matching structures.
@@ -1247,10 +1247,10 @@
     });
   }
 
-  // PMWordlist.packAvailable — true once the currently-active language
+  // PMWordlist.packAvailable - true once the currently-active language
   // resolved to a real pack (always true for "en"; true for any other
   // lang whose pack loaded successfully). Set to false by setLanguage()
-  // when asked for an unknown/unfetchable lang — the active matching
+  // when asked for an unknown/unfetchable lang - the active matching
   // state is left completely unchanged in that case (still whatever it
   // was before the call), this is purely a signal for a consumer (e.g.
   // an on-player status pill) to show "not supported" rather than
@@ -1269,7 +1269,7 @@
         }
       });
     } catch (e) {
-      // ignore — non-fatal, this is a display-only convenience for the popup
+      // ignore - non-fatal, this is a display-only convenience for the popup
     }
   }
 
@@ -1281,25 +1281,25 @@
   //
   //   - lang === "en" (or falsy/omitted): restores English matching,
   //     using whatever pm_strictness/pm_wordlist last resolved to
-  //     (state.enWordlist — kept fresh by every refresh(), even while a
+  //     (state.enWordlist - kept fresh by every refresh(), even while a
   //     non-English pack was active, so this doesn't need a fresh
   //     storage round trip).
   //   - lang already loaded (PACKS[lang] cached from an earlier call):
   //     applied immediately from cache, no fetch.
   //   - lang not yet loaded: lazily fetched via
-  //     fetch(chrome.runtime.getURL("shared/packs/" + lang + ".json")) —
+  //     fetch(chrome.runtime.getURL("shared/packs/" + lang + ".json")) -
   //     packs are NOT bundled into every page load, only the one that
   //     actually needs a non-English pack pays for it. On success, the
   //     pack is validated (validatePack), cached in PACKS, and applied.
   //   - unknown lang / fetch failure / invalid pack shape / no
   //     chrome.runtime-fetch available (e.g. under Node tests): resolves
   //     `false` and sets PMWordlist.packAvailable = false, WITHOUT
-  //     changing whatever pack was already active — a consumer (e.g. the
+  //     changing whatever pack was already active - a consumer (e.g. the
   //     pipeline's status pill) can show "not supported for this
   //     language" while matching continues exactly as before.
   //
   // Non-English packs always use their FULL word list (core + extended
-  // combined) — pm_strictness and the user's custom pm_wordlist are an
+  // combined) - pm_strictness and the user's custom pm_wordlist are an
   // "en"-only concept and are not consulted at all while another
   // language is active.
   function setLanguage(lang) {
@@ -1373,7 +1373,7 @@
   }
 
   // findMatches(tokens) -> [{index, length}] against the live settings
-  // (respects pm_enabled the same way isProfane/censorText do — when
+  // (respects pm_enabled the same way isProfane/censorText do - when
   // disabled, no matches are reported). Intended for the audio
   // pipeline: tokens is an array of already-transcribed words in
   // order; each result covers either one profane word or one matched
@@ -1407,7 +1407,7 @@
         }
       });
     } catch (e) {
-      // ignore — non-fatal if listener registration fails
+      // ignore - non-fatal if listener registration fails
     }
   }
 
@@ -1421,11 +1421,11 @@
     refresh: refresh,
     setLanguage: setLanguage,
     // Live settings snapshot for other content scripts (e.g. content.js
-    // reading pm_muteAudio) — always in sync with the last refresh().
+    // reading pm_muteAudio) - always in sync with the last refresh().
     // Exactly {enabled, muteAudio, censorCaptions, safeMode,
     // catchupMode, debugOverlay, showStatus, strictness, padding,
     // multilingual, additionalWordCount}, no internal Set/Map/array
-    // fields. additionalWordCount (0.1.29) is a COUNT, never the words —
+    // fields. additionalWordCount (0.1.29) is a COUNT, never the words -
     // the user's own list lives on _state.additionalWords.
     settings: settings,
     // exposed for the popup and for tests; not part of the "required" contract
@@ -1434,7 +1434,7 @@
     _packs: PACKS
   };
 
-  // Live getters (not snapshotted values) — a consumer (e.g. an
+  // Live getters (not snapshotted values) - a consumer (e.g. an
   // on-player status pill) reading PMWordlist.activeLanguage /
   // PMWordlist.packAvailable always sees the current value, not whatever
   // it was at the moment PMWordlist was first read into a local.

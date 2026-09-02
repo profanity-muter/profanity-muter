@@ -1,5 +1,5 @@
 // test/devlog_test.js
-// Node unit tests for shared/devlog.js's pure core (PMDevlogCore) — the
+// Node unit tests for shared/devlog.js's pure core (PMDevlogCore) - the
 // ring buffer, the size guard, the entry/window shapes, and the caption
 // diff. Run with:
 //
@@ -8,7 +8,7 @@
 // Same pattern as the wordlist tests (CENSOR_NOTES.md "Test results"):
 // shared/devlog.js is a plain script, not an ES module, and exposes its
 // chrome-free core via module.exports specifically so it can be require()d
-// here. Nothing in this file touches chrome.*, the DOM, or timers — if a
+// here. Nothing in this file touches chrome.*, the DOM, or timers - if a
 // test ever needs to, the thing it is testing has leaked out of the core
 // and belongs on the browser-wiring side of that file instead.
 

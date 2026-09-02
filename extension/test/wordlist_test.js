@@ -13,7 +13,7 @@
 // The migration matrix is the reason this file exists. Every row is a
 // real storage shape a 0.1.28-or-earlier install can be sitting in, and
 // the invariant being protected is that NOBODY's filtering silently gets
-// weaker across the upgrade — the one outcome that would be a genuine
+// weaker across the upgrade - the one outcome that would be a genuine
 // product failure rather than a cosmetic one.
 
 "use strict";
@@ -54,7 +54,7 @@ function test(name, fn) {
 // Would `entry` be caught by this word list? Routed through
 // findMatchesCore rather than isProfaneCore because entries can be
 // multi-word phrases ("god damn", "son of a bitch"), which isProfaneCore
-// — a single-token check — cannot see by design.
+// - a single-token check - cannot see by design.
 function matches(list, entry) {
   const tokens = String(entry).split(/\s+/);
   const found = PMWordlistCore.findMatchesCore(

@@ -51,7 +51,7 @@ async function main() {
   let sw = context.serviceWorkers()[0];
   if (!sw) sw = await context.waitForEvent('serviceworker', { timeout: 20000 }).catch(() => null);
   if (!sw) {
-    console.error('No service worker — aborting');
+    console.error('No service worker - aborting');
     await context.close();
     process.exit(1);
   }
@@ -122,7 +122,7 @@ async function main() {
   console.log('\n--- SAFE-MODE TOGGLE: OFF -> ON mid-playback ---');
   // chrome.storage is only reachable from an extension-context page, not a
   // regular web page's page.evaluate (even with a content script injected
-  // into it) — must go through the extension settings page, same as initial
+  // into it) - must go through the extension settings page, same as initial
   // seeding.
   const togglePage = await context.newPage();
   await togglePage.goto(`chrome-extension://${extId}/popup/popup.html`).catch(() => {});

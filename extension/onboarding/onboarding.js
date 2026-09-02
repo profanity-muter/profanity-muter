@@ -11,11 +11,11 @@
 //
 // Storage: writes the SAME chrome.storage.sync keys as the popup
 // (pm_catchupMode, pm_strictness, pm_additionalWords, pm_lock), through the
-// same one-funnel lock rule — see persist() below. It writes no key the
+// same one-funnel lock rule - see persist() below. It writes no key the
 // popup doesn't, and defines no settings semantics of its own; this is a
 // second view onto the same settings, never a parallel model of them.
 //
-// Everything is local. No fonts, no analytics, no network of any kind —
+// Everything is local. No fonts, no analytics, no network of any kind -
 // the page loads three same-origin scripts and two same-origin
 // stylesheets, and that is the entire dependency list.
 
@@ -92,7 +92,7 @@
   //
   // Same two variables and the same single gate as popup.js. A lock only
   // exists here at all when someone re-opens this guide on an install that
-  // already has one — on a genuine first run there is nothing to unlock.
+  // already has one - on a genuine first run there is nothing to unlock.
   var lockRecord = null;
   var unlockedThisSession = false;
   var lockStateLoaded = false;
@@ -104,7 +104,7 @@
     return api.mayWriteSettings(lockRecord, unlockedThisSession) ? null : "locked";
   }
 
-  // The ONLY function on this page that writes settings to storage — the
+  // The ONLY function on this page that writes settings to storage - the
   // same funnel discipline popup.js uses, for the same reason: one place
   // to enforce the lock, so a new control can't quietly bypass it.
   function persist(values, cb) {
@@ -118,7 +118,7 @@
       return false;
     }
     if (blocked) {
-      setStatus("Locked — enter the password to change settings");
+      setStatus("Locked - enter the password to change settings");
       return false;
     }
     chrome.storage.sync.set(values, function () {
@@ -138,7 +138,7 @@
     show(lockDoneEl, hasLock);
 
     // Everything on the setup step is disabled while locked. persist()
-    // refuses regardless — this is the visible half.
+    // refuses regardless - this is the visible half.
     var controls = [wordlistEl, wordlistSaveEl];
     var i;
     for (i = 0; i < catchupEls.length; i++) controls.push(catchupEls[i]);
@@ -196,7 +196,7 @@
         lockStateLoaded = true;
         if (chrome.runtime && chrome.runtime.lastError) {
           // Leave the HTML's defaults (mute + strict) on screen rather than
-          // blanking a working page — same posture as the popup's load().
+          // blanking a working page - same posture as the popup's load().
           renderLockState();
           return;
         }
@@ -334,7 +334,7 @@
   //
   // A real gate: Finish stays disabled until the box is ticked. The
   // acknowledgment is not implied by reaching this screen, by clicking
-  // through, or by a pre-ticked box — the user has to do something.
+  // through, or by a pre-ticked box - the user has to do something.
   function updateFinishEnabled() {
     finishEl.disabled = !ackCheckEl.checked;
   }
@@ -349,12 +349,12 @@
     // NOT routed through persist(): the acknowledgment is not a setting,
     // it is a record that this person was told what the extension does and
     // doesn't do. A parental lock must not be able to prevent it (nor
-    // would blocking it help anyone — the banner would simply never clear).
+    // would blocking it help anyone - the banner would simply never clear).
     chrome.storage.sync.set(
       { pm_ackNotPerfect: m.makeAckRecord(Date.now()), pm_onboarded: true },
       function () {
         if (chrome.runtime && chrome.runtime.lastError) {
-          setStatus("Couldn't save — try again");
+          setStatus("Couldn't save - try again");
           return;
         }
         show(ackDoneEl, true);

@@ -1,12 +1,12 @@
 // report/report.js
 // The "Report a problem" page. Reachable from the popup's Debugging row
-// and from the last screen of onboarding, and — like "Copy debug log" —
+// and from the last screen of onboarding, and - like "Copy debug log" -
 // deliberately NOT gated by the parental lock: someone hitting a problem
 // must always be able to report it, and nothing here changes a setting.
 //
 // All assembly lives in shared/report.js (pure, unit-tested). This file
 // is the DOM around it: read storage, fill the form, and on send do the
-// two things that need a browser — write the clipboard and open a mail
+// two things that need a browser - write the clipboard and open a mail
 // draft. See shared/report.js's header for why it's clipboard-and-paste
 // rather than an attachment.
 
@@ -68,7 +68,7 @@
   }
 
   // A one-line, honest summary of what the checkbox will actually attach,
-  // in numbers rather than adjectives — including the truncation, before
+  // in numbers rather than adjectives - including the truncation, before
   // it happens rather than as a surprise inside the report.
   function renderLogSummary() {
     var api = reportApi();
@@ -79,7 +79,7 @@
     }
     if (!devlog || !devlog.videos || !devlog.videos.length) {
       logSummaryEl.textContent =
-        "No debug log has been recorded yet — that's fine, send the report anyway.";
+        "No debug log has been recorded yet - that's fine, send the report anyway.";
       return;
     }
     var trim = api.truncateDevlog(devlog);
@@ -110,7 +110,7 @@
       var api = reportApi();
       // Prefill the video field from the newest devlog entry, so the user
       // doesn't have to go back and find the video they were watching.
-      // Only ever a prefill — it stays fully editable and clearable.
+      // Only ever a prefill - it stays fully editable and clearable.
       if (api && !videoEl.value) {
         videoEl.value = api.latestVideoUrl(devlog);
       }
@@ -156,7 +156,7 @@
         show(doneEl, true);
         setStatus("Report copied");
         // Open the draft by clicking the same anchor the user can click
-        // themselves, rather than assigning location — if no mail client
+        // themselves, rather than assigning location - if no mail client
         // is configured, nothing happens and the visible fallback link
         // (plus the plain address next to it) is already on screen.
         try {
@@ -169,7 +169,7 @@
         // Never a dead end: if the clipboard is unavailable, the report
         // still has to be gettable, so fall back to selecting it in the
         // textarea for a manual copy.
-        setStatus("Couldn't copy automatically — see below");
+        setStatus("Couldn't copy automatically - see below");
         show(doneEl, true);
         emailEl.textContent = supportEmail();
         mailtoEl.href = api.buildMailto({

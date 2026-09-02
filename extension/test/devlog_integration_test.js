@@ -1,5 +1,5 @@
 // test/devlog_integration_test.js
-// Node tests for shared/devlog.js's BROWSER WIRING — the half that
+// Node tests for shared/devlog.js's BROWSER WIRING - the half that
 // devlog_test.js deliberately doesn't touch: the in-memory current entry,
 // the batched read-modify-write against chrome.storage.local, the
 // pm_devlogVerbose gate, and the pre-session error buffer.
@@ -8,7 +8,7 @@
 // results"): stub `chrome` and `window` on globalThis BEFORE requiring the
 // file, since devlog.js reads storage and registers listeners at load time.
 // Storage callbacks fire synchronously here, which keeps the tests free of
-// timers — the one thing that is deliberately NOT simulated is the 5s flush
+// timers - the one thing that is deliberately NOT simulated is the 5s flush
 // timer, because every test drives the write explicitly through flushNow()
 // and then asserts that nothing else wrote on its own.
 //

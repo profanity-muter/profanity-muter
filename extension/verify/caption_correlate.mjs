@@ -3,7 +3,7 @@
 // video.currentTime) instead of eyeballing the debug overlay.
 //
 // YouTube caption CONTENT is famously unreliable and cue timing itself is
-// only accurate to about +-1s — so this does NOT do per-word pass/fail
+// only accurate to about +-1s - so this does NOT do per-word pass/fail
 // windows (that would fail a correct build on caption sloppiness alone).
 // Instead: match our transcript's distinctive (non-stopword) words to
 // same-word caption occurrences within a search radius, compute the time
@@ -16,7 +16,7 @@
 //   node caption_correlate.mjs --video <id> --log <path-to-console-log.txt> [--window 0,60] [--lang en]
 //
 // The log file is raw console text containing our own `[PM] WORDTIMES
-// [{"w":"word","s":12.34,"e":12.9}, ...]` lines (see content.js addWords) —
+// [{"w":"word","s":12.34,"e":12.9}, ...]` lines (see content.js addWords) -
 // e.g. saved from read_console_messages, the debug overlay's "Copy logs"
 // button, or a Playwright console capture. Lines not matching are ignored,
 // so you can point this at a full raw log dump.
@@ -80,13 +80,13 @@ function parseTimedTextJson3(data) {
 }
 
 // A bare Node `fetch` to youtube.com/api/timedtext frequently comes back
-// HTTP 200 with an empty body — YouTube appears to require session/cookie
+// HTTP 200 with an empty body - YouTube appears to require session/cookie
 // context tying the request to an actual page load (bot mitigation), which
 // a plain HTTP client doesn't have. Two ways to get real caption data here:
 //  1. --captions-json <path>: a local file already containing the
 //     timedtext `fmt=json3` response body (fetch it from a real browser tab
-//     — e.g. `fetch(captionTrackBaseUrl + '&fmt=json3').then(r=>r.text())`
-//     in the video's own page context, save the result — and point this at
+//     - e.g. `fetch(captionTrackBaseUrl + '&fmt=json3').then(r=>r.text())`
+//     in the video's own page context, save the result - and point this at
 //     it. Most reliable.
 //  2. Best-effort auto-fetch: scrape the watch page for a signed
 //     captionTracks[].baseUrl, then fetch fmt=json3 from it. Works from some
@@ -110,7 +110,7 @@ async function fetchCaptions(videoId, lang, captionsJsonPath) {
   const text = await capRes.text();
   if (!text.trim()) {
     throw new Error(
-      'timedtext returned an empty body (likely YouTube session/bot-mitigation blocking a bare HTTP fetch) — ' +
+      'timedtext returned an empty body (likely YouTube session/bot-mitigation blocking a bare HTTP fetch) - ' +
         're-run with --captions-json pointing at a file fetched from within a real browser tab instead'
     );
   }
@@ -145,7 +145,7 @@ async function main() {
   const ourWords = ourWordsAll.filter((w) => w.start >= winStart && w.start <= winEnd);
   console.log(`Parsed ${ourWordsAll.length} of our words total, ${ourWords.length} in window [${winStart},${winEnd}]`);
   if (ourWords.length === 0) {
-    console.error('No WORDTIMES entries found in the given window — nothing to correlate. Check the log covers this window.');
+    console.error('No WORDTIMES entries found in the given window - nothing to correlate. Check the log covers this window.');
     process.exit(1);
   }
 
@@ -153,7 +153,7 @@ async function main() {
   const captionWords = captionWordsAll.filter((w) => w.start >= winStart - 5 && w.start <= winEnd + 5);
   console.log(`Fetched ${captionWordsAll.length} caption words total, ${captionWords.length} in/near window`);
   if (captionWords.length === 0) {
-    console.error('No captions found for this video/language/window — cannot verify. (captions may not exist, or timedtext lang mismatch)');
+    console.error('No captions found for this video/language/window - cannot verify. (captions may not exist, or timedtext lang mismatch)');
     process.exit(1);
   }
 
@@ -184,7 +184,7 @@ async function main() {
   if (matches.length > 20) console.log(`  ... and ${matches.length - 20} more`);
 
   if (deltas.length < 5) {
-    console.error(`\nOnly ${deltas.length} matched words — too few for a reliable median/IQR. Widen the window or check caption availability.`);
+    console.error(`\nOnly ${deltas.length} matched words - too few for a reliable median/IQR. Widen the window or check caption availability.`);
     process.exit(1);
   }
 

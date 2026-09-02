@@ -1,10 +1,10 @@
-// build.js — bundles src/offscreen-src.js (mediabunny + our demux/transcribe
+// build.js - bundles src/offscreen-src.js (mediabunny + our demux/transcribe
 // orchestration logic) into dist/offscreen.bundle.js, and src/whisper-worker-
 // src.js (0.1.15 perf fix: Whisper model load + inference, moved off the
-// offscreen document's main thread into a dedicated Web Worker — see that
+// offscreen document's main thread into a dedicated Web Worker - see that
 // file's header) into dist/whisper.worker.js. Two separate esbuild.build()
 // calls (not one multi-entry build) so each output keeps its own fixed,
-// existing filename — offscreen.html and the Worker() constructor call
+// existing filename - offscreen.html and the Worker() constructor call
 // both reference these paths directly.
 const esbuild = require('esbuild');
 const fs = require('fs');
@@ -23,7 +23,7 @@ const buildOffscreen = esbuild.build({
   outfile: path.join(DIST, 'offscreen.bundle.js')
 });
 
-// Classic (non-module) worker script — matches `new Worker(url)` without
+// Classic (non-module) worker script - matches `new Worker(url)` without
 // {type:'module'} in offscreen-src.js, avoiding any module-worker MIME/CSP
 // nuance for a self-contained bundle that doesn't need ES module semantics.
 const buildWorker = esbuild.build({

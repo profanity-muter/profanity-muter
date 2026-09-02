@@ -7,7 +7,7 @@
 //
 // The hashing is tested against REAL WebCrypto (Node's own
 // globalThis.crypto.subtle / getRandomValues), not a mock. shared/lock.js
-// takes both as injected parameters precisely so this is possible — a
+// takes both as injected parameters precisely so this is possible - a
 // mocked digest would prove only that the plumbing calls something, not
 // that a password set on one day still verifies on another. The
 // browser-side wrapper binds this same core to the popup's crypto.
@@ -133,7 +133,7 @@ test("two records for the SAME password differ (salted), and don't cross-verify 
     PMLockCore.createRecord("same", subtle, getRandomValues)
   ]).then(function (records) {
     assert.notStrictEqual(records[0].hash, records[1].hash);
-    // Both still open with the right password — the salt is stored with
+    // Both still open with the right password - the salt is stored with
     // the record, so this must hold.
     return Promise.all([
       PMLockCore.verifyRecord(records[0], "same", subtle),

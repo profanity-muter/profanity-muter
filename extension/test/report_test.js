@@ -258,7 +258,7 @@ test("the mail body carries the paste instruction verbatim", () => {
   assert.ok(bodyOf(mailto()).indexOf(R.PASTE_INSTRUCTION) !== -1);
   assert.strictEqual(
     R.PASTE_INSTRUCTION,
-    "The full diagnostic report has been copied to your clipboard — " +
+    "The full diagnostic report has been copied to your clipboard - " +
       "please paste it below this line before sending."
   );
 });

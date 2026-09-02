@@ -1,25 +1,25 @@
-// offscreen-src.js — bundled into dist/offscreen.bundle.js (see build.js).
+// offscreen-src.js - bundled into dist/offscreen.bundle.js (see build.js).
 // Runs in the MV3 offscreen document (only place ONNX/transformers.js and
-// WebCodecs decode work reliably for this pipeline — see
+// WebCodecs decode work reliably for this pipeline - see
 // ../../spike-whisper/SPIKE_NOTES.md and ../../spike-capture/SPIKE_NOTES.md).
 //
 // GOVERNING PRINCIPLE (0.1.10 redirect): "media time in, media time out."
 // The WebM container is the only clock. YouTube's audio SourceBuffer runs on
-// the media presentation timeline — the SAME timeline as video.currentTime
+// the media presentation timeline - the SAME timeline as video.currentTime
 // (spike-capture originally confirmed this: buffered.end() tracks
 // currentTime directly, no offset/scale correction needed). mediabunny,
 // decoding the SAME bytes via the SAME container format, reports that exact
-// same timeline in its AudioBuffer timestamps — untouched, unrebased. So a
+// same timeline in its AudioBuffer timestamps - untouched, unrebased. So a
 // decoded window's own timestamps ARE absolute video time; word_abs =
 // window's own reported timestamp + word's offset within it. No currentTime,
 // no bufferedEnd, no wall clock, and no per-run offset estimation anywhere
-// in timestamp construction — all of that (0.1.6-0.1.9's anchor/measured-
+// in timestamp construction - all of that (0.1.6-0.1.9's anchor/measured-
 // offset machinery) was solving a problem that didn't exist, and at least
 // one version of it (0.1.8) leaked wall-clock processing delay into the
 // timeline as a side effect. capture.js's buffered-range-growth measurement
 // is kept ONLY as a logged cross-check against the container's own EBML
 // Cluster>Timecode (do they roughly agree? if not, something upstream is
-// genuinely wrong and worth knowing about) — it is never an input to any
+// genuinely wrong and worth knowing about) - it is never an input to any
 // timestamp computed here.
 //
 // Data model: audio bytes for one video are NOT one endlessly-growing single
@@ -31,23 +31,23 @@
 // transparently) rather than per-run.
 // 0.1.15: transformers.js's `pipeline`/`env` (and the onnxruntime-web MV3/
 // CSP env config that used to live here) moved entirely to
-// src/whisper-worker-src.js — model load + inference now run in a dedicated
+// src/whisper-worker-src.js - model load + inference now run in a dedicated
 // Web Worker, not on this document's own main thread. See that file's
 // header for the full diagnosis (popup paint starvation) and why the split
 // is exactly at the transcribe step.
 import { Input, ReadableStreamSource, AudioBufferSink, WEBM, MP4, ADTS } from 'mediabunny';
 
 // 'small' added 0.1.13 as an opt-in accuracy tier (per the quiet-speech-
-// recall investigation) — Xenova/whisper-small.en is confirmed on the Hub to
+// recall investigation) - Xenova/whisper-small.en is confirmed on the Hub to
 // ship alignment_heads in its generation_config.json (same basis tiny/base
 // were confirmed on), so word timestamps are supported. RTF cost is
-// UNVERIFIED live (no real-Chrome run has selected it yet) — expect roughly
+// UNVERIFIED live (no real-Chrome run has selected it yet) - expect roughly
 // ~2x base's cost by parameter-count scaling (base ~74M vs small ~244M
 // params); base's own measured RTF headroom (~0.13-0.29 steady-state per
 // PIPELINE_NOTES) suggests small should still fit comfortably under 1.0,
-// but this is an estimate, not a measurement — re-verify before
+// but this is an estimate, not a measurement - re-verify before
 // recommending it broadly.
-// MULTILINGUAL SUPPORT (0.1.25) — 'multilingual' (Xenova/whisper-base,
+// MULTILINGUAL SUPPORT (0.1.25) - 'multilingual' (Xenova/whisper-base,
 // confirmed on the Hub to ship alignment_heads, same basis as the .en
 // models) is used for actual transcription once a video is detected as
 // non-English; 'lang-detect' (Xenova/whisper-tiny, also multilingual) is a
@@ -82,7 +82,7 @@ function log(...args) {
 // Tab-visible diagnostics: any state that can block coverage indefinitely
 // (a skipped window, a demux error, a run stuck with no audio track) must be
 // visible from the TAB's own console, not just the offscreen document's
-// (which nothing but this file's own devtools panel can see — invisible to
+// (which nothing but this file's own devtools panel can see - invisible to
 // the user, invisible to automation reading the tab). Routed through
 // background.js to the right tab's port.
 function notifyTab(s, text) {
@@ -102,7 +102,7 @@ function base64ToUint8(b64) {
 // (dist/whisper.worker.js, see src/whisper-worker-src.js's header for the
 // full diagnosis/rationale) instead of on this document's own main thread.
 // Live user report: clicking the extension icon took ~15s to paint the
-// popup — extension pages can share a renderer process, and Whisper's
+// popup - extension pages can share a renderer process, and Whisper's
 // synchronous multi-second WASM bursts (onnxruntime-web, numThreads=1, no
 // proxy) starved the popup's own load/paint in that same process. This
 // offscreen document is now just a thin router around the worker for the
@@ -117,13 +117,13 @@ const pendingWorkerRequests = new Map(); // requestId -> {resolve, reject}
 // Eager warm-up visibility (0.1.18): the worker/model load already starts
 // as early as technically possible (this whole file's top-level code runs
 // the instant the offscreen document is created, which background.js does
-// unconditionally at SW boot/onStartup/onInstalled — NOT gated on any tab
+// unconditionally at SW boot/onStartup/onInstalled - NOT gated on any tab
 // opening a video). But that warmth was previously invisible: it happened
 // before any session/tab existed to notifyTab() through, so a Copy Logs
 // paste could never actually confirm it happened, let alone how long it
 // took. `warmInfo` buffers the timing until the FIRST session of this
 // offscreen document's lifetime is created, at which point it's surfaced
-// into THAT tab's ring buffer — see logWarmToSession() and its call site
+// into THAT tab's ring buffer - see logWarmToSession() and its call site
 // in getOrCreateSession().
 let warmInfo = null; // {workerSpawnMs, modelLoadMs, readyAtWall} once known
 function logWarmToSession(s) {
@@ -153,7 +153,7 @@ whisperWorker.onmessage = (ev) => {
   if (!pending) return;
   pendingWorkerRequests.delete(msg.requestId);
   // 0.1.25: 'lang-result' is the success shape for a detect-language
-  // request, alongside 'result' for a transcribe request — both just
+  // request, alongside 'result' for a transcribe request - both just
   // resolve with the whole message; 'lang-error' rejects the same way
   // 'error' already does.
   if (msg.type === 'result' || msg.type === 'lang-result') pending.resolve(msg);
@@ -164,7 +164,7 @@ whisperWorker.onerror = (ev) => {
 };
 
 // Transfers `float16k`'s own buffer into the worker (0.1.15: "transfer, not
-// copy" — this ~1.1MB-per-18s-window array is detached from this thread by
+// copy" - this ~1.1MB-per-18s-window array is detached from this thread by
 // the transfer, which is safe here because the caller (transcribeWindow)
 // never reads float16k again after this call; the per-word RMS energy
 // check that used to run against it on this side now runs INSIDE the
@@ -178,11 +178,11 @@ function transcribeInWorker(modelId, float16k, options) {
   });
 }
 
-// Language-ID bridge (0.1.25) — NOT transferred: unlike transcribeInWorker
+// Language-ID bridge (0.1.25) - NOT transferred: unlike transcribeInWorker
 // above, the caller (transcribeWindow) still needs `float16k` afterward for
 // the window's own real transcribe call, so this must leave the original
 // array usable (a plain postMessage without a transfer list structured-
-// clones it instead of detaching it — a one-time copy cost paid only once
+// clones it instead of detaching it - a one-time copy cost paid only once
 // per session, on the first window).
 function detectLanguageInWorker(float16k) {
   return new Promise((resolve, reject) => {
@@ -193,7 +193,7 @@ function detectLanguageInWorker(float16k) {
 }
 
 // Simple promise-chain mutex (0.1.15) serializing every transcribeInWorker()
-// call across ALL sessions/tabs sharing this offscreen document — the
+// call across ALL sessions/tabs sharing this offscreen document - the
 // worker is a single dedicated thread, so this guarantees at most one
 // transcribe request in flight at a time, globally.
 let transcribeChain = Promise.resolve();
@@ -210,7 +210,7 @@ function runSerialized(fn) {
 const sessions = new Map(); // key "tabId:videoId" -> session
 
 // Any uncaught error here must not stay invisible in this document's own
-// (user-inaccessible) console — broadcast to every known session's tab.
+// (user-inaccessible) console - broadcast to every known session's tab.
 function broadcastDiag(text) {
   log('[UNCAUGHT]', text);
   for (const s of sessions.values()) {
@@ -232,7 +232,7 @@ function sessionKey(tabId, videoId) {
 // incrementally via a ReadableStreamSource, instead of being rebuilt from a
 // fresh flat byte buffer on every single window attempt. The earlier
 // (BufferSource + `.slice()` the whole run + `new Input(...)`) approach cost
-// grew with TOTAL RUN LENGTH, not window size — on a long-running video
+// grew with TOTAL RUN LENGTH, not window size - on a long-running video
 // (tab open 25+ minutes, one continuous run) each attempt eventually took
 // longer than the stall-watchdog timeout, which then killed and restarted it
 // before it ever finished. See PIPELINE_NOTES.md "0.1.6".
@@ -244,18 +244,18 @@ function newRun() {
     track: null,
     sink: null,
     trackReadyPromise: null,
-    // 0.1.23 — see PIPELINE_NOTES "0.1.23": a live session requested
+    // 0.1.23 - see PIPELINE_NOTES "0.1.23": a live session requested
     // sink.buffers(2.51,19.60) while this run's stream had actually only
     // been fed bytes through 5.06s, hanging forever (ReadableStreamSource
     // waits indefinitely for bytes that haven't arrived instead of
-    // erroring — it has no way to know "no more is coming yet" vs. "no
+    // erroring - it has no way to know "no more is coming yet" vs. "no
     // more will EVER come"). `fedEnd` is the ground truth for what THIS
     // run's stream has actually been fed (updated only from bytes really
-    // appended to it — see the pm-segment handler), decoupled from
+    // appended to it - see the pm-segment handler), decoupled from
     // s.bufferedRanges (session-level, can legitimately be ahead of any
     // one specific run). `streamClosed` is set once we've explicitly
     // closed this run's stream (end-of-stream flush, or superseded by a
-    // new run) — once true, the fed-data clamp in pickNextWindow is no
+    // new run) - once true, the fed-data clamp in pickNextWindow is no
     // longer needed, since a genuinely closed stream reports "no more
     // data" cleanly instead of hanging.
     fedEnd: null,
@@ -273,12 +273,12 @@ function newRun() {
   return run;
 }
 
-// Closes JUST a run's underlying stream (0.1.23) — distinct from closeRun()
+// Closes JUST a run's underlying stream (0.1.23) - distinct from closeRun()
 // below, which fully tears down track/sink/input for PRUNING (the run is
 // never used again). This is used when a run is still the one we intend to
 // decode from (the final tail window of a finished run, or a run that was
 // just superseded but might still be read from momentarily) but we know for
-// certain no MORE bytes are coming — closing lets mediabunny/WebCodecs see
+// certain no MORE bytes are coming - closing lets mediabunny/WebCodecs see
 // a definite end and flush trailing samples instead of waiting forever.
 // Idempotent (checks streamClosed first) and safe to call on an
 // already-closed/never-open stream.
@@ -287,12 +287,12 @@ function closeRunStream(run) {
   try {
     if (run.streamController) run.streamController.close();
   } catch (e) {
-    // already closed/errored elsewhere — fine, this is just cleanup
+    // already closed/errored elsewhere - fine, this is just cleanup
   }
   run.streamClosed = true;
 }
 
-// Releases a superseded run's demux state (0.1.15 memory-leak fix — see the
+// Releases a superseded run's demux state (0.1.15 memory-leak fix - see the
 // pruning call site in the pm-segment handler). Closing the stream lets the
 // ReadableStreamSource drop its cache; nulling the rest lets everything else
 // (Input, track, sink) become GC-eligible once nothing else references it.
@@ -305,15 +305,15 @@ function closeRun(run) {
 }
 
 // RMS energy of the decoded window audio at a given time span (relative to
-// the start of the float16k array passed to Whisper) — a cheap sanity signal
+// the start of the float16k array passed to Whisper) - a cheap sanity signal
 // for whether a word's timestamp is sitting on real speech, independent of
 // any timeline mapping entirely (both float16k and the word offset are in
 // the same window-local coordinate space).
-// Word-level 4-grams of a window's raw transcript text, lowercased — used by
+// Word-level 4-grams of a window's raw transcript text, lowercased - used by
 // the timeline-shift self-check below. Two windows sharing an unusually high
 // fraction of these almost certainly mean the SAME audio got decoded/
 // transcribed twice under two different claimed absolute spans (a timeline
-// bug), not genuinely repeated dialogue — real conversational repetition is
+// bug), not genuinely repeated dialogue - real conversational repetition is
 // much shorter than a whole 4-word run repeating wholesale across an entire
 // 16-18s window.
 function fourGrams(wordTexts) {
@@ -327,7 +327,7 @@ function fourGrams(wordTexts) {
 // Whisper decoder repetition-loop collapse (0.1.13): a live window emitted
 // "it's him" ~40 times consecutively with degenerate timestamps (many
 // zero-duration, one token with end BEFORE start entirely outside the
-// window) — classic decoder degeneration on ambiguous/quiet audio, not real
+// window) - classic decoder degeneration on ambiguous/quiet audio, not real
 // speech. Detects a cycle of length 1 or 2 (single word, or a two-word
 // phrase) repeating more than HALLUCINATION_REPEAT_THRESHOLD times
 // consecutively, keeps only the first couple of cycles (a short genuine
@@ -340,18 +340,18 @@ function normalizeTokenText(t) {
 
 // Repeated-lyric under-muting guard (0.1.15): a genuinely repeated swear in
 // a chorus ("fuck fuck fuck fuck fuck fuck...") looks structurally IDENTICAL
-// to a hallucination loop — collapsing it would under-mute real profanity,
+// to a hallucination loop - collapsing it would under-mute real profanity,
 // which is strictly worse than the CPU/log-noise cost of a hallucination
 // loop going uncollapsed. offscreen-src.js has no access to
 // shared/wordlist.js (it only loads in content.js's isolated world, and
 // isn't ours to touch) so this is a deliberately small, independent,
-// conservative stem list used ONLY to decide "never collapse this" — not a
+// conservative stem list used ONLY to decide "never collapse this" - not a
 // replacement for the real wordlist, which still does the actual
 // match/mute decision downstream in content.js. False negatives here (a
 // profane word this list misses) just fall back to the pre-0.1.13 behavior
 // of collapsing it; false positives (declining to collapse something that
 // wasn't actually profane) cost a few extra transcribed/logged tokens at
-// worst — asymmetric on purpose, safety-first.
+// worst - asymmetric on purpose, safety-first.
 const HALLUCINATION_PROFANITY_GUARD = /fuck|shit|bitch|ass(?:hole)?|damn|hell|bastard|cunt|dick|pussy|cock|nigg|whore|slut|twat|prick|cum\b/i;
 function cycleLooksProfane(tokens, i, cycleLen) {
   for (let k = 0; k < cycleLen; k++) {
@@ -382,7 +382,7 @@ function collapseHallucinationLoops(tokens) {
       }
     }
     if (matchedCycle && cycleLooksProfane(tokens, i, matchedCycle)) {
-      // Never collapse a repeated-profanity cycle — pass every occurrence
+      // Never collapse a repeated-profanity cycle - pass every occurrence
       // through untouched so downstream muting sees (and mutes) all of
       // them, not just the first couple.
       matchedCycle = 0;
@@ -414,7 +414,7 @@ function collapseHallucinationLoops(tokens) {
   return { tokens: out, hallucination };
 }
 
-// rmsAt() moved to whisper-worker-src.js (0.1.15) — float16k's buffer is
+// rmsAt() moved to whisper-worker-src.js (0.1.15) - float16k's buffer is
 // TRANSFERRED into the worker for the transcribe call (never copied), so
 // it's no longer available on this side afterward to compute RMS against;
 // the worker computes it itself (it already has the PCM right there) and
@@ -431,51 +431,51 @@ function getOrCreateSession(tabId, videoId) {
       currentRun: null,
       currentTimeS: 0,
       covered: [], // merged [{start,end}] in ABSOLUTE video time, session-wide (spans run boundaries)
-      allWords: [], // every word ever emitted, absolute video time — for resync after a port drop
+      allWords: [], // every word ever emitted, absolute video time - for resync after a port drop
       emittedKeys: new Set(),
       lastWindowGrams: null, // this run's previous window's word 4-grams, for the timeline-shift self-check (see transcribeWindow)
       lastWindowSpan: null,
       lastSegWallTime: Date.now(),
-      lastBufferedGrowthWall: Date.now(), // last time s.bufferedRanges actually grew — used by pickNextWindow's tiny-tail deferral to detect "run has gone quiet, this really is the end"
-      hadFirstWindow: false, // cold-start detection in pickNextWindow — cleared per session, not per run (a seek into a new run is still "cold" relative to session-level coverage)
-      disabled: false, // pm_enabled=false (0.1.13) — see pm-disable/pm-enable handlers
-      bufferedRanges: [], // merged [{start,end}] in ABSOLUTE video time — real interval set of what our hook has actually captured (see pickNextWindow); 0.1.15 deleted the old single-scalar bufferedEndS entirely
-      windowAttempts: new Map(), // rounded-start-location key -> attempt count, for the stuck-location loop-breaker (0.1.14, made location-based in 0.1.20 — see transcribeWindow's loop-breaker section for why exact-span keying stopped catching this)
-      sinkErrorAttempts: new Map(), // "start.toFixed(2),end.toFixed(2)" -> consecutive THROWN sink.buffers() decode-error count, for DRM/undecodable detection (0.1.15) — a fast, confident signal, unchanged threshold
-      hangAttempts: new Map(), // "start.toFixed(2),end.toFixed(2)" -> consecutive stage-TIMEOUT (no thrown error at all) count, separate map/threshold from sinkErrorAttempts (0.1.21, split out 0.1.23) — a hang is now a much rarer signal after the fed-data clamp + end-of-stream-flush fixes (see pickNextWindow/maybeCloseRunAtEndOfStream), so it gets a higher threshold before giving up rather than sharing the DRM-detection map's fast one
-      videoDurationS: null, // 0.1.23 — video.duration, relayed from capture.js; used ONLY for end-of-stream run-close detection (maybeCloseRunAtEndOfStream), never for timestamp construction
-      unanalyzable: false, // set true once DRM/undecodable content is detected — maybeProcess stops entirely, content.js releases safe-mode muting for this session
+      lastBufferedGrowthWall: Date.now(), // last time s.bufferedRanges actually grew - used by pickNextWindow's tiny-tail deferral to detect "run has gone quiet, this really is the end"
+      hadFirstWindow: false, // cold-start detection in pickNextWindow - cleared per session, not per run (a seek into a new run is still "cold" relative to session-level coverage)
+      disabled: false, // pm_enabled=false (0.1.13) - see pm-disable/pm-enable handlers
+      bufferedRanges: [], // merged [{start,end}] in ABSOLUTE video time - real interval set of what our hook has actually captured (see pickNextWindow); 0.1.15 deleted the old single-scalar bufferedEndS entirely
+      windowAttempts: new Map(), // rounded-start-location key -> attempt count, for the stuck-location loop-breaker (0.1.14, made location-based in 0.1.20 - see transcribeWindow's loop-breaker section for why exact-span keying stopped catching this)
+      sinkErrorAttempts: new Map(), // "start.toFixed(2),end.toFixed(2)" -> consecutive THROWN sink.buffers() decode-error count, for DRM/undecodable detection (0.1.15) - a fast, confident signal, unchanged threshold
+      hangAttempts: new Map(), // "start.toFixed(2),end.toFixed(2)" -> consecutive stage-TIMEOUT (no thrown error at all) count, separate map/threshold from sinkErrorAttempts (0.1.21, split out 0.1.23) - a hang is now a much rarer signal after the fed-data clamp + end-of-stream-flush fixes (see pickNextWindow/maybeCloseRunAtEndOfStream), so it gets a higher threshold before giving up rather than sharing the DRM-detection map's fast one
+      videoDurationS: null, // 0.1.23 - video.duration, relayed from capture.js; used ONLY for end-of-stream run-close detection (maybeCloseRunAtEndOfStream), never for timestamp construction
+      unanalyzable: false, // set true once DRM/undecodable content is detected - maybeProcess stops entirely, content.js releases safe-mode muting for this session
       processing: false,
       pendingRerun: false,
-      modelId: DEFAULT_MODEL, // the user's configured ENGLISH model (tiny/base/small/multilingual) — unaffected by auto language-switching below; the model actually used for a given window is resolved fresh each time (see transcribeWindow's effectiveModelId)
-      // MULTILINGUAL SUPPORT (0.1.25) — see PIPELINE_NOTES "0.1.25".
+      modelId: DEFAULT_MODEL, // the user's configured ENGLISH model (tiny/base/small/multilingual) - unaffected by auto language-switching below; the model actually used for a given window is resolved fresh each time (see transcribeWindow's effectiveModelId)
+      // MULTILINGUAL SUPPORT (0.1.25) - see PIPELINE_NOTES "0.1.25".
       // `multilingualEnabled` mirrors pm_multilingual (default true, set via
-      // pm-config); when false, this session behaves exactly as before —
+      // pm-config); when false, this session behaves exactly as before -
       // always `modelId`, detection never runs. `languageState` starts
       // 'pending' (detection not yet attempted); the FIRST window of a
       // session (before any real coverage exists) triggers a cheap,
       // separate-model language-ID probe (never delaying that window's own
       // transcription, which still runs on `modelId` as normal) and moves
       // to 'detecting', then 'resolved' once the probe's result lands.
-      // Detection is pinned for the WHOLE video once resolved — a mid-video
+      // Detection is pinned for the WHOLE video once resolved - a mid-video
       // language switch is a known, accepted limitation (see PIPELINE_NOTES).
       multilingualEnabled: true,
       languageState: 'pending',
-      detectedLanguage: null, // e.g. 'en', 'es' — null until languageState becomes 'resolved'
-      // Generation counter (0.1.18) — bumped on a page-load reset (dropped
-      // entirely, see dropSessionsForTab) or a seek (pm-seek, in place —
+      detectedLanguage: null, // e.g. 'en', 'es' - null until languageState becomes 'resolved'
+      // Generation counter (0.1.18) - bumped on a page-load reset (dropped
+      // entirely, see dropSessionsForTab) or a seek (pm-seek, in place -
       // coverage/state untouched). maybeProcess's loop and transcribeWindow
       // both capture their OWN generation at start and compare against the
       // session's CURRENT value before picking further windows / applying
-      // results — a stale in-flight WASM call (can't be aborted mid-call)
+      // results - a stale in-flight WASM call (can't be aborted mid-call)
       // still runs to completion, but its result is discarded rather than
       // applied once superseded, and no further old-generation windows get
       // queued behind it. See PIPELINE_NOTES "0.1.18" for the live bug this
       // fixes (a page refresh's stale session blocking the new one for 7s+).
       generation: 0,
-      inFlightWindows: new Set(), // "start.toFixed(2),end.toFixed(2)" currently dispatched to transcribeWindow — prevents the picker from re-picking a span whose result hasn't landed yet
-      lastKnownRtf: null, // rolling estimate (last computeMs-based rtf) used to size cold-start windows so they finish AHEAD of the playhead — see pickNextWindow
-      // [PM-FIRST-COVERAGE] breakdown milestones (0.1.18) — set once each,
+      inFlightWindows: new Set(), // "start.toFixed(2),end.toFixed(2)" currently dispatched to transcribeWindow - prevents the picker from re-picking a span whose result hasn't landed yet
+      lastKnownRtf: null, // rolling estimate (last computeMs-based rtf) used to size cold-start windows so they finish AHEAD of the playhead - see pickNextWindow
+      // [PM-FIRST-COVERAGE] breakdown milestones (0.1.18) - set once each,
       // guarded by !firstCoverageLogged; logged as one line the moment the
       // first window's coverage is applied. See the call sites below.
       firstSegCapturedAt: null,
@@ -487,7 +487,7 @@ function getOrCreateSession(tabId, videoId) {
     };
     sessions.set(key, s);
     log('new session', key);
-    logWarmToSession(s); // no-op if the worker/model isn't warm yet — see whisperWorker.onmessage's 'warm-ready' handler
+    logWarmToSession(s); // no-op if the worker/model isn't warm yet - see whisperWorker.onmessage's 'warm-ready' handler
   }
   return s;
 }
@@ -496,8 +496,8 @@ function dropSessionsForTab(tabId) {
   for (const key of Array.from(sessions.keys())) {
     if (key.startsWith(tabId + ':')) {
       const s = sessions.get(key);
-      s.generation++; // bump BEFORE deleting (0.1.18) — any in-flight closure still holding a reference to this exact object (a running maybeProcess loop or transcribeWindow call from before the reset) sees this and discards its own work instead of applying it to a session that's supposed to be gone
-      for (const run of s.runs) closeRun(run); // close every run's demux state, not just prune — the whole session is going away
+      s.generation++; // bump BEFORE deleting (0.1.18) - any in-flight closure still holding a reference to this exact object (a running maybeProcess loop or transcribeWindow call from before the reset) sees this and discards its own work instead of applying it to a session that's supposed to be gone
+      for (const run of s.runs) closeRun(run); // close every run's demux state, not just prune - the whole session is going away
       sessions.delete(key);
     }
   }
@@ -543,7 +543,7 @@ function firstUncoveredPoint(intervals, lo, hi) {
 // (after any resample, so the gain reflects the actual samples Whisper
 // sees). Deliberately conservative: a window at or above TARGET_PEAK
 // already is left untouched (gain=1, most normal-volume speech), and a
-// window with almost NO signal (near-total silence) is also left alone —
+// window with almost NO signal (near-total silence) is also left alone -
 // amplifying pure noise floor to full scale would just manufacture false
 // "speech" for Whisper to hallucinate on, which is the opposite of the
 // goal. MAX_GAIN caps how far a genuinely-quiet-but-real passage gets
@@ -613,7 +613,7 @@ async function windowToFloat16k(wrappedBuffers, absStart, absEnd, nativeRate) {
 // means this works the same regardless of which run currently owns the
 // bytes for that time range.
 // Observability (0.1.12): a live user log showed 60+s of buffered audio
-// with ZERO [PM-WINDOW] attempts and no skip reason anywhere — every silent
+// with ZERO [PM-WINDOW] attempts and no skip reason anywhere - every silent
 // `return null` here (and the `if (!run) break` in maybeProcess) is a "did
 // not attempt because X" that the standing rule requires to surface in the
 // tab's own console. Throttled per-session so a genuinely stuck state
@@ -630,7 +630,7 @@ function logNoWindowReason(s, key, reason) {
 }
 
 // Cold-start (0.1.13): user reported ~10s to first coverage after a session
-// start/seek — the FIRST window landing at a fresh, disjoint point still had
+// start/seek - the FIRST window landing at a fresh, disjoint point still had
 // to wait for a full WINDOW_S(18s) worth of audio to buffer AND be
 // transcribed before the user got any protection near where they just
 // landed. A small first window gets useful coverage (and, more importantly,
@@ -638,9 +638,9 @@ function logNoWindowReason(s, key, reason) {
 // after. "Cold" is detected structurally rather than via an explicit
 // seek/start event (which offscreen isn't directly told about): the very
 // first window of a session, OR any window whose start isn't immediately
-// adjacent to existing coverage (i.e. it's opening a new, disjoint region —
+// adjacent to existing coverage (i.e. it's opening a new, disjoint region -
 // exactly what a seek/resume produces), counts as cold.
-// MICRO FIRST WINDOW (0.1.18): cut from 5s to 2.5s of audio — with a warm
+// MICRO FIRST WINDOW (0.1.18): cut from 5s to 2.5s of audio - with a warm
 // model (~0.2 rtf steady-state), that's first coverage in ~0.5s of compute
 // once the model is actually warm (see the eager-preload fix). Growable
 // per COLD_START_RTF_MARGIN_S below when the measured rtf says 2.5s alone
@@ -650,50 +650,50 @@ const COLD_START_MIN_NEW_S = 1.5;
 const COLD_START_ADJACENCY_S = 3;
 // AIM AHEAD, NOT BEHIND (0.1.18): a live log showed a cold window picked
 // correctly at the playhead (t=3334) but the playhead had moved to 3341 by
-// the time it finished — a window is only useful if its OWN END is still
+// the time it finished - a window is only useful if its OWN END is still
 // ahead of the playhead once compute finishes. Grow the cold window (up to
 // full WINDOW_S) using the session's last measured compute-only rtf so
-// `window_duration * (1 - rtf) >= gap + margin` holds — i.e. the window
+// `window_duration * (1 - rtf) >= gap + margin` holds - i.e. the window
 // outruns the playhead by at least COLD_START_RTF_MARGIN_S once transcribed.
 // rtf is clamped well below 1 (COLD_START_RTF_CLAMP_MAX) so a slow/cold
-// measurement can't produce a negative or absurd required size — in that
+// measurement can't produce a negative or absurd required size - in that
 // case just fall back to a generously large (but still capped) window
 // rather than doing fragile math with a >=1 rtf.
 const COLD_START_RTF_MARGIN_S = 1;
 const COLD_START_RTF_CLAMP_MIN = 0.15;
 const COLD_START_RTF_CLAMP_MAX = 0.7;
 // Tiny-tail-window deferral (0.1.13): a live log showed a 0.05s window
-// attempted at rtf=68 — fixed per-call overhead (model warmup already paid,
+// attempted at rtf=68 - fixed per-call overhead (model warmup already paid,
 // but demux/resample/generate call overhead) completely dominates a sliver
 // that small, for near-zero transcription value. Defer the tail case too
 // (previously exempted outright via `end < high`) until either enough new
 // audio has batched in, or the run has genuinely gone quiet for a few
 // seconds (implying this really is the last bit that will ever arrive, e.g.
-// end of video) — otherwise it'll just be picked up, larger, next time.
+// end of video) - otherwise it'll just be picked up, larger, next time.
 const MIN_TAIL_S = 2;
 const TAIL_STALL_MS = 3000;
 const WINDOW_LOOP_THRESHOLD = 3; // same exact [absStart,absEnd) attempted this many times without ever registering covered -> force-cover and alarm (see transcribeWindow)
-const ALL_WORDS_CAP = 2000; // trailing-window cap for s.allWords/s.emittedKeys — see the memory-leak note at the trim site
+const ALL_WORDS_CAP = 2000; // trailing-window cap for s.allWords/s.emittedKeys - see the memory-leak note at the trim site
 const SINK_ERROR_THRESHOLD = 3; // same exact window THROWING a decode error this many times in a row -> DRM/undecodable, see markUnanalyzable
-const HANG_THRESHOLD = 6; // 0.1.23: same exact window HANGING (stage timeout, no thrown error) this many times in a row -> unanalyzable — higher than SINK_ERROR_THRESHOLD on purpose: after the 0.1.23 fed-data clamp + end-of-stream-flush fixes, a genuine hang should be much rarer, so a couple of stray timeouts shouldn't give up as fast as a confident thrown DRM-style error does
+const HANG_THRESHOLD = 6; // 0.1.23: same exact window HANGING (stage timeout, no thrown error) this many times in a row -> unanalyzable - higher than SINK_ERROR_THRESHOLD on purpose: after the 0.1.23 fed-data clamp + end-of-stream-flush fixes, a genuine hang should be much rarer, so a couple of stray timeouts shouldn't give up as fast as a confident thrown DRM-style error does
 
-// Stage-timeout guard (0.1.21) — a live user session on a LIVE STREAM
-// (audio/mp4, codecs="mp4a.40.2" — the never-before-exercised AAC/fMP4
+// Stage-timeout guard (0.1.21) - a live user session on a LIVE STREAM
+// (audio/mp4, codecs="mp4a.40.2" - the never-before-exercised AAC/fMP4
 // path) produced ZERO windows, ZERO skips, and ZERO errors for 2+ minutes
 // after one initial [PM-NO-WINDOW]. Traced by elimination against every
 // existing error/skip path in this function (see PIPELINE_NOTES "0.1.21"):
 // getPrimaryAudioTrack() resolving with a falsy track would have logged its
 // own [PM-SKIP] (never seen), and sink.buffers() throwing would have hit
-// the try/catch below (also never seen) — so nothing in THIS file's own
+// the try/catch below (also never seen) - so nothing in THIS file's own
 // code ever threw or rejected. The only remaining explanation is a promise
 // from mediabunny/WebCodecs (getPrimaryAudioTrack, track.getSampleRate, or
-// the sink.buffers() decode generator) that simply never settles — a class
+// the sink.buffers() decode generator) that simply never settles - a class
 // of failure this file cannot fully audit from outside a third-party
 // library's internals, and one the standing "every did-not-attempt must
 // surface" rule cannot honor with a plain try/catch, since nothing ever
 // throws. A bounded timeout converts "silently hangs forever" into
 // "loudly fails within STAGE_TIMEOUT_MS", regardless of the underlying
-// reason — this is the deliberate, scoped fix here: make the failure mode
+// reason - this is the deliberate, scoped fix here: make the failure mode
 // visible and recoverable rather than fully root-causing mediabunny's
 // internals (which would need a live AAC/fMP4 repro this pass didn't have).
 const STAGE_TIMEOUT_MS = 25000; // generously above any legitimate stage per the measured RTF table (steady-state well under 1x realtime)
@@ -702,7 +702,7 @@ function withStageTimeout(promise, label) {
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => {
       const err = new Error('stage "' + label + '" did not settle within ' + STAGE_TIMEOUT_MS + 'ms (hung promise, not a thrown error)');
-      err.isStageTimeout = true; // 0.1.23: lets callers route a genuine hang to a SEPARATE counter/threshold than a real thrown decode error — see HANG_THRESHOLD
+      err.isStageTimeout = true; // 0.1.23: lets callers route a genuine hang to a SEPARATE counter/threshold than a real thrown decode error - see HANG_THRESHOLD
       reject(err);
     }, STAGE_TIMEOUT_MS);
   });
@@ -712,7 +712,7 @@ function withStageTimeout(promise, label) {
 function markUnanalyzable(s, reason) {
   if (s.unanalyzable) return; // already marked, don't spam
   s.unanalyzable = true;
-  notifyTab(s, '[PM-UNANALYZABLE] ' + reason + ' — giving up on transcription for this video; releasing safe-mode protection rather than leaving it muted forever with no way to actually analyze it');
+  notifyTab(s, '[PM-UNANALYZABLE] ' + reason + ' - giving up on transcription for this video; releasing safe-mode protection rather than leaving it muted forever with no way to actually analyze it');
   chrome.runtime.sendMessage({ type: 'pm-unanalyzable', tabId: s.tabId, videoId: s.videoId }).catch(() => {});
 }
 
@@ -720,23 +720,23 @@ function markUnanalyzable(s, reason) {
 // forward = uncovered forever": availability used to be modeled as ONE
 // monotonic scalar (s.bufferedEndS, `Math.max`-accumulated across every
 // segment). A big forward seek within the SAME SourceBuffer produces NO new
-// init segment (isInit stays false — nothing resets anything), so capture.js
+// init segment (isInit stays false - nothing resets anything), so capture.js
 // correctly recorded a brand-new, DISJOINT range far ahead of the old one
 // (confirmed live: ranges [2640-2860] and [3220-3310+] both growing,
-// segs 144-229 all landing) — but the scalar model has no way to represent
+// segs 144-229 all landing) - but the scalar model has no way to represent
 // "there are two separate available regions"; it just silently ignored the
 // new one whenever it happened to be summarized behind a stale read,
 // permanently reporting "not enough buffered audio" for a region that was
 // actually fully buffered and waiting. Fix: track availability as a real
 // interval set (`s.bufferedRanges`, merged from every segment's own
-// growthAbsStart/growthAbsEnd — literally the span OUR hook watched land,
+// growthAbsStart/growthAbsEnd - literally the span OUR hook watched land,
 // not a derived scalar), and always pick from the range CONTAINING
-// currentTime, or — if the playhead has jumped somewhere not buffered yet —
+// currentTime, or - if the playhead has jumped somewhere not buffered yet -
 // the NEAREST range ahead of it. Never a linear frontier that can only ever
 // grow from where it last was.
 // In-flight-aware coverage view (0.1.18): a live log showed the EXACT same
 // span [2520.17,2525.17) picked and transcribed twice back-to-back (its own
-// [PM-TIMELINE-ALARM] fired on the resulting near-duplicate text) — the
+// [PM-TIMELINE-ALARM] fired on the resulting near-duplicate text) - the
 // picker had no way to know a span was already dispatched and not yet
 // applied to s.covered. Folding `s.inFlightWindows` into the coverage view
 // used for picking (never into `s.covered` itself, which must stay the
@@ -753,15 +753,15 @@ function coverageViewForPicking(s) {
   return s.covered.concat(extra).sort((a, b) => a.start - b.start);
 }
 
-// DECODE_FED_GUARD_S (0.1.23): see PIPELINE_NOTES "0.1.23" — a live session
+// DECODE_FED_GUARD_S (0.1.23): see PIPELINE_NOTES "0.1.23" - a live session
 // requested sink.buffers(2.51,19.60) while the run's stream had actually
 // only been fed audio through 5.06s. ReadableStreamSource._read() has no
 // way to distinguish "no more data YET" from "no more data EVER" until the
-// stream is explicitly closed, so it just waits — forever, if the extra
+// stream is explicitly closed, so it just waits - forever, if the extra
 // bytes never arrive within the caller's own patience. `targetRange.end`
 // (from s.bufferedRanges, SESSION-level, merged across every segment ever
 // reported) can legitimately race ahead of what any ONE specific run's own
-// stream has actually been fed — this guard keeps window requests within
+// stream has actually been fed - this guard keeps window requests within
 // what's verifiably already in the run's stream.
 const DECODE_FED_GUARD_S = 0.25;
 
@@ -785,9 +785,9 @@ function pickNextWindow(s, run) {
   const lowBound = Math.max(targetRange.start, ct - OVERLAP_S);
   const bufferedHigh = targetRange.end - TAIL_SAFETY_S;
   let high = bufferedHigh;
-  // Fed-data clamp (0.1.23) — see DECODE_FED_GUARD_S above. Skipped once the
+  // Fed-data clamp (0.1.23) - see DECODE_FED_GUARD_S above. Skipped once the
   // run's stream has been explicitly closed (end-of-stream flush, or
-  // superseded by a newer run) — a closed stream reports "no more data"
+  // superseded by a newer run) - a closed stream reports "no more data"
   // cleanly instead of hanging, so there's nothing left to guard against.
   let fedClampActive = false;
   if (run && !run.streamClosed) {
@@ -804,7 +804,7 @@ function pickNextWindow(s, run) {
       fedClampActive
         ? ('session-level buffered range reaches ' + bufferedHigh.toFixed(2) + ' but this run has only actually been fed audio through ' +
             (run.fedEnd != null ? run.fedEnd.toFixed(2) : 'nothing yet') +
-            ' — deferring rather than requesting a decode range beyond fed data (would hang forever, see PIPELINE_NOTES "0.1.23")')
+            ' - deferring rather than requesting a decode range beyond fed data (would hang forever, see PIPELINE_NOTES "0.1.23")')
         : ('range [' + targetRange.start.toFixed(2) + ',' + targetRange.end.toFixed(2) + ') at the playhead not far enough ahead yet (currentTimeS=' + ct.toFixed(2) + ')')
     );
     return null;
@@ -813,7 +813,7 @@ function pickNextWindow(s, run) {
   const coverageView = coverageViewForPicking(s);
   let start = firstUncoveredPoint(coverageView, lowBound, high);
   if (start == null) {
-    // Fully covered (or in-flight) so far within this range — extend
+    // Fully covered (or in-flight) so far within this range - extend
     // forward WITHIN THE SAME RANGE only (never jump to some other,
     // unrelated buffered region just because it happens to be later in the
     // list's ordering).
@@ -823,7 +823,7 @@ function pickNextWindow(s, run) {
     }
     start = Math.max(maxCoveredInRange, lowBound);
     if (start >= high) {
-      logNoWindowReason(s, 'fully-covered', 'fully covered (or in flight) up to the available buffer in range [' + lowBound.toFixed(2) + ',' + high.toFixed(2) + ') — nothing new to transcribe right now');
+      logNoWindowReason(s, 'fully-covered', 'fully covered (or in flight) up to the available buffer in range [' + lowBound.toFixed(2) + ',' + high.toFixed(2) + ') - nothing new to transcribe right now');
       return null;
     }
   }
@@ -833,18 +833,18 @@ function pickNextWindow(s, run) {
 
   if (isColdStart) {
     // FIX (0.1.17): a live seek (to t=3289) showed the FIRST window aimed at
-    // [3280.00,3285.00) — the very START of the freshly-captured range,
+    // [3280.00,3285.00) - the very START of the freshly-captured range,
     // entirely BEHIND the playhead by the time transcription finished
-    // (playhead had reached ~3294 by then) — wasting the coldest, slowest
+    // (playhead had reached ~3294 by then) - wasting the coldest, slowest
     // window (paid model-load cost, see item 2) on audio the user had
     // already passed and would never hear (mute) or need (it's gone).
-    // Audio behind the playhead is lowest priority — useful only for
+    // Audio behind the playhead is lowest priority - useful only for
     // rewind protection, which can wait until ahead-coverage is
     // comfortable. Force the cold window to start at most 1s behind
     // currentTime, never at the captured range's own start.
     const coldFloor = Math.max(targetRange.start, ct - 1);
     if (coldFloor >= high) {
-      // The entire currently-captured range is behind the playhead — there
+      // The entire currently-captured range is behind the playhead - there
       // is NOTHING to usefully transcribe near/ahead of it yet. Defer
       // rather than burn a slow cold window on stale audio; safe mode's
       // muting already protects the user while waiting for capture to
@@ -853,7 +853,7 @@ function pickNextWindow(s, run) {
         s,
         'cold-behind-playhead',
         'captured range [' + targetRange.start.toFixed(2) + ',' + targetRange.end.toFixed(2) +
-          ') is entirely behind the playhead (currentTimeS=' + ct.toFixed(2) + ') — deferring rather than wasting a cold window on already-passed audio'
+          ') is entirely behind the playhead (currentTimeS=' + ct.toFixed(2) + ') - deferring rather than wasting a cold window on already-passed audio'
       );
       return null;
     }
@@ -883,7 +883,7 @@ function pickNextWindow(s, run) {
   if (size < MIN_TAIL_S && end >= high) {
     const stalledLongEnough = Date.now() - (s.lastBufferedGrowthWall || 0) > TAIL_STALL_MS;
     if (!stalledLongEnough) {
-      logNoWindowReason(s, 'tiny-tail-deferred', 'tail window only ' + size.toFixed(2) + 's (< MIN_TAIL_S=' + MIN_TAIL_S + 's) — deferring until more audio batches in or the run appears finished');
+      logNoWindowReason(s, 'tiny-tail-deferred', 'tail window only ' + size.toFixed(2) + 's (< MIN_TAIL_S=' + MIN_TAIL_S + 's) - deferring until more audio batches in or the run appears finished');
       return null;
     }
   }
@@ -893,14 +893,14 @@ function pickNextWindow(s, run) {
 
 async function transcribeWindow(s, run, absStart, absEnd) {
   const t0 = performance.now();
-  // Generation guard (0.1.18) — captured at entry; checked again right
+  // Generation guard (0.1.18) - captured at entry; checked again right
   // before applying any result. A stale in-flight call from a prior
   // generation (a page-refresh reset, or a seek) can't be aborted mid-call,
-  // but its result is discarded rather than applied once superseded — see
+  // but its result is discarded rather than applied once superseded - see
   // dropSessionsForTab()/the pm-seek handler for where generation bumps.
   const myGeneration = s.generation;
 
-  // Track/sink are resolved ONCE per run and cached — re-fetching the
+  // Track/sink are resolved ONCE per run and cached - re-fetching the
   // primary audio track is cheap once resolved, but constructing a fresh
   // Input/re-parsing from scratch (the old approach) is not. See newRun().
   const windowKeyForErrors = absStart.toFixed(2) + ',' + absEnd.toFixed(2);
@@ -922,18 +922,18 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     }
     let track;
     try {
-      // Stage-timeout guard (0.1.21) — see the withStageTimeout comment
+      // Stage-timeout guard (0.1.21) - see the withStageTimeout comment
       // above: getPrimaryAudioTrack() can hang with no rejection at all on
       // an as-yet-unaudited container/codec path (confirmed live on an
       // AAC/fMP4 live stream). run.trackReadyPromise itself is left
-      // untouched on timeout (not nulled) — if it genuinely resolves later,
+      // untouched on timeout (not nulled) - if it genuinely resolves later,
       // the NEXT attempt picks it up for free; only our own wait on it here
       // is bounded.
       track = await withStageTimeout(run.trackReadyPromise, 'track-ready');
     } catch (e) {
       // 0.1.23: hangs get their OWN counter/threshold (s.hangAttempts /
       // HANG_THRESHOLD), separate from s.sinkErrorAttempts's fast
-      // DRM-detection threshold — see HANG_THRESHOLD's own comment for why.
+      // DRM-detection threshold - see HANG_THRESHOLD's own comment for why.
       const hangCount = (s.hangAttempts.get(windowKeyForErrors) || 0) + 1;
       s.hangAttempts.set(windowKeyForErrors, hangCount);
       if (hangCount >= HANG_THRESHOLD) {
@@ -970,7 +970,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     // place a container/codec-specific mediabunny/WebCodecs path could hang
     // with no thrown error at all (a live AAC/fMP4 session produced zero
     // [PM-SKIP]/[PM-DEMUX-ERR] lines, which rules out every OTHER catch
-    // path in this function — see the withStageTimeout comment above).
+    // path in this function - see the withStageTimeout comment above).
     // Wrapped as one IIFE so the WHOLE decode (not each individual chunk)
     // is bounded by a single timeout.
     await withStageTimeout(
@@ -981,15 +981,15 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     );
   } catch (e) {
     // DRM/undecodable-content detection (0.1.15) vs. silent-hang detection
-    // (0.1.21, split into its OWN counter/threshold in 0.1.23 — see
+    // (0.1.21, split into its OWN counter/threshold in 0.1.23 - see
     // HANG_THRESHOLD's comment): a THROWN decode error (protected/DRM
     // content is the expected real-world cause) is a fast, confident
-    // signal — SINK_ERROR_THRESHOLD stays low. A stage TIMEOUT (no thrown
-    // error — an unaudited container/codec path, OR the exact fed-data-
+    // signal - SINK_ERROR_THRESHOLD stays low. A stage TIMEOUT (no thrown
+    // error - an unaudited container/codec path, OR the exact fed-data-
     // beyond-what's-fed race this version's clamp is meant to prevent in
     // the first place) is now expected to be much rarer, so it gets the
     // higher HANG_THRESHOLD before giving up. Either way, repeated failure
-    // on the SAME exact window isn't a transient "not enough data yet" —
+    // on the SAME exact window isn't a transient "not enough data yet" -
     // give up on this session entirely rather than retrying forever,
     // releasing safe-mode muting via `pm-unanalyzable` (see below) so
     // content that will never decode is never left permanently muted with
@@ -1015,12 +1015,12 @@ async function transcribeWindow(s, run, absStart, absEnd) {
 
   // Slicing resilience (0.1.11): NEVER assume the decoded buffers cover the
   // full requested [absStart,absEnd) window just because that's what we
-  // asked sink.buffers() for — a byte gap in the run's stream (a dropped/
+  // asked sink.buffers() for - a byte gap in the run's stream (a dropped/
   // missing segment, or mediabunny simply not having decoded that far yet)
   // must surface as an actual, smaller coverage span, not be silently
   // treated as "the whole window is covered". Each wrapped AudioBuffer
   // carries mediabunny's own decoded timestamp (container time, untouched)
-  // — that is the ONLY source of truth for what was actually covered.
+  // - that is the ONLY source of truth for what was actually covered.
   let actualMinStart = wrapped[0].timestamp;
   let actualMaxEnd = wrapped[0].timestamp + wrapped[0].buffer.duration;
   for (const wb of wrapped) {
@@ -1037,21 +1037,21 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       s,
       '[PM-COVERAGE-GAP] requested window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) +
         ') but decoded audio only actually spans [' + coverStart.toFixed(2) + ',' + coverEnd.toFixed(2) +
-        ') — treating the shortfall as a real gap (will be revisited), not marking the full requested window covered'
+        ') - treating the shortfall as a real gap (will be revisited), not marking the full requested window covered'
     );
   }
 
   // Resample-rate sanity check against INDEPENDENT ground truth (not just
   // re-deriving "expected" from the same formula as "actual", which can
   // never fail). nativeRate is what we tell the WebAudio resampler the
-  // source rate is — if it's wrong (e.g. codec misreport), the resampler
+  // source rate is - if it's wrong (e.g. codec misreport), the resampler
   // silently stretches/shrinks the whole timeline, which would systematically
   // shift every downstream timestamp. Cross-check it against the actual
   // decoded audio: sum each wrapped buffer's own (rate-independent) duration
   // and compare to the span it claims to cover via timestamps.
   // Log collapse (0.1.15): this used to log an unconditional [PM-RESAMPLE]
   // line on EVERY window (already redundant with [PM-WINDOW]'s own
-  // mediaSpan) — the ring buffer evicts in ~2 minutes under that volume,
+  // mediaSpan) - the ring buffer evicts in ~2 minutes under that volume,
   // which is worse for the actual "flight recorder" goal than only logging
   // when something is actually wrong. Both -WARN checks below already only
   // fire on genuine disagreement/mismatch; that's the only case worth a
@@ -1059,26 +1059,26 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   const decodedDurationSum = wrapped.reduce((acc, wb) => acc + wb.buffer.duration, 0);
   const claimedSpan = wrapped.length ? wrapped[wrapped.length - 1].timestamp + wrapped[wrapped.length - 1].duration - wrapped[0].timestamp : 0;
   if (nativeRate !== 48000) {
-    log('[PM-RESAMPLE-WARN] unexpected nativeRate=' + nativeRate + ' (Opus/WebM is normally 48000Hz) — a wrong rate here would silently corrupt the WebAudio resample and shift every timestamp downstream');
+    log('[PM-RESAMPLE-WARN] unexpected nativeRate=' + nativeRate + ' (Opus/WebM is normally 48000Hz) - a wrong rate here would silently corrupt the WebAudio resample and shift every timestamp downstream');
   }
   if (Math.abs(decodedDurationSum - claimedSpan) > 0.5) {
-    log('[PM-RESAMPLE-WARN] decoded buffer durations do not sum to their own claimed timestamp span (gap/overlap in decode) — decodedDurationSum=' + decodedDurationSum.toFixed(3) + ' claimedSpan=' + claimedSpan.toFixed(3));
+    log('[PM-RESAMPLE-WARN] decoded buffer durations do not sum to their own claimed timestamp span (gap/overlap in decode) - decodedDurationSum=' + decodedDurationSum.toFixed(3) + ' claimedSpan=' + claimedSpan.toFixed(3));
   }
 
   const float16k = await windowToFloat16k(wrapped, absStart, absEnd, nativeRate);
   const tDecoded = performance.now();
-  // [PM-FIRST-COVERAGE] milestone (0.1.18): "decoded" — see the full
+  // [PM-FIRST-COVERAGE] milestone (0.1.18): "decoded" - see the full
   // breakdown log at the end of this function.
   if (!s.firstCoverageLogged && s.firstWindowDecodedAt == null) s.firstWindowDecodedAt = Date.now();
 
   if (s.generation !== myGeneration) {
-    // Superseded (page reset or seek) while demuxing — don't even bother
+    // Superseded (page reset or seek) while demuxing - don't even bother
     // queuing the expensive worker call for a window nobody wants anymore.
     log('[PM-STALE] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') abandoned after decode: generation changed (' + myGeneration + ' -> ' + s.generation + ')');
     return false;
   }
 
-  // Model-in-use is tab-visible exactly once per session (0.1.13) — per the
+  // Model-in-use is tab-visible exactly once per session (0.1.13) - per the
   // standing "nothing that affects behavior stays invisible" rule, and
   // specifically to let a live session's log confirm what DEFAULT_MODEL
   // actually resolved to (the whole point of the tiny->base 0.1.6 change was
@@ -1089,23 +1089,23 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     notifyTab(s, '[PM-MODEL] using model="' + resolvedId + '" (' + MODEL_IDS[resolvedId] + '), default="' + DEFAULT_MODEL + '"' + (resolvedId !== DEFAULT_MODEL ? ' [overridden via pm_model]' : ''));
   }
 
-  // MULTILINGUAL DETECTION (0.1.25) — see PIPELINE_NOTES "0.1.25" for the
+  // MULTILINGUAL DETECTION (0.1.25) - see PIPELINE_NOTES "0.1.25" for the
   // full design/tradeoff writeup. Kicked off (fire-and-forget, never
-  // awaited here) exactly once per session, on the FIRST window only —
+  // awaited here) exactly once per session, on the FIRST window only -
   // `s.languageState` flips 'pending' -> 'detecting' right away so a
   // fast-following second window (or a second tab's session) can never
   // double-fire it. Deliberately does NOT block or change THIS window's own
   // transcription, which still runs on `s.modelId` (base.en by default,
-  // already eagerly warm — see the boot preload) exactly as before 0.1.25:
-  // this is the "no English regression" requirement — the common (English)
+  // already eagerly warm - see the boot preload) exactly as before 0.1.25:
+  // this is the "no English regression" requirement - the common (English)
   // case pays ZERO added latency or model download on window 1. Detection
   // uses a SEPARATE, smaller 'lang-detect' model (never `s.modelId`, never
   // 'multilingual') via a single cheap decoder step (see
-  // whisper-worker-src.js's handleDetectLanguage) — not a full
-  // transcription — so its cost is small even though it's an extra model
+  // whisper-worker-src.js's handleDetectLanguage) - not a full
+  // transcription - so its cost is small even though it's an extra model
   // load. Skipped entirely if multilingual support is off (pm_multilingual)
   // or the user already explicitly forced `modelId` to 'multilingual'
-  // themselves (nothing to detect toward in that case — they're already
+  // themselves (nothing to detect toward in that case - they're already
   // covering every language). Routed through the SAME `runSerialized`
   // worker mutex as every transcribe call (see below) since it shares the
   // same single-threaded worker.
@@ -1124,7 +1124,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
         );
         if (lang !== 'en') {
           // Lazy load (per spec): only pull in the FULL multilingual model
-          // once we actually know we need it — fired here so window 2
+          // once we actually know we need it - fired here so window 2
           // doesn't have to pay the load cost fully inline (may still
           // partially overlap if window 2 arrives before this finishes;
           // getTranscriber's own promise cache makes that safe/free either
@@ -1135,7 +1135,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       })
       .catch((e) => {
         // Detection failing must never block or break transcription itself
-        // — fall back to the English default, exactly as if detection had
+        // - fall back to the English default, exactly as if detection had
         // never run, and say so loudly (this is a real, if rare, failure
         // mode worth knowing about, not something to silently swallow).
         notifyTab(s, '[PM-LANG] detection failed, staying on English default: ' + String(e && e.message ? e.message : e));
@@ -1145,7 +1145,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   }
   // Resolve which model THIS window actually transcribes with. Window 1
   // (languageState still 'pending'/'detecting' at this point, since the
-  // above never awaits) always uses `s.modelId` — the detection result
+  // above never awaits) always uses `s.modelId` - the detection result
   // literally cannot exist yet. From languageState 'resolved' onward, a
   // non-English detection switches every subsequent window to the full
   // multilingual model; English (or multilingual disabled, or the user's
@@ -1163,7 +1163,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // anyway). The wall-clock timer starts only once this call actually
   // BEGINS executing (not when it's enqueued behind another tab's window),
   // so modelRtf keeps measuring real transcribe time, not queue-wait.
-  const tBeforeQueue = performance.now(); // wallMs SPLIT (0.1.18) — see queueMs/computeMs below
+  const tBeforeQueue = performance.now(); // wallMs SPLIT (0.1.18) - see queueMs/computeMs below
   let tTranscribeStart = 0;
   const workerResult = await runSerialized(() => {
     tTranscribeStart = performance.now();
@@ -1176,7 +1176,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       // (transformers.js's ASR pipeline doesn't expose a direct
       // condition_on_previous_text toggle to set this explicitly). A SINGLE
       // window's own decode can still degenerate into a repetition loop on
-      // ambiguous/quiet audio (the "it's him" x40 case) — no_repeat_ngram_size
+      // ambiguous/quiet audio (the "it's him" x40 case) - no_repeat_ngram_size
       // is passed through in case the underlying generate() call honors it;
       // NOT verified against this exact transformers.js version, so the
       // guaranteed defense is collapseHallucinationLoops() below, not this.
@@ -1185,7 +1185,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   });
   const transcribeMs = performance.now() - tTranscribeStart;
   // wallMs SPLIT (0.1.18): a live paste showed wallMs-derived rtf of 3-8
-  // right next to modelRtf of 0.2-0.5 — almost all of it was QUEUE wait (a
+  // right next to modelRtf of 0.2-0.5 - almost all of it was QUEUE wait (a
   // stale/superseded session's own backlog competing for the same shared
   // worker), not compute, but wallMs alone couldn't show that. decodeMs
   // covers demux+resample (t0 to just after windowToFloat16k); queueMs is
@@ -1196,14 +1196,14 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   const computeMs = transcribeMs;
 
   if (s.generation !== myGeneration) {
-    // Superseded while the (unabortable) worker call was in flight — the
+    // Superseded while the (unabortable) worker call was in flight - the
     // result is real, but for a playhead nobody's at anymore. Discard
     // rather than apply/log it as a real window (this is exactly the
     // near-duplicate-window symptom a live [PM-TIMELINE-ALARM] caught).
     notifyTab(
       s,
       '[PM-STALE] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') result discarded: generation changed (' +
-        myGeneration + ' -> ' + s.generation + ') while transcribing — decodeMs=' + Math.round(decodeMs) +
+        myGeneration + ' -> ' + s.generation + ') while transcribing - decodeMs=' + Math.round(decodeMs) +
         ' queueMs=' + Math.round(queueMs) + ' computeMs=' + Math.round(computeMs)
     );
     return false;
@@ -1212,26 +1212,26 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // [PM-FIRST-COVERAGE] milestone (0.1.18): "words returned".
   if (!s.firstCoverageLogged && s.firstWindowWordsAt == null) s.firstWindowWordsAt = Date.now();
 
-  // float16k's buffer was TRANSFERRED into the worker above — it must never
+  // float16k's buffer was TRANSFERRED into the worker above - it must never
   // be read again on this side (it's detached/zero-length now). `output`
   // below carries everything needed, including per-chunk `rms` (computed
   // inside the worker, where the PCM actually still is).
   const output = { text: workerResult.text, chunks: workerResult.chunks };
   const audioDurationS = absEnd - absStart;
-  // rtf-aware cold-window sizing (0.1.18) feeds off this — track a rolling
+  // rtf-aware cold-window sizing (0.1.18) feeds off this - track a rolling
   // "last known" compute-only rtf so the NEXT cold window (a future seek)
   // can size itself to actually outrun the playhead. Simple last-value,
-  // not an average — the aim-ahead math already clamps it to a sane range.
+  // not an average - the aim-ahead math already clamps it to a sane range.
   s.lastKnownRtf = computeMs / 1000 / audioDurationS;
   // Accounting fix (0.1.11): `rtf` used to be transcribeMs-only (the model
   // call's own throughput) while the `wallMs` logged right alongside it in
   // [PM-WINDOW] is the FULL time since transcribeWindow started, including
-  // demux/track-ready wait and resample — e.g. wallMs=26681 with rtf=0.276
+  // demux/track-ready wait and resample - e.g. wallMs=26681 with rtf=0.276
   // implied the model took ~5s on an 18s window, which was true, but the
   // other ~21.7s of real latency (waiting on data/decode) was invisible from
   // that same log line, misleadingly suggesting the pipeline was keeping up
-  // in real time when it was not. `rtf` is now computed from `wallMs` — the
-  // same basis as the number it's logged next to — so the two are always
+  // in real time when it was not. `rtf` is now computed from `wallMs` - the
+  // same basis as the number it's logged next to - so the two are always
   // consistent and the ratio directly answers "is this attempt, start to
   // finish, keeping up with playback speed?". The model-only figure is kept
   // as `modelRtf` for anyone specifically diagnosing transcription throughput
@@ -1245,7 +1245,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   );
 
   // Transcript sanity filter (0.1.13): a live window emitted "it's him"
-  // ~40x with degenerate timestamps — many zero-duration words (normal/
+  // ~40x with degenerate timestamps - many zero-duration words (normal/
   // common from Whisper, NOT dropped) plus one token with end BEFORE start
   // entirely (s=2700.455 e=2671.095), outside the window's own span. Filter
   // BEFORE anything downstream (dedupe, mute-interval building, AND the
@@ -1284,14 +1284,14 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     notifyTab(
       s,
       '[PM-HALLUCINATION] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') repeated "' + hallucination.phrase +
-        '" ' + hallucination.repeats + 'x consecutively — kept the first couple, dropped the rest (Whisper decoder degeneration, not real speech)'
+        '" ' + hallucination.repeats + 'x consecutively - kept the first couple, dropped the rest (Whisper decoder degeneration, not real speech)'
     );
   }
 
   // Timeline-shift self-check (0.1.11): if two CONSECUTIVE windows for this
   // session produce near-identical text, that's almost always proof the same
   // audio got decoded/labeled twice under different claimed absolute spans
-  // (a timeline bug — e.g. the exact "consecutive windows transcribed nearly
+  // (a timeline bug - e.g. the exact "consecutive windows transcribed nearly
   // identical dialogue" symptom from the dropped-segment bug) rather than
   // genuinely repeated dialogue. Measured via shared 4-grams so short,
   // legitimate repeated phrases ("no, no, no") don't false-positive. Uses
@@ -1310,7 +1310,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
         s,
         '[PM-TIMELINE-ALARM] consecutive windows are ' + Math.round(similarity * 100) +
           '% overlapping by 4-gram (prevWindow=[' + s.lastWindowSpan + '] thisWindow=[' +
-          absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ')) — almost certainly the SAME audio ' +
+          absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ')) - almost certainly the SAME audio ' +
           'decoded twice under a shifted timeline, not real repeated dialogue'
       );
     }
@@ -1330,7 +1330,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     // currentTime, no bufferedEnd, no measured/guessed offset anywhere here.
     const videoStart = absStart + wLocalStart;
     const videoEnd = absStart + wLocalEndResolved;
-    // Computed inside the worker (0.1.15) — float16k's buffer was
+    // Computed inside the worker (0.1.15) - float16k's buffer was
     // transferred there for the transcribe call and is no longer readable
     // on this side. See whisper-worker-src.js's rmsAt.
     const rms = tok.rms != null ? tok.rms : 0;
@@ -1349,8 +1349,8 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   if (lowEnergy.length) log('[PM-ENERGY] low-RMS (likely mistimed) words:', lowEnergy.join(' '));
 
   // Memory leak fix (0.1.15): s.allWords (and its s.emittedKeys dedupe set)
-  // were uncapped — every word transcribed for the entire session lifetime
-  // stayed resident. Resync (the only consumer of s.allWords — see
+  // were uncapped - every word transcribed for the entire session lifetime
+  // stayed resident. Resync (the only consumer of s.allWords - see
   // pm-resync below) only actually needs recent words plus current
   // coverage, which is tracked completely separately in s.covered anyway,
   // so trimming old entries never loses coverage information. Cap to a
@@ -1362,7 +1362,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   }
 
   const wallMs = performance.now() - t0;
-  const rtf = wallMs / 1000 / audioDurationS; // see modelRtf note above — consistent basis with wallMs
+  const rtf = wallMs / 1000 / audioDurationS; // see modelRtf note above - consistent basis with wallMs
   const lagMs = Date.now() - s.lastSegWallTime;
 
   try {
@@ -1371,7 +1371,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       tabId: s.tabId,
       videoId: s.videoId,
       words,
-      // Send the ACTUALLY-decoded span, not the requested [absStart,absEnd) —
+      // Send the ACTUALLY-decoded span, not the requested [absStart,absEnd) -
       // content.js's own coveredIntervals (which gates safe-mode muting)
       // is built directly from these; reporting the full requested window
       // regardless of what was really decoded is exactly the "silent
@@ -1386,7 +1386,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       computeMs,
       lagMs,
       // 0.1.25: current detected language (null until resolved, 'en' or a
-      // real code thereafter — pinned per video, see languageState above)
+      // real code thereafter - pinned per video, see languageState above)
       // and the model THIS window actually ran on, so content.js/the pill
       // always has the latest without needing a separate message to have
       // landed first (the dedicated 'pm-language' push, sent once right
@@ -1400,7 +1400,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   }
 
   // Coverage is merged per ACTUALLY-decoded buffer span (own timestamps),
-  // not the requested window — see the [PM-COVERAGE-GAP] check above. This
+  // not the requested window - see the [PM-COVERAGE-GAP] check above. This
   // also naturally handles an internal gap between two decoded buffers
   // within the same window (mergeRangeInto won't bridge a real hole), so a
   // future pickNextWindow() call will pick that hole back up instead of it
@@ -1410,14 +1410,14 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   }
 
   // [PM-FIRST-COVERAGE] (0.1.18): one-line, per-stage breakdown of the cold
-  // path — captured -> relayed -> picked -> decoded -> words -> covered —
+  // path - captured -> relayed -> picked -> decoded -> words -> covered -
   // logged ONCE, the first time a session's coverage is actually applied,
   // so any future paste shows exactly where startup time goes instead of
   // requiring guesswork across capture.js/content.js/background.js/this
   // file. Milestones are best-effort Date.now() wall-clock stamps set at
   // each stage's own call site (see getOrCreateSession's pm-segment
   // handler for captured/relayed, pickNextWindow's caller in maybeProcess
-  // for picked, and this function for decoded/words) — all within the same
+  // for picked, and this function for decoded/words) - all within the same
   // browser process, so directly comparable despite crossing JS contexts.
   if (!s.firstCoverageLogged) {
     s.firstCoverageLogged = true;
@@ -1442,7 +1442,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
 
   // Loop-breaker (0.1.14, made LOCATION-BASED in 0.1.20): a live session
   // attempted the EXACT SAME window ([2640.00,2645.00), words=0) every ~3s
-  // for 18 minutes (~350 attempts) — the per-buffer coverage merge above
+  // for 18 minutes (~350 attempts) - the per-buffer coverage merge above
   // already runs unconditionally regardless of word count (silence IS
   // coverage), so this wasn't a "word count gated the merge" bug; something
   // about the decoded buffers' OWN reported timestamps at that specific
@@ -1451,23 +1451,23 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // pickNextWindow kept re-selecting it identically forever.
   //
   // 0.1.20 REGRESSION FOUND (bug #1): a live paste showed [2587.02,2593.69)
-  // and [2587.02,~2590.9) each re-transcribed ~5x alternately over 40s —
+  // and [2587.02,~2590.9) each re-transcribed ~5x alternately over 40s -
   // same STUCK LOCATION as the original 0.1.14 bug, but the exact-span key
   // above never accumulated attempts because the exact END kept changing
   // between attempts. Root cause: 0.1.18's rtf-aware cold-window growth
   // (pickNextWindow's `neededS` math) sizes a cold window off `s.lastKnownRtf`,
   // which is updated after EVERY attempt (including a 0-word one that still
-  // decoded "successfully") — so each retry at the same stuck START got a
+  // decoded "successfully") - so each retry at the same stuck START got a
   // slightly different rtf estimate and therefore a different exact END,
   // defeating the exact-(absStart,absEnd) key even though it was genuinely
   // the same stuck spot every time (itself usually caused by a decode
   // producing buffers whose own timestamps don't actually land where
-  // requested — see bug #2's run-boundary fix, which addresses the most
+  // requested - see bug #2's run-boundary fix, which addresses the most
   // common real cause of that mismatch: feeding a timeline-discontinuous
   // append into a run whose sequential demuxer had already moved past it).
   // Fix: key the breaker on a rounded START LOCATION instead of the exact
   // span, and only check whether a small anchor window right at that start
-  // is still uncovered — this is robust to the end drifting attempt to
+  // is still uncovered - this is robust to the end drifting attempt to
   // attempt for the same stuck location, while still leaving genuinely
   // different (forward-progressing) window starts as separate counters.
   const LOOP_START_BUCKET_S = 1;
@@ -1481,13 +1481,13 @@ async function transcribeWindow(s, run, absStart, absEnd) {
         s,
         '[PM-WINDOW-LOOP] location near ' + absStart.toFixed(2) + ' attempted ' + attempts +
           'x (latest span [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ')) without ever registering as covered ' +
-          '(likely a decoded-timestamp mismatch at this exact position) — force-marking covered to break the loop'
+          '(likely a decoded-timestamp mismatch at this exact position) - force-marking covered to break the loop'
       );
       mergeRangeInto(s.covered, absStart, anchorEnd);
       s.windowAttempts.delete(locKey);
     }
   } else {
-    s.windowAttempts.delete(locKey); // resolved normally — don't let the map grow unbounded over a long session
+    s.windowAttempts.delete(locKey); // resolved normally - don't let the map grow unbounded over a long session
   }
 
   return true;
@@ -1497,26 +1497,26 @@ function sendHeartbeat(s) {
   chrome.runtime.sendMessage({ type: 'pm-heartbeat', tabId: s.tabId, videoId: s.videoId }).catch(() => {});
 }
 
-// OBSERVABILITY CHOKE POINT (0.1.23) — see PIPELINE_NOTES "0.1.23": a live
+// OBSERVABILITY CHOKE POINT (0.1.23) - see PIPELINE_NOTES "0.1.23": a live
 // session showed maybeProcess's loop go completely silent (no [PM-WINDOW],
 // no [PM-NO-WINDOW], no skip) for 5+s despite captured, uncovered audio
 // sitting available within the playhead horizon. The loop had SEVERAL exit
 // paths that used plain log() (this document's own console) instead of
-// notifyTab() (tab-visible) — invisible from the tab's own console/Copy
+// notifyTab() (tab-visible) - invisible from the tab's own console/Copy
 // Logs output, which the rest of this file's observability convention is
 // built around. Rather than patch each individual silent path found this
 // pass (and trust every FUTURE gate added to this loop to remember to log
 // correctly), every exit from the loop below now funnels through this ONE
 // choke point, which independently RE-DERIVES "is there actually
 // uncovered-and-captured work being left on the table right now" and, if
-// so, ALWAYS names the specific gate that stopped — a future gate that
+// so, ALWAYS names the specific gate that stopped - a future gate that
 // forgets to log explicitly can no longer idle silently, because this
 // choke point doesn't trust any call site to have logged correctly; it
 // checks the real state itself.
 const IDLE_GATE_DIAG_THROTTLE_MS = 5000;
 // Mirrors content.js's own "playhead horizon" concept (PROTECT_MARGIN, 5s)
 // so the two surfaces agree on what "work available near the playhead"
-// means — see the debug-overlay alignment note in content.js for the other
+// means - see the debug-overlay alignment note in content.js for the other
 // half of this.
 const WORK_CHECK_HORIZON_S = 5;
 function hasUncoveredCapturedWorkNearPlayhead(s) {
@@ -1531,7 +1531,7 @@ function hasUncoveredCapturedWorkNearPlayhead(s) {
   return false;
 }
 function reportIdleGate(s, gateName, detail) {
-  if (!hasUncoveredCapturedWorkNearPlayhead(s)) return; // nothing left to do near the playhead right now — this exit is legitimate, not a bug, don't alarm
+  if (!hasUncoveredCapturedWorkNearPlayhead(s)) return; // nothing left to do near the playhead right now - this exit is legitimate, not a bug, don't alarm
   const now = Date.now();
   const lastByGate = s.lastIdleGateDiagWall || (s.lastIdleGateDiagWall = {});
   if (lastByGate[gateName] && now - lastByGate[gateName] < IDLE_GATE_DIAG_THROTTLE_MS) return;
@@ -1540,14 +1540,14 @@ function reportIdleGate(s, gateName, detail) {
 }
 
 async function maybeProcess(s) {
-  if (s.disabled || s.unanalyzable) return; // pm_enabled=false (0.1.13), or DRM/undecodable content (0.1.15) — idle, no transcription CPU
+  if (s.disabled || s.unanalyzable) return; // pm_enabled=false (0.1.13), or DRM/undecodable content (0.1.15) - idle, no transcription CPU
   if (s.processing) {
     s.pendingRerun = true;
     return;
   }
   s.processing = true;
   // Heartbeat while genuinely working, so content.js's stall watchdog can
-  // tell "this attempt is just slow" from "nothing is happening at all" —
+  // tell "this attempt is just slow" from "nothing is happening at all" -
   // without this, a long attempt (large window, cold model, CPU contention)
   // gets killed by the watchdog before it can ever finish, restarting
   // forever. Sent immediately (don't make content.js wait a full interval
@@ -1555,7 +1555,7 @@ async function maybeProcess(s) {
   sendHeartbeat(s);
   const heartbeatTimer = setInterval(() => sendHeartbeat(s), HEARTBEAT_MS);
   // Generation guard (0.1.18): captured once per maybeProcess() invocation.
-  // A page-refresh reset or a seek bumps s.generation — this loop stops
+  // A page-refresh reset or a seek bumps s.generation - this loop stops
   // picking any FURTHER windows as soon as it notices (checked every
   // iteration, same reasoning as the disabled/unanalyzable check above),
   // rather than grinding through a whole backlog of now-irrelevant windows
@@ -1565,7 +1565,7 @@ async function maybeProcess(s) {
   // already-in-flight call that can't be aborted mid-way.
   const loopGeneration = s.generation;
   // Choke-point bookkeeping (0.1.23): every iteration starts by naming a
-  // generic fallback gate — since the loop only ever exits via `break`,
+  // generic fallback gate - since the loop only ever exits via `break`,
   // this guarantees `exitGate` is ALWAYS something meaningful by the time
   // the loop ends, even for a hypothetical future `break` that forgets to
   // name itself. Set to null right before a successful iteration's normal
@@ -1575,14 +1575,14 @@ async function maybeProcess(s) {
   try {
     for (;;) {
       exitGate = 'unknown-gate';
-      exitDetail = '(a loop-exit path did not name itself — see maybeProcess source)';
+      exitDetail = '(a loop-exit path did not name itself - see maybeProcess source)';
       // Re-checked every iteration (0.1.15): pm_enabled could flip false
-      // mid-loop (each transcribeWindow await is a real yield point) — the
+      // mid-loop (each transcribeWindow await is a real yield point) - the
       // top-of-function check alone only caught it BEFORE the loop started,
       // so a session disabled mid-catch-up would keep burning CPU on
       // already-queued windows for the rest of that loop.
       if (s.disabled) { exitGate = 'disabled'; exitDetail = 'pm_enabled=false'; break; }
-      if (s.unanalyzable) { exitGate = 'unanalyzable'; exitDetail = 'DRM/undecodable content — transcription given up for this session'; break; }
+      if (s.unanalyzable) { exitGate = 'unanalyzable'; exitDetail = 'DRM/undecodable content - transcription given up for this session'; break; }
       if (s.generation !== loopGeneration) {
         log('[PM-STALE] maybeProcess loop stopping: generation changed (' + loopGeneration + ' -> ' + s.generation + ')');
         exitGate = 'generation-changed';
@@ -1591,7 +1591,7 @@ async function maybeProcess(s) {
       }
       const run = s.currentRun;
       if (!run) {
-        logNoWindowReason(s, 'no-run', 'no active byte run yet for this session (no init segment captured) — nothing to transcribe until one arrives');
+        logNoWindowReason(s, 'no-run', 'no active byte run yet for this session (no init segment captured) - nothing to transcribe until one arrives');
         exitGate = 'no-run';
         exitDetail = 'no active byte run yet for this session';
         break;
@@ -1602,13 +1602,13 @@ async function maybeProcess(s) {
         exitDetail = 'pickNextWindow found nothing to pick (see its own [PM-NO-WINDOW] reason above, if any)';
         break;
       }
-      // [PM-FIRST-COVERAGE] milestone (0.1.18): "picked" — the first time
+      // [PM-FIRST-COVERAGE] milestone (0.1.18): "picked" - the first time
       // ANY window gets picked for this session. Calls are strictly
       // sequential within this loop (each fully awaited before the next
       // pick), so this is unambiguously the window whose own
       // decoded/words/covered milestones get set inside transcribeWindow.
       if (!s.firstCoverageLogged && s.firstWindowPickedAt == null) s.firstWindowPickedAt = Date.now();
-      // In-flight marking (0.1.18): see coverageViewForPicking() — this is
+      // In-flight marking (0.1.18): see coverageViewForPicking() - this is
       // what lets the picker skip past a span already dispatched instead of
       // re-picking the exact same one before its result has landed (a live
       // [PM-TIMELINE-ALARM] caught this happening to [2520.17,2525.17)).
@@ -1626,10 +1626,10 @@ async function maybeProcess(s) {
         break;
       }
       s.hadFirstWindow = true; // cold-start window sizing only applies until the first one actually lands
-      exitGate = null; // this iteration completed normally and is about to loop again — no exit to report yet
+      exitGate = null; // this iteration completed normally and is about to loop again - no exit to report yet
     }
   } catch (e) {
-    exitGate = null; // already loudly reported via [PM-ERROR] below — the choke point would be redundant
+    exitGate = null; // already loudly reported via [PM-ERROR] below - the choke point would be redundant
     notifyTab(s, '[PM-ERROR] maybeProcess: ' + String(e && e.stack ? e.stack : e));
   } finally {
     if (exitGate) reportIdleGate(s, exitGate, exitDetail);
@@ -1642,17 +1642,17 @@ async function maybeProcess(s) {
   }
 }
 
-// END-OF-STREAM FLUSH (0.1.23) — see PIPELINE_NOTES "0.1.23" item 2. A
+// END-OF-STREAM FLUSH (0.1.23) - see PIPELINE_NOTES "0.1.23" item 2. A
 // run's ReadableStream is normally never closed while a video is loading
 // (more bytes could always arrive), which means mediabunny's demuxer has no
 // way to know it's safe to flush trailing samples near the TRUE end of a
-// video — a final-tail window request there would hang forever waiting for
+// video - a final-tail window request there would hang forever waiting for
 // bytes that will never come (the same failure CLASS as the fed-data-clamp
 // bug above, just at the opposite end: "no more data is EVER coming" rather
 // than "not enough has arrived YET"). Once a run's fed data has reached
 // close to the video's own duration AND capture has reported no further
 // growth for a few seconds, explicitly close the run's stream controller so
-// mediabunny sees a clean, definite end — the final tail window can then
+// mediabunny sees a clean, definite end - the final tail window can then
 // decode (and correctly report "nothing more exists past here" rather than
 // hang) normally. Nothing here re-triggers on its own from a message (there
 // IS no further message once capture has genuinely gone quiet for good), so
@@ -1663,14 +1663,14 @@ const EOF_CLOSE_QUIET_MS = 3000; // no further buffered growth for this long -> 
 function maybeCloseRunAtEndOfStream(s) {
   const run = s.currentRun;
   if (!run || run.streamClosed || run.fedEnd == null) return;
-  if (s.videoDurationS == null) return; // unknown (still loading) or a live stream (Infinity, filtered out when set — see the pm-segment handler)
+  if (s.videoDurationS == null) return; // unknown (still loading) or a live stream (Infinity, filtered out when set - see the pm-segment handler)
   if (run.fedEnd < s.videoDurationS - EOF_CLOSE_SLACK_S) return;
   if (Date.now() - (s.lastBufferedGrowthWall || 0) < EOF_CLOSE_QUIET_MS) return;
   closeRunStream(run);
   notifyTab(
     s,
     '[PM-EOF-FLUSH] run stream closed (fed through ' + run.fedEnd.toFixed(2) + 's, duration=' + s.videoDurationS.toFixed(2) +
-      's, quiet ' + Math.round((Date.now() - s.lastBufferedGrowthWall) / 1000) + 's) — letting mediabunny flush trailing samples for the tail window'
+      's, quiet ' + Math.round((Date.now() - s.lastBufferedGrowthWall) / 1000) + 's) - letting mediabunny flush trailing samples for the tail window'
   );
   maybeProcess(s); // re-kick in case a tail window was previously deferred waiting for exactly this
 }
@@ -1693,7 +1693,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 
   if (msg.type === 'pm-seek') {
-    // Seek preemption (0.1.18) — see content.js's 'seeking' handler and
+    // Seek preemption (0.1.18) - see content.js's 'seeking' handler and
     // this session's `generation` field for the full mechanism. Coverage/
     // run state is untouched; this only invalidates in-flight/queued work
     // and immediately re-kicks maybeProcess so the new playhead region
@@ -1711,7 +1711,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'pm-tab-closed') {
     // Memory leak fix (0.1.15): closing a YouTube tab previously left its
     // session (bytes, runs, coverage, word history) resident in the
-    // offscreen document forever — nothing ever told offscreen the tab was
+    // offscreen document forever - nothing ever told offscreen the tab was
     // gone. background.js forwards chrome.tabs.onRemoved here.
     dropSessionsForTab(msg.tabId);
     return;
@@ -1723,28 +1723,28 @@ chrome.runtime.onMessage.addListener((msg) => {
       const changed = s.modelId !== msg.model;
       s.modelId = msg.model;
       // Preload fix (0.1.17): warm the newly-selected model proactively on
-      // a pm_model change, same as the boot-time preload — don't wait for
+      // a pm_model change, same as the boot-time preload - don't wait for
       // the next window to pay that cost inline. Cheap to fire even when
       // unchanged (getTranscriber's own cache makes a repeat call a no-op),
       // but only bother when it actually changed.
       if (changed) whisperWorker.postMessage({ type: 'preload', modelId: msg.model });
     }
-    // 0.1.25 — pm_multilingual (default true), re-sent alongside pm_model on
+    // 0.1.25 - pm_multilingual (default true), re-sent alongside pm_model on
     // every video reset per background.js's sendModelConfig. Only read as a
-    // boolean (never re-triggers detection mid-video if toggled — detection
+    // boolean (never re-triggers detection mid-video if toggled - detection
     // is pinned once resolved for the video regardless).
     if (typeof msg.multilingual === 'boolean') s.multilingualEnabled = msg.multilingual;
     return;
   }
 
   if (msg.type === 'pm-disable') {
-    // pm_enabled=false (0.1.13): idle this session's transcription CPU —
+    // pm_enabled=false (0.1.13): idle this session's transcription CPU -
     // segments may keep flowing in briefly (content.js stops relaying them
     // once its own onChanged handler fires, but that's a separate context/
     // message boundary, so a few could still land in flight) but
     // maybeProcess must not pick any new window while disabled. The model
     // itself stays warm (transcriberPromises is module-level, not
-    // per-session) — no need to re-load it on re-enable.
+    // per-session) - no need to re-load it on re-enable.
     const key = sessionKey(msg.tabId, msg.videoId);
     const s = sessions.get(key);
     if (s) s.disabled = true;
@@ -1761,14 +1761,14 @@ chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === 'pm-restart') {
     // Stall-recovery kick from content.js's watchdog. content.js only sends
     // this when BOTH coverage hasn't grown AND no heartbeat has arrived
-    // recently — so by the time we get here, a genuinely-alive attempt
+    // recently - so by the time we get here, a genuinely-alive attempt
     // should be rare. Still, double-check `s.processing` before tearing
     // anything down: forcibly resetting state out from under an in-flight
     // transcribeWindow call would let it keep running to completion in
     // parallel with a freshly-started maybeProcess loop, racing on the same
-    // session's mutable state — worse than just waiting. Since 0.1.10 there
+    // session's mutable state - worse than just waiting. Since 0.1.10 there
     // is no offset to "re-resolve" (timestamps are trusted straight from the
-    // container) — a stall is purely a throughput/wedge issue, so this just
+    // container) - a stall is purely a throughput/wedge issue, so this just
     // re-kicks the processing loop.
     const key = sessionKey(msg.tabId, msg.videoId);
     const s = sessions.get(key);
@@ -1777,7 +1777,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       return;
     }
     if (s.processing) {
-      log('[PM-STALL] restart requested for', key, 'but a transcription attempt is genuinely in progress (heartbeating) — ignoring, not killing live work');
+      log('[PM-STALL] restart requested for', key, 'but a transcription attempt is genuinely in progress (heartbeating) - ignoring, not killing live work');
       return;
     }
     notifyTab(s, '[PM-STALL] restart requested for ' + key + ' - no attempt in progress, forcing maybeProcess re-run');
@@ -1786,7 +1786,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 
   if (msg.type === 'pm-resync') {
-    // content.js reconnected after a port drop — resend everything we have
+    // content.js reconnected after a port drop - resend everything we have
     // for this session (words computed while the port was down must not be
     // silently lost) rather than relying on it having seen every incremental
     // 'pm-words-result' message.
@@ -1807,7 +1807,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     // session ever sees. msg.wallTime is capture.js's own Date.now() at the
     // moment of capture (MAIN world); this handler's Date.now() is when it
     // actually landed here after the base64 relay through content.js and
-    // background.js — the gap between the two is the actual relay latency.
+    // background.js - the gap between the two is the actual relay latency.
     if (s.firstSegCapturedAt == null) {
       s.firstSegCapturedAt = typeof msg.wallTime === 'number' ? msg.wallTime : Date.now();
       s.firstSegRelayedAt = Date.now();
@@ -1816,7 +1816,7 @@ chrome.runtime.onMessage.addListener((msg) => {
 
     if (msg.isInit) {
       // 0.1.23: a run superseded by a new one is never going to be fed
-      // more bytes — close JUST its stream (not the full closeRun() teardown
+      // more bytes - close JUST its stream (not the full closeRun() teardown
       // used by the KEEP_RUNS pruning below, since it might still be read
       // from momentarily for a backward-seek-adjacent window) so mediabunny
       // sees a definite end for it instead of its stream sitting open
@@ -1826,7 +1826,7 @@ chrome.runtime.onMessage.addListener((msg) => {
       s.runs.push(run);
       s.currentRun = run;
       log('new byte run #' + s.runs.length);
-      // Memory leak fix (0.1.15): s.runs was never pruned — every run's
+      // Memory leak fix (0.1.15): s.runs was never pruned - every run's
       // Input/stream (each with up to RUN_STREAM_CACHE_BYTES=64MiB of its
       // own cache) stayed alive for the whole session. A session with many
       // seeks/resumes (many init segments) would accumulate them all
@@ -1839,14 +1839,14 @@ chrome.runtime.onMessage.addListener((msg) => {
     }
     if (s.currentRun) {
       appendToRun(s.currentRun, bytes);
-      // Fed-data ground truth (0.1.23) — see DECODE_FED_GUARD_S/
+      // Fed-data ground truth (0.1.23) - see DECODE_FED_GUARD_S/
       // pickNextWindow's fed-data clamp: `run.fedEnd` tracks how far THIS
       // run's stream has actually been fed real audio, from the SAME
       // growthAbsEnd value that also feeds s.bufferedRanges (session-level)
-      // just below — but scoped to the run that ACTUALLY received these
+      // just below - but scoped to the run that ACTUALLY received these
       // bytes, so it can never race ahead the way the session-level value
       // apparently can. A synthetic run-boundary segment (0.1.20) carries no
-      // growth (null), so it correctly does not advance fedEnd on its own —
+      // growth (null), so it correctly does not advance fedEnd on its own -
       // only the real segment that follows it does.
       if (typeof msg.growthAbsEnd === 'number' && !Number.isNaN(msg.growthAbsEnd)) {
         s.currentRun.fedEnd = s.currentRun.fedEnd == null ? msg.growthAbsEnd : Math.max(s.currentRun.fedEnd, msg.growthAbsEnd);
@@ -1856,9 +1856,9 @@ chrome.runtime.onMessage.addListener((msg) => {
       // roughly agree with the independently-measured buffered-range growth
       // (growthAbsStart)? If they disagree beyond CHECK_SLACK_S, something
       // upstream is genuinely wrong (e.g. an ad segment slipping through, or
-      // a real container/browser bug) and worth surfacing — but we do NOT
+      // a real container/browser bug) and worth surfacing - but we do NOT
       // use this to compute any word timestamp.
-      // Log collapse (0.1.15): only log when they actually DISAGREE — an
+      // Log collapse (0.1.15): only log when they actually DISAGREE - an
       // unconditional per-segment line here was pure noise at normal append
       // rates (every segment, forever) and, per the elegance audit, was
       // actively working against the ring buffer's "flight recorder" job by
@@ -1880,22 +1880,22 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (typeof msg.currentTime === 'number' && !Number.isNaN(msg.currentTime)) {
       s.currentTimeS = msg.currentTime;
     }
-    // End-of-stream detection input (0.1.23) — used ONLY by
+    // End-of-stream detection input (0.1.23) - used ONLY by
     // maybeCloseRunAtEndOfStream below, never for timestamp construction
     // (per the "media time in, media time out" doctrine). A live stream
     // reports Infinity here and is correctly never treated as "reachable".
     if (typeof msg.duration === 'number' && !Number.isNaN(msg.duration) && isFinite(msg.duration)) {
       s.videoDurationS = msg.duration;
     }
-    // Real interval-set availability (0.1.14) — every segment's own
+    // Real interval-set availability (0.1.14) - every segment's own
     // growthAbsStart/growthAbsEnd (this append's actual contribution to the
     // buffered timeline, from capture.js's own buffered-range-growth
     // measurement) is merged in directly. This is what makes a disjoint
     // range from a big forward/backward seek within one SourceBuffer
-    // (no new init segment — isInit stays false, nothing else would ever
+    // (no new init segment - isInit stays false, nothing else would ever
     // notice) visible to pickNextWindow at all. capture.js only includes
     // this pair when its own findGrowth() detected genuine growth, so its
-    // mere presence here already means "new audio actually arrived" — no
+    // mere presence here already means "new audio actually arrived" - no
     // separate before/after comparison needed (0.1.15: this replaced the
     // deleted single-scalar s.bufferedEndS, which this same growth check
     // used to gate lastBufferedGrowthWall on).

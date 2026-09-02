@@ -14,13 +14,13 @@
 //   1. The built-in lists' contents never appear on screen. Asserted
 //      literally, against document.body.innerText.
 //   2. A locked popup does not write. Asserted the way a determined kid
-//      would actually try it — by clearing the `disabled` attribute from
+//      would actually try it - by clearing the `disabled` attribute from
 //      devtools and dispatching the change event anyway, which must still
 //      write nothing, because the enforcement is in persistSettings and
 //      not in the DOM state.
 //
 // Unlike verify/run_playwright.mjs (headful, real YouTube, minutes, a
-// Whisper model download), this touches nothing outside the popup page —
+// Whisper model download), this touches nothing outside the popup page -
 // so it is cheap enough to run on every change to popup/, shared/lock.js
 // or the word-list resolution.
 import { chromium } from 'playwright';
@@ -348,7 +348,7 @@ const browser = await chromium.launch();
   const { page } = await open(browser, eligibleSync(), eligibleLocal);
   const s = await page.evaluate(snapshot);
   check('review: card shown when eligible', s.reviewHidden === false);
-  // Showing it must record it immediately — otherwise closing the popup
+  // Showing it must record it immediately - otherwise closing the popup
   // would re-ask on every open.
   const rec = await page.evaluate(() => window.__pmSync.pm_reviewPrompt);
   check('review: pm_reviewPrompt written on render', !!rec && typeof rec.shownAt === 'number' && rec.dismissed === false, rec);

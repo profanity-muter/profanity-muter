@@ -40,8 +40,8 @@
     if (!pm) return false;
     // PMWordlist internally gates on pm_enabled already (censorText is a
     // no-op passthrough when disabled), but we also short-circuit here
-    // to avoid pointless DOM churn/work when the extension — or
-    // specifically caption censoring (pm_censorCaptions) — is off.
+    // to avoid pointless DOM churn/work when the extension - or
+    // specifically caption censoring (pm_censorCaptions) - is off.
     // pm_censorCaptions lets a user mute audio while leaving captions
     // showing the real words, e.g. to verify audio muting against what
     // was actually said.
@@ -60,7 +60,7 @@
     var current = el.textContent;
     if (current == null || current === "") return;
 
-    // If this is exactly the text we wrote last time, nothing to do —
+    // If this is exactly the text we wrote last time, nothing to do -
     // this mutation was caused by our own previous write (or is a
     // duplicate render of already-censored text).
     if (lastWrittenText.get(el) === current) return;
@@ -74,14 +74,14 @@
   }
 
   // Persistent dev log (shared/devlog.js, loaded before this file per the
-  // manifest's content_scripts order — still guarded, since a broken
+  // manifest's content_scripts order - still guarded, since a broken
   // diagnostic must never stop captions being censored). Only reached on a
   // write that actually changed something, so the log records real censor
   // events rather than every no-op observer pass.
   //
   // The BEFORE and AFTER text are handed over whole; devlog.js reduces
   // them to just the words that changed (PMDevlogCore.diffCensored) and
-  // stores nothing else — persisting whole caption segments would amount
+  // stores nothing else - persisting whole caption segments would amount
   // to keeping a transcript of every video watched, which is exactly what
   // the pm_devlogVerbose flag exists to gate for the audio side.
   function logCensorEvent(original, censored) {
@@ -90,7 +90,7 @@
     try {
       d.logCaptionCensor(original, censored);
     } catch (e) {
-      // ignore — diagnostics must never break caption censoring
+      // ignore - diagnostics must never break caption censoring
     }
   }
 

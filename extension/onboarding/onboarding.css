@@ -6,7 +6,7 @@
    popup.css so both surfaces get it.
 
    Despite the name, this is the shared FULL-PAGE SHELL for every
-   extension page, not just onboarding — report/report.html loads it too
+   extension page, not just onboarding - report/report.html loads it too
    and uses the same .ob-page / .ob-field / .ob-ack scaffolding. Kept
    under this name rather than renamed to avoid churning a working file
    for cosmetics; if a third page appears, rename it then. */
@@ -132,7 +132,7 @@ body {
   align-self: flex-start;
 }
 
-/* The acknowledgment gate. Given real weight on the page — it is the one
+/* The acknowledgment gate. Given real weight on the page - it is the one
    thing on this screen, and it is a decision, not a formality. */
 .ob-ack {
   display: flex;

@@ -159,13 +159,13 @@ body {
 /* Custom-drawn radio dot, same principle as the toggle switch: native
    input[type=radio] widgets (especially with accent-color, on macOS
    Chrome's "Chrome Refresh" form controls) carry their own built-in
-   fill animation that CSS transitions can't fully suppress or tune —
+   fill animation that CSS transitions can't fully suppress or tune -
    that hidden native animation is what made the "While catching up"
    radio feel laggy even though the underlying DOM `checked` state
    flips in under 1ms. Using `appearance: none` and drawing the dot
    ourselves, purely from the `:checked` pseudo-class with NO
    `transition` property anywhere, guarantees the paint is exactly as
-   instant as the logical state change — there's nothing left to
+   instant as the logical state change - there's nothing left to
    animate, native or otherwise. */
 .pm-radio-label input {
   appearance: none;
@@ -268,7 +268,7 @@ body {
 /* "Copy debug log" and "Report a problem" sit under the overlay switch in
    the Debugging row, side by side. .pm-switch-label is a flex row, so this
    group falls onto its own line below it and only needs the vertical
-   rhythm restored — the same link-button treatment "Reset stats" gets in
+   rhythm restored - the same link-button treatment "Reset stats" gets in
    the Stats row. */
 .pm-debug-actions {
   display: flex;
@@ -462,7 +462,7 @@ body {
 
 /* ---- Onboarding banner, review prompt, share (0.1.30) -------------------- */
 
-/* "Finish setup" — a full-width strip under the header, shown until the
+/* "Finish setup" - a full-width strip under the header, shown until the
    user has acknowledged. Styled as a quiet accent bar rather than a
    warning: it is an unfinished task, not an error. */
 .pm-banner {
