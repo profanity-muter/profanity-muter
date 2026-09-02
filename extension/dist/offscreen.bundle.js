@@ -15265,6 +15265,12 @@
           }
         }
         const transcribeMs = performance.now() - tTranscribeStart;
+        if (workerResult && workerResult.inferenceIndex != null && workerResult.inferenceIndex <= 3) {
+          notifyTab(
+            s,
+            "[PM-INFER] #" + workerResult.inferenceIndex + " for " + (absEnd - absStart).toFixed(2) + "s audio: inference=" + Math.round(workerResult.transcribeMs) + "ms modelResolve=" + Math.round(workerResult.modelResolveMs || 0) + "ms (inferRtf=" + (workerResult.transcribeMs / 1e3 / Math.max(0.01, absEnd - absStart)).toFixed(2) + ")"
+          );
+        }
         const decodeMs = tDecoded - t0;
         const queueMs = tTranscribeStart - tBeforeQueue;
         const computeMs = transcribeMs;

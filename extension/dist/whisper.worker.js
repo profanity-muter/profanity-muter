@@ -33089,20 +33089,32 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
           self.postMessage({ type: "lang-error", requestId, error: String(e && e.stack ? e.stack : e) });
         }
       }
+      var inferenceCount = 0;
       async function handleTranscribe(msg) {
         const { requestId, modelId, float16k, options } = msg;
         try {
+          const tResolve = performance.now();
           const transcriber = await getTranscriber(modelId);
+          const modelResolveMs = performance.now() - tResolve;
           const t0 = performance.now();
           const output = await transcriber(float16k, options);
           const transcribeMs = performance.now() - t0;
+          inferenceCount++;
           const chunks = (output.chunks || []).map((chunk2) => {
             const [ls2, leRaw] = chunk2.timestamp || [null, null];
             let rms = null;
             if (ls2 != null) rms = rmsAt(float16k, ls2, leRaw != null ? leRaw : ls2 + 0.3, 16e3);
             return { text: chunk2.text, timestamp: chunk2.timestamp, rms };
           });
-          self.postMessage({ type: "result", requestId, text: output.text, chunks, transcribeMs });
+          self.postMessage({
+            type: "result",
+            requestId,
+            text: output.text,
+            chunks,
+            transcribeMs,
+            modelResolveMs,
+            inferenceIndex: inferenceCount
+          });
         } catch (e) {
           self.postMessage({ type: "error", requestId, error: String(e && e.stack ? e.stack : e) });
         }

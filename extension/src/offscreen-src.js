@@ -1706,6 +1706,18 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     }
   }
   const transcribeMs = performance.now() - tTranscribeStart;
+  // 0.1.43: report the warm-up evidence for the first few inferences of
+  // each worker instance, then go quiet. Bounded on purpose: this exists to
+  // settle a question from one paste, not to narrate every window forever.
+  if (workerResult && workerResult.inferenceIndex != null && workerResult.inferenceIndex <= 3) {
+    notifyTab(
+      s,
+      '[PM-INFER] #' + workerResult.inferenceIndex + ' for ' + (absEnd - absStart).toFixed(2) +
+        's audio: inference=' + Math.round(workerResult.transcribeMs) +
+        'ms modelResolve=' + Math.round(workerResult.modelResolveMs || 0) +
+        'ms (inferRtf=' + (workerResult.transcribeMs / 1000 / Math.max(0.01, absEnd - absStart)).toFixed(2) + ')'
+    );
+  }
   // wallMs SPLIT (0.1.18): a live paste showed wallMs-derived rtf of 3-8
   // right next to modelRtf of 0.2-0.5 - almost all of it was QUEUE wait (a
   // stale/superseded session's own backlog competing for the same shared

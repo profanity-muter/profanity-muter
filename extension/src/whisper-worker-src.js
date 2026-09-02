@@ -197,20 +197,41 @@ async function handleDetectLanguage(msg) {
   }
 }
 
+// Inferences performed by THIS worker instance. Resets on respawn, which
+// is exactly the boundary the warm-up question is about.
+let inferenceCount = 0;
+
 async function handleTranscribe(msg) {
   const { requestId, modelId, float16k, options } = msg;
   try {
+    // 0.1.43: split model resolution from inference. 0.1.42 concluded that
+    // early windows are slow because of runtime warm-up, but said so as a
+    // hypothesis, because computeMs bundles "waiting for the model to be
+    // ready" with "running the model". Separating them settles it from a
+    // user's paste: high resolveMs means loading, high inferMs on an
+    // already-resolved model means genuine warm-up.
+    const tResolve = performance.now();
     const transcriber = await getTranscriber(modelId);
+    const modelResolveMs = performance.now() - tResolve;
     const t0 = performance.now();
     const output = await transcriber(float16k, options);
     const transcribeMs = performance.now() - t0;
+    inferenceCount++;
     const chunks = (output.chunks || []).map((chunk) => {
       const [ls, leRaw] = chunk.timestamp || [null, null];
       let rms = null;
       if (ls != null) rms = rmsAt(float16k, ls, leRaw != null ? leRaw : ls + 0.3, 16000);
       return { text: chunk.text, timestamp: chunk.timestamp, rms };
     });
-    self.postMessage({ type: 'result', requestId, text: output.text, chunks, transcribeMs });
+    self.postMessage({
+      type: 'result',
+      requestId,
+      text: output.text,
+      chunks,
+      transcribeMs,
+      modelResolveMs,
+      inferenceIndex: inferenceCount
+    });
   } catch (e) {
     self.postMessage({ type: 'error', requestId, error: String(e && e.stack ? e.stack : e) });
   }

@@ -3342,3 +3342,38 @@ Pipeline-side specifics:
 - **Devlog `preempt` array** via `devlog('logPreempt', ...)`, fed by
   `pm-preempt-decision` through background. Declines are recorded too: the
   wager is only checkable if both sides of it were written down.
+
+## 0.1.43: staged remaining-time estimate, free queue cancellation, cold quote
+
+Full write-up in CENSOR_NOTES.md "two numbers that were produced without
+being computed". Pipeline-side specifics:
+
+- **`inFlightCompute` now distinguishes queued from computing.**
+  `computeStartedWall` is null until the mutex callback actually runs, and
+  `estimateRemainingMs` branches on it: still queued means the entire
+  expected compute is ahead, regardless of queue time already spent.
+  Overdue computes report `computeElapsedMs * OVERDUE_REMAINING_RATIO`
+  rather than zero.
+- **`isCold`** on the in-flight entry (session has fewer than two completed
+  windows) raises the estimate to `WARMUP_RTF`. `s.windowsDone` counts
+  completed windows for it.
+- **Free cancellation.** `inFlightCompute.token` is checked inside the
+  `runSerialized` callback, at the instant the turn comes up. A cancelled
+  window throws `isCancelledWhileQueued`, which `transcribeWindow` catches
+  and returns false for, without touching `hangAttempts` or
+  `sinkErrorAttempts`. `PMPreempt.decide` returns `cancel-queued` with
+  `costMs: 0`, ahead of the thrash guard and the net-saving margin, but
+  still behind the settle check, the still-useful check and the
+  shared-worker check.
+- **`shared/preempt.js` is now also a content script** (manifest), because
+  `shared/pill.js` reads `WARMUP_RTF` from it for the cold quote. One
+  constant, two consumers, and the pill falls back to a literal if the
+  module is absent.
+- **Cold quote is positional**: content.js computes
+  `uncoveredAheadS >= horizonSpan * 0.9` and passes it as `isCold`, so a
+  seek into unanalyzed audio quotes cold even in a long-running session.
+  Traced as `coldQuote` in `[PM-PILL]`.
+- **`[PM-INFER]`** for the first three inferences per worker instance:
+  `inference` (pure model call) versus `modelResolve` (getTranscriber
+  await), which separates loading from warm-up. `inferenceCount` resets on
+  respawn, which is the boundary the question is about.

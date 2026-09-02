@@ -742,6 +742,116 @@ of that file) - it reads the real `shared/packs/es.json` off disk
 rather than a hand-rolled fixture, so it stays plain about the actual
 shipped pack shape.
 
+## FIX ROUND (2026-09-02, 0.1.43): two numbers that were produced without being computed
+
+Catch-up across four rounds: 35.8s, 25.2s, 15.2s, and this round targets
+about 11s. The user asked whether to quote longer or go faster. The answer
+was both, and the log split cleanly into one of each.
+
+### The estimator reported zero for work with four seconds left
+
+```
+14:22:53.135  "let-finish (cheaper-to-finish) remaining=0ms"
+14:22:57.167  that window finished, 4.03 seconds later
+```
+
+The policy did the right thing on wrong data. Reconstructing from the
+window's own final numbers (wallMs=5518 queueMs=2270 computeMs=3209,
+leaving decodeMs=39): it was queued at 51.688 and its compute did not begin
+until 53.958. At the moment of the decision it had not touched the worker
+at all.
+
+Three errors, all pushing the same way, all making abandoned work look free
+to wait for:
+
+1. **It floored at zero.** `max(0, expected - elapsed)` says anything
+   already overdue is about to finish. That is backwards. Running past a
+   prediction is evidence the prediction was wrong, and the accurate
+   reading of "this should have taken 750ms and has taken 1447ms" is "it is
+   slower than I thought", never "it is nearly done".
+2. **It treated the window as one blob.** A window waits for the mutex,
+   then computes. Subtracting queue time from a whole-window prediction
+   charged that waiting against work which had not begun. The estimate is
+   now per stage, and a still-queued window reports the full compute ahead.
+3. **It predicted a cold window from settled throughput.** The field window
+   ran at an effective rtf of 2.2 while the session averaged about 0.3,
+   because it was the first at a fresh position.
+
+### The case did not need a wager at all
+
+The deeper finding. Because the window was still QUEUED, abandoning it
+required no terminate, no respawn and no warm-up. The cost is zero and the
+whole remaining time is recovered.
+
+0.1.42 built preemption as a single mechanism, terminate-and-respawn, and
+so priced every abandonment as though it required killing the worker. But
+there are two situations wearing one name. Dropping queued work for a
+position nobody is watching is not a bet, it is tidying up: it skips the
+thrash guard and the net-saving margin, because both exist only to price a
+respawn. The shared-worker rule still applies, since another tab's queued
+window is still not ours to drop.
+
+Cancellation is a token checked at the moment the mutex turn comes up,
+which is the last instant before the work becomes expensive. A cancelled
+window returns quietly and is explicitly not counted against any error or
+hang threshold, because we dropped it on purpose and it is not evidence of
+anything failing.
+
+### The cold quote had no arithmetic in it
+
+The badge promised about 8s for a fresh seek that took 15.2s. That breaks
+the pessimism rule in exactly the case the rule exists for, and the cause
+was that the cold path had no model at all: with nothing measured it fell
+to a flat floor, and a floor is not an estimate of anything.
+
+A cold quote is now computed as roughly two windows at warm-up throughput,
+which for the field case quotes about 19s against a 15.2s actual, on the
+correct side of the truth. The user's description was the countdown hitting
+zero and lingering, which reads as broken; falling from a truthful number
+and snapping to Protected reads as fast.
+
+Two details that matter more than the formula:
+
+- **One source of truth for warm-up.** The constant lives in
+  `shared/preempt.js` and the pill reads it, because the preemption model
+  and the quote both depend on how slow a cold pipeline is, and two modules
+  disagreeing about that would mean one of them was wrong.
+- **Coldness is about the position, not the session.** A seek into an
+  unanalyzed region starts from a standing start even ten minutes in.
+  Quoting the settled average for it is precisely how 8s got promised for
+  15.2s of work.
+
+The monotonic rules are untouched, so the number only ever falls.
+
+### Warm-up: now measurable rather than argued
+
+0.1.42 concluded that early windows are slow because of runtime warm-up and
+said so as a hypothesis, because `computeMs` bundles "waiting for the model
+to be ready" with "running the model". The worker now reports those
+separately, and offscreen logs `[PM-INFER]` for the first three inferences
+of each worker instance, then goes quiet.
+
+High `modelResolve` means loading; high `inference` on an already-resolved
+model means genuine warm-up. Either way the next paste settles it, and the
+cost model is built to be correct under both readings, since it charges for
+the observed slowdown regardless of cause. Bounded to three lines per
+worker on purpose: this exists to answer a question, not to narrate every
+window forever.
+
+### Tests
+
+`preempt_test.js` 20 -> 30: the reconstructed field decision at its real
+timings, both estimator errors separately, cold-window estimation, the free
+cancellation path including that it ignores the guards while still
+respecting the shared-worker rule. `pill_test.js` 43 -> 49: the cold
+arithmetic against the field actual, positional coldness, the tightening as
+coverage builds, and that both modules read the same warm-up constant.
+
+The 0.1.42 fixtures needed updating rather than fixing: they described an
+in-flight window without saying whether it was queued or computing, a
+distinction that did not exist until this round. Suite: 406 node checks,
+184 browser checks.
+
 ## FIX ROUND (2026-09-02, 0.1.42): computing audio nobody is waiting for
 
 0.1.41 fixed run-poisoning, and catch-up after a seek storm improved from
