@@ -2,7 +2,9 @@
 // Copy standard: use commas, periods, or plain hyphens instead.
 var fs = require("fs"), path = require("path");
 var root = path.join(__dirname, "..");
-var skip = ["node_modules", "dist", ".git"];
+// models/ holds fetched third-party Whisper weights and tokenizer vocab
+// (0.1.44), not authored source - excluded like node_modules/dist.
+var skip = ["node_modules", "dist", ".git", "models"];
 var bad = [];
 (function walk(dir) {
   fs.readdirSync(dir).forEach(function (name) {

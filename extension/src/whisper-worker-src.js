@@ -77,8 +77,18 @@ const DEFAULT_MODEL = 'base';
 
 env.backends.onnx.wasm.proxy = false; // we ARE the dedicated thread now; onnxruntime-web's own proxy would just add another hop
 env.backends.onnx.wasm.numThreads = 1;
-env.allowLocalModels = false;
-env.useBrowserCache = true;
+// 0.1.44: models are BUNDLED, loaded from the packaged extension, never
+// the network. allowRemoteModels is hard-OFF so a missing or misnamed
+// local file fails loudly at build/dev time instead of silently reaching
+// huggingface.co in production - which MV3/CWS forbids (remotely-hosted
+// code) and which would break the "nothing leaves your device" claim.
+// localModelPath is set from the 'init' message (chrome.runtime.getURL is
+// only available on the main thread that spawns this worker), mirroring how
+// wasmPaths is already wired. See scripts/fetch-models.mjs for what is
+// bundled and CENSOR_NOTES "0.1.44" for the reasoning.
+env.allowLocalModels = true;
+env.allowRemoteModels = false;
+env.useBrowserCache = false; // nothing to cache: every load is a local file read
 
 let wasmPathsBase = null;
 
@@ -273,6 +283,11 @@ self.addEventListener('message', (ev) => {
   if (msg.type === 'init') {
     wasmPathsBase = msg.wasmPathsBase;
     env.backends.onnx.wasm.wasmPaths = wasmPathsBase;
+    // Point transformers.js at the packaged models/ directory. It resolves
+    // a model id like 'Xenova/whisper-base.en' to
+    // <localModelPath>/Xenova/whisper-base.en/, which is exactly the layout
+    // scripts/fetch-models.mjs writes, so MODEL_IDS needs no remapping.
+    if (msg.modelsBase) env.localModelPath = msg.modelsBase;
     const workerSpawnMs = Math.round(performance.now() - workerScriptStartWall);
     log('initialized, wasmPathsBase=' + wasmPathsBase + ', workerSpawnMs=' + workerSpawnMs);
     preload(DEFAULT_MODEL, { workerSpawnMs });

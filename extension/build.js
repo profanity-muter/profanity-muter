@@ -44,6 +44,17 @@ Promise.all([buildOffscreen, buildWorker])
       fs.copyFileSync(path.join(ortSrcDir, f), path.join(DIST, f));
     }
     console.log('copied', files.length, 'onnxruntime-web wasm runtime files');
+    // 0.1.44: the shipped package must carry the bundled models. They are
+    // gitignored and fetched by scripts/fetch-models.mjs, so a JS-only dev
+    // build legitimately runs without them - warn rather than fail here,
+    // and let `npm run package` (fetch + build) and `npm run check-models`
+    // be the gates for an actual submission.
+    const modelsDir = path.join(ROOT, 'models');
+    if (!fs.existsSync(modelsDir)) {
+      console.warn('WARNING: models/ is absent - run `npm run fetch-models` before packaging for the store (see CENSOR_NOTES 0.1.44)');
+    } else {
+      console.log('models/ present (run `npm run check-models` to verify completeness)');
+    }
   })
   .catch((e) => {
     console.error(e);

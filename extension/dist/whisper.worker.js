@@ -33026,8 +33026,9 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
       var DEFAULT_MODEL = "base";
       env2.backends.onnx.wasm.proxy = false;
       env2.backends.onnx.wasm.numThreads = 1;
-      env2.allowLocalModels = false;
-      env2.useBrowserCache = true;
+      env2.allowLocalModels = true;
+      env2.allowRemoteModels = false;
+      env2.useBrowserCache = false;
       var wasmPathsBase = null;
       var transcriberPromises = /* @__PURE__ */ new Map();
       function getTranscriber(modelId) {
@@ -33135,6 +33136,7 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
         if (msg.type === "init") {
           wasmPathsBase = msg.wasmPathsBase;
           env2.backends.onnx.wasm.wasmPaths = wasmPathsBase;
+          if (msg.modelsBase) env2.localModelPath = msg.modelsBase;
           const workerSpawnMs = Math.round(performance.now() - workerScriptStartWall);
           log("initialized, wasmPathsBase=" + wasmPathsBase + ", workerSpawnMs=" + workerSpawnMs);
           preload(DEFAULT_MODEL, { workerSpawnMs });

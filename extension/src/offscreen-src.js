@@ -162,7 +162,14 @@ function logWarmToSession(s) {
 function spawnWhisperWorker() {
   workerSpawnedAtWall = Date.now();
   whisperWorker = new Worker(chrome.runtime.getURL('dist/whisper.worker.js'));
-  whisperWorker.postMessage({ type: 'init', wasmPathsBase: chrome.runtime.getURL('dist/') });
+  // 0.1.44: modelsBase points the worker's transformers.js at the packaged
+  // models/ directory (getURL is only available here on the main thread,
+  // not inside the worker) - mirrors wasmPathsBase. See fetch-models.mjs.
+  whisperWorker.postMessage({
+    type: 'init',
+    wasmPathsBase: chrome.runtime.getURL('dist/'),
+    modelsBase: chrome.runtime.getURL('models/')
+  });
   whisperWorker.onmessage = handleWorkerMessage;
   whisperWorker.onerror = (ev) => {
     broadcastDiag('whisper worker onerror: ' + (ev.message || ev));

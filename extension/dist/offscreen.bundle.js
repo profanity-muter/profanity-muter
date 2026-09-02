@@ -14324,7 +14324,11 @@
       function spawnWhisperWorker() {
         workerSpawnedAtWall = Date.now();
         whisperWorker = new Worker(chrome.runtime.getURL("dist/whisper.worker.js"));
-        whisperWorker.postMessage({ type: "init", wasmPathsBase: chrome.runtime.getURL("dist/") });
+        whisperWorker.postMessage({
+          type: "init",
+          wasmPathsBase: chrome.runtime.getURL("dist/"),
+          modelsBase: chrome.runtime.getURL("models/")
+        });
         whisperWorker.onmessage = handleWorkerMessage;
         whisperWorker.onerror = (ev) => {
           broadcastDiag("whisper worker onerror: " + (ev.message || ev));
