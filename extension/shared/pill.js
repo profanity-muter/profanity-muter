@@ -102,6 +102,12 @@
     if (kind === "shorts") return { label: "Shorts not supported", presented: "shorts" };
     if (kind === "live") return { label: "Live - limited support", presented: "live" };
     if (kind === "protected") return { label: "Protected", presented: "protected" };
+    // 0.1.49 active-tab-follow: the shared pipeline is busy with another tab.
+    // A calm, actionable label rather than any "analyzing" or warning state,
+    // because nothing is wrong and the fix is a single click. The full
+    // sentence lives in shared/health.js (REASONS.OTHER_TAB) and shows in the
+    // popup; the badge itself opens that on click.
+    if (kind === "other-tab") return { label: "Another tab is being filtered", presented: "other-tab" };
     // The one actionable routine state, and the only one worth a different
     // sentence: it asks the user to do something. content.js gates it hard
     // (see its needs-play conditions) precisely because it has misfired

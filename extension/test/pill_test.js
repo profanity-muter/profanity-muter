@@ -71,6 +71,15 @@ test("protected, off, shorts and live are unchanged", () => {
   assert.strictEqual(P.present({ kind: "live" }, { now: NOW }).label, "Live - limited support");
 });
 
+test("the other-tab kind is its own calm, actionable badge (0.1.49)", () => {
+  const out = P.present({ kind: "other-tab" }, { now: NOW });
+  assert.strictEqual(out.label, "Another tab is being filtered");
+  assert.strictEqual(out.presented, "other-tab");
+  // Never presented as an analyzing/processing state: nothing is being worked
+  // on in this tab, so an "Analyzing" label would be a lie.
+  assert.notStrictEqual(out.presented, "analyzing");
+});
+
 test("press play survives as the one actionable sentence", () => {
   const out = P.present({ kind: "needs-play" }, { now: NOW });
   assert.strictEqual(out.label, "Press play to load audio");

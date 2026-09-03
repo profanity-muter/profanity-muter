@@ -247,6 +247,15 @@
   // Persists across seeks; only replaced on an actual video-id change
   // (RESET from capture.js), per the "seek keeps everything" requirement.
   var session = null;
+  // 0.1.49 active-tab-follow. True when background has told this tab that
+  // another tab is the one the shared pipeline is analyzing right now. Not a
+  // fault: it flips back the moment this tab becomes active. It is tab-level
+  // (not per-session) so it survives a video change, and it is read by both
+  // computeStatusState (the on-video badge) and evaluateHealth (the popup /
+  // toolbar-badge verdict) so the two surfaces cannot disagree.
+  var pmServedElsewhere = false;
+  // Last play state reported to background, so we only post real changes.
+  var lastReportedPlaying = null;
   // Monotonic per-page counter (0.1.35). Purely diagnostic, but the thing it
   // makes visible is exactly the class of bug this round chased: two code
   // paths reading DIFFERENT session objects, where every field looks
@@ -1425,6 +1434,11 @@
         ? session.etaPromise.etaS * 1000
         : null,
       unanalyzable: !!session.unanalyzable,
+      // 0.1.49: this tab is not the one the shared pipeline is serving right
+      // now. Reported as WAITING, never as a fault, and cleared the moment
+      // this tab becomes active. Placed here so an inactive tab's legitimate
+      // zero-windows state is never mistaken for a broken pipeline.
+      servedElsewhere: pmServedElsewhere,
       windowsCompleted: session.windowsCompleted,
       audioSegments: session.audioSegments,
       fatalReasons: session.fatalReasons,
@@ -1631,6 +1645,12 @@
     if (!video) return null;
     if (isShortsPage()) return { kind: 'shorts' };
     if (isLiveStream(video)) return { kind: 'live' };
+    // 0.1.49: the shared pipeline is serving another tab. Show the calm,
+    // actionable badge rather than any analyzing/countdown state, since
+    // nothing is being worked on for this tab right now. Ranks below the
+    // documented limits above (a Short is a Short in any tab) but above every
+    // processing state, whose ETAs would be meaningless here.
+    if (pmServedElsewhere) return { kind: 'other-tab' };
     var t = video.currentTime;
     // Built once, attached to whichever state is returned below, so the
     // trace can never disagree with the decision it is explaining.
@@ -2060,9 +2080,26 @@
   }
   ['play', 'pause', 'seeking', 'seeked', 'ratechange', 'ended'].forEach(function (evt) {
     document.addEventListener(evt, function (ev) {
-      if (ev.target instanceof HTMLVideoElement) refreshPillSoon();
+      if (ev.target instanceof HTMLVideoElement) {
+        refreshPillSoon();
+        if (evt === 'play' || evt === 'pause' || evt === 'ended') reportPlayState();
+      }
     }, true);
   });
+
+  // 0.1.49 active-tab-follow: tell background whether this tab's video is
+  // playing, so a video playing in a BACKGROUND tab (focus on some other,
+  // non-YouTube surface) can still be the tab the shared pipeline serves. Only
+  // real changes are posted, so a scrub or a rate change does not spam the
+  // port. background feeds this into shared/active_tab.js; it never reaches
+  // the offscreen document directly.
+  function reportPlayState() {
+    var video = getVideo();
+    var playing = !!(video && !video.paused && !video.ended);
+    if (playing === lastReportedPlaying) return;
+    lastReportedPlaying = playing;
+    safePortPost({ type: 'playstate', videoId: session ? session.videoId : null, playing: playing });
+  }
 
   // pm_enabled=false must turn the ENTIRE extension off, not just stop
   // future muting decisions (0.1.13). Called synchronously from the
@@ -2627,6 +2664,11 @@
   // enforcement logic as the rAF loop - never a separate/divergent path.
   var backgroundBackstopInterval = null;
   document.addEventListener('visibilitychange', function () {
+    // 0.1.49: a tab becoming visible is a strong hint the user switched to it.
+    // Re-post play state so background re-runs the active-tab arbitration
+    // promptly (it also listens to tab/window focus, but this covers the case
+    // where the video's paused/playing state changed while hidden).
+    reportPlayState();
     if (document.hidden) {
       runTickLogic(); // react to the transition immediately, don't wait up to 1s for the first backstop tick
       if (!backgroundBackstopInterval) backgroundBackstopInterval = setInterval(runTickLogic, 1000);
@@ -2889,6 +2931,23 @@
           showAnalyzingOverlay(false);
           showUnanalyzableNotice();
         }
+      } else if (msg.type === 'active-status') {
+        // 0.1.49 active-tab-follow: background decides which single tab the
+        // shared pipeline serves. When this tab is NOT it, show the calm
+        // "another tab is being filtered" state instead of any analyzing or
+        // warning state, and let health report WAITING (never unhealthy). It
+        // flips back automatically when the user switches to this tab.
+        var servedElsewhere = msg.active === false;
+        if (servedElsewhere !== pmServedElsewhere) {
+          pmServedElsewhere = servedElsewhere;
+          TLOG(TAG, '[PM-ACTIVE] this tab is now ' +
+            (servedElsewhere ? 'waiting (another tab is being filtered)' : 'the active tab (being filtered)'));
+          refreshPillSoon();
+          // Force an immediate health re-evaluation past the 1Hz throttle so
+          // the popup and toolbar badge reflect the change at once.
+          var v = getVideo();
+          if (v) { lastHealthCallWall = 0; evaluateHealth(v); }
+        }
       }
     });
     port.onDisconnect.addListener(function () {
@@ -2910,6 +2969,13 @@
     // a full resync - cheap when there's nothing yet, and guarantees no
     // words computed while the port was down are silently lost.
     if (session) safePortPost({ type: 'resync', videoId: session.videoId });
+    // 0.1.49: report current play state on (re)connect so background's
+    // active-tab arbitration knows whether this tab is playing without waiting
+    // for the next play/pause event (a page that autoplays would otherwise
+    // look paused until the user touched it). Force a post by clearing the
+    // dedupe latch first.
+    lastReportedPlaying = null;
+    reportPlayState();
   }
   connectPort();
   // FIX (0.1.18): stale cross-refresh work. A plain page REFRESH of the

@@ -14353,6 +14353,10 @@
         return run;
       }
       var sessions = /* @__PURE__ */ new Map();
+      var activeTabId = null;
+      function sessionIsServing(s) {
+        return activeTabId == null || s.tabId === activeTabId;
+      }
       function broadcastDiag(text) {
         log("[UNCAUGHT]", text);
         for (const s of sessions.values()) {
@@ -15475,7 +15479,9 @@
         }
         return false;
       }
+      var BENIGN_IDLE_GATES = /* @__PURE__ */ new Set(["disabled", "unanalyzable", "not-active-tab"]);
       function reportIdleGate(s, gateName, detail) {
+        if (BENIGN_IDLE_GATES.has(gateName)) return;
         if (!hasUncoveredCapturedWorkNearPlayhead(s)) return;
         const now = Date.now();
         const lastByGate = s.lastIdleGateDiagWall || (s.lastIdleGateDiagWall = {});
@@ -15485,6 +15491,7 @@
       }
       async function maybeProcess(s) {
         if (s.disabled || s.unanalyzable) return;
+        if (!sessionIsServing(s)) return;
         if (s.processing) {
           s.pendingRerun = true;
           return;
@@ -15506,6 +15513,11 @@
             if (s.unanalyzable) {
               exitGate = "unanalyzable";
               exitDetail = "DRM/undecodable content - transcription given up for this session";
+              break;
+            }
+            if (!sessionIsServing(s)) {
+              exitGate = "not-active-tab";
+              exitDetail = "another tab became the active/served tab (0.1.49)";
               break;
             }
             if (s.generation !== loopGeneration) {
@@ -15588,6 +15600,17 @@
         if (!msg || !msg.type) return;
         if (msg.type === "pm-reset") {
           dropSessionsForTab(msg.tabId);
+          return;
+        }
+        if (msg.type === "pm-active-tab") {
+          const prev = activeTabId;
+          activeTabId = typeof msg.tabId === "number" ? msg.tabId : null;
+          if (activeTabId !== prev) {
+            log("[PM-ACTIVE-TAB] serving tab " + (activeTabId == null ? "none" : activeTabId) + " (was " + (prev == null ? "none" : prev) + ")");
+            for (const s of sessions.values()) {
+              if (sessionIsServing(s)) maybeProcess(s);
+            }
+          }
           return;
         }
         if (msg.type === "pm-seek") {

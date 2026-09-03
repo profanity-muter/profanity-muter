@@ -253,6 +253,23 @@ function runSerialized(fn) {
 // --- per (tabId, videoId) session -------------------------------------------
 const sessions = new Map(); // key "tabId:videoId" -> session
 
+// 0.1.49 ACTIVE-TAB-FOLLOW. The worker and the ~280MB model are shared by
+// every tab, and the worker is a single thread: analyzing two videos at once
+// makes BOTH fall behind the playhead rather than serving each at half speed.
+// So the pipeline serves exactly one tab at a time, the one the user is
+// actually watching, and background.js (shared/active_tab.js) decides which.
+//
+// `activeTabId` is that tab's id, or null before background has ever told us
+// (in which case every session is served, which is the correct single-tab
+// default and keeps a fresh offscreen document working before the first
+// pm-active-tab arrives). A session whose tab is not the active one is gated
+// out of maybeProcess entirely: it consumes no worker time, exactly like a
+// disabled session, and resumes the instant its tab becomes active again.
+let activeTabId = null;
+function sessionIsServing(s) {
+  return activeTabId == null || s.tabId === activeTabId;
+}
+
 // Any uncaught error here must not stay invisible in this document's own
 // (user-inaccessible) console - broadcast to every known session's tab.
 function broadcastDiag(text) {
@@ -2201,7 +2218,13 @@ function hasUncoveredCapturedWorkNearPlayhead(s) {
   }
   return false;
 }
+// Gates that are DELIBERATE idles, not stalls: the pipeline stopped on
+// purpose and uncovered work near the playhead is expected, not a symptom.
+// 'not-active-tab' (0.1.49) joins disabled/unanalyzable here so an inactive
+// tab does not emit a [PM-IDLE-GATE] every loop while another tab is served.
+const BENIGN_IDLE_GATES = new Set(['disabled', 'unanalyzable', 'not-active-tab']);
 function reportIdleGate(s, gateName, detail) {
+  if (BENIGN_IDLE_GATES.has(gateName)) return;
   if (!hasUncoveredCapturedWorkNearPlayhead(s)) return; // nothing left to do near the playhead right now - this exit is legitimate, not a bug, don't alarm
   const now = Date.now();
   const lastByGate = s.lastIdleGateDiagWall || (s.lastIdleGateDiagWall = {});
@@ -2212,6 +2235,11 @@ function reportIdleGate(s, gateName, detail) {
 
 async function maybeProcess(s) {
   if (s.disabled || s.unanalyzable) return; // pm_enabled=false (0.1.13), or DRM/undecodable content (0.1.15) - idle, no transcription CPU
+  // 0.1.49: not the active tab - the shared pipeline is serving another tab
+  // right now. Return before marking `processing` or starting a heartbeat, so
+  // an inactive tab is genuinely idle and does not even look busy. It resumes
+  // when background sends pm-active-tab naming this tab.
+  if (!sessionIsServing(s)) return;
   if (s.processing) {
     s.pendingRerun = true;
     return;
@@ -2254,6 +2282,13 @@ async function maybeProcess(s) {
       // already-queued windows for the rest of that loop.
       if (s.disabled) { exitGate = 'disabled'; exitDetail = 'pm_enabled=false'; break; }
       if (s.unanalyzable) { exitGate = 'unanalyzable'; exitDetail = 'DRM/undecodable content - transcription given up for this session'; break; }
+      // 0.1.49: the active tab changed mid-loop (each transcribeWindow await
+      // is a real yield point). Stop picking further windows for a tab that is
+      // no longer the served one; the newly-active tab's loop takes over. Any
+      // window already in flight cannot be aborted and simply finishes (its
+      // result is still valid coverage), so the switch costs at most one
+      // window of the shared worker's time.
+      if (!sessionIsServing(s)) { exitGate = 'not-active-tab'; exitDetail = 'another tab became the active/served tab (0.1.49)'; break; }
       if (s.generation !== loopGeneration) {
         log('[PM-STALE] maybeProcess loop stopping: generation changed (' + loopGeneration + ' -> ' + s.generation + ')');
         exitGate = 'generation-changed';
@@ -2374,6 +2409,27 @@ chrome.runtime.onMessage.addListener((msg) => {
 
   if (msg.type === 'pm-reset') {
     dropSessionsForTab(msg.tabId);
+    return;
+  }
+
+  if (msg.type === 'pm-active-tab') {
+    // 0.1.49 active-tab-follow. background decided which single tab the shared
+    // pipeline should serve (shared/active_tab.js). Re-bind: the newly-active
+    // tab's sessions resume, and the previously-active ones stop at the
+    // sessionIsServing gate on their next loop iteration (or right here if
+    // they are idle). A null id means "no YouTube tab qualifies right now"
+    // (e.g. every tab closed), which simply leaves nothing serving.
+    const prev = activeTabId;
+    activeTabId = (typeof msg.tabId === 'number') ? msg.tabId : null;
+    if (activeTabId !== prev) {
+      log('[PM-ACTIVE-TAB] serving tab ' + (activeTabId == null ? 'none' : activeTabId) + ' (was ' + (prev == null ? 'none' : prev) + ')');
+      // Kick every session that is now serving. Sessions that are no longer
+      // serving need no action: a running loop notices at its next iteration,
+      // and an idle one simply will not be re-kicked.
+      for (const s of sessions.values()) {
+        if (sessionIsServing(s)) maybeProcess(s);
+      }
+    }
     return;
   }
 

@@ -955,14 +955,15 @@ const devlogFixture = {
   const unhealthy = {
     status: 'unhealthy',
     reason: 'no-audio-intercepted',
-    message: "Profanity Muter isn't working on this video. Audio is NOT being filtered.",
+    message: "Profanity Muter can't read this video's audio. YouTube may have changed how it delivers audio, or this video is protected. Filtering is off for this video.",
     detail: 'No audio from this video reached the extension.'
   };
   const { page, errors } = await open(browser, { pm_ackNotPerfect: ACK }, {}, unhealthy);
   const s = await page.evaluate(snapshot);
   check('health: no page errors', errors.length === 0, errors);
   check('health: banner shown', s.healthHidden === false);
-  check('health: states the consequence, not just the cause', /Audio is NOT being filtered/.test(s.healthMessage), s.healthMessage);
+  check('health: states the consequence, not just the cause', /Filtering is off for this video/.test(s.healthMessage), s.healthMessage);
+  check('health: names why it cannot read the audio', /YouTube may have changed how it delivers audio/.test(s.healthMessage), s.healthMessage);
   check('health: shows the cause underneath', s.healthDetail === unhealthy.detail, s.healthDetail);
   const noEmoji = await page.evaluate(() => {
     const t = document.getElementById('pm-health').innerText;
@@ -982,7 +983,7 @@ const devlogFixture = {
   const unhealthy = {
     status: 'unhealthy',
     reason: 'model-load-failed',
-    message: "Profanity Muter isn't working on this video. Audio is NOT being filtered.",
+    message: "Profanity Muter couldn't load its speech model, so this video is NOT being filtered. Reload the page to try again.",
     detail: 'The speech model could not be loaded.'
   };
   // Unacknowledged (so the setup banner is also up) AND locked.
@@ -1008,12 +1009,31 @@ const devlogFixture = {
   const live = {
     status: 'unsupported',
     reason: 'livestream-unsupported',
-    message: "Livestreams aren't supported. Audio is not filtered on this video.",
+    message: "Livestreams aren't filtered. Profanity Muter needs to analyze audio a little ahead of what you hear, which a live stream doesn't allow.",
     detail: "Live video can't be analyzed ahead of playback."
   };
   const { page } = await open(browser, { pm_ackNotPerfect: ACK }, {}, live);
   const s = await page.evaluate(snapshot);
   check('health: a livestream does not raise the broken-filter banner', s.healthHidden === true);
+  await page.close();
+}
+
+// ---- 31. a served-elsewhere (multi-tab) verdict is NOT the alarming banner ----
+// 0.1.49 active-tab-follow: when another tab is being filtered, this tab's
+// health is WAITING, not unhealthy. The popup always queries the ACTIVE tab
+// (which is by definition the one being served), so this state should never
+// raise the broken-filter banner. The calm, actionable copy lives on the
+// on-video badge instead (shared/pill.js "other-tab").
+{
+  const waiting = {
+    status: 'waiting',
+    reason: 'served-elsewhere',
+    message: "Profanity Muter filters one video at a time, and another tab is being filtered right now. Switch to this tab, or pause the other video, to filter this one.",
+    detail: "The shared analyzer is busy with another tab and will switch to this one when you do."
+  };
+  const { page } = await open(browser, { pm_ackNotPerfect: ACK }, {}, waiting);
+  const s = await page.evaluate(snapshot);
+  check('health: a served-elsewhere tab does not raise the broken-filter banner', s.healthHidden === true);
   await page.close();
 }
 
