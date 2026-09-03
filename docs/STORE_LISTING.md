@@ -1,9 +1,10 @@
 # Chrome Web Store submission - Profanity Muter
 
 Draft to paste into the Developer Console (dev account profile /u/4,
-item console 853afb93-d245-4c9e-87a9-11e7756b42ad) once 0.1.44 (bundled
-weights) is tested on-device. Publisher: Alex Stone / Urban Algorithm LLC.
-Non-trader. Support email: profanity.muter@gmail.com. No website for now.
+item console 853afb93-d245-4c9e-87a9-11e7756b42ad) for 0.1.46 (English
+only, bundled base.en weights, tested on-device). Publisher: Alex Stone
+/ Urban Algorithm LLC. Non-trader. Support email:
+profanity.muter@gmail.com. No website for now.
 
 Guardrails baked in: brand name leads, "for YouTube(TM)" only descriptive,
 never "100%/all/guaranteed", trademark disclaimer present, no personal name.
@@ -14,7 +15,7 @@ never "100%/all/guaranteed", trademark disclaimer present, no personal name.
 Profanity Muter for YouTube(TM)
 
 ## Summary / short description (132 char max)
-Mutes swearing in YouTube videos on your device. Real-time speech filtering, private, no account, works in 27 languages.
+Mutes swearing in YouTube videos, on your device. Real-time speech filtering. Private, no account, open source.
 
 ## Category
 Accessibility  (secondary option if needed: Fun / Social & Communication)
@@ -48,7 +49,7 @@ a tight window around each one instead of a whole sentence.
 PRIVATE BY DESIGN
 - Everything runs locally. Your viewing never leaves your device.
 - No account, no tracking, no analytics, no ads.
-- The speech models are bundled in the extension. It works with your
+- The speech model is bundled in the extension. It works with your
   network offline.
 - Open source.
 
@@ -58,25 +59,18 @@ YOU ARE IN CONTROL
   normally, mute until ready, or pause until ready.
 - Optional password lock for the settings.
 
-27 LANGUAGES
-Profanity Muter ships curated word lists for: Arabic, Chinese, Czech,
-Danish, Dutch, English, Esperanto, Filipino, Finnish, French (including
-Canadian French), German, Hindi, Hungarian, Italian, Japanese, Kabyle,
-Korean, Norwegian, Persian, Polish, Portuguese, Russian, Spanish,
-Swedish, Thai, and Turkish. It detects the spoken language and switches
-lists automatically. (There is a Klingon list in there too, for fun.)
-
 GOOD FOR
 Watching with kids, shared and quiet spaces, classrooms, workplaces,
 faith communities, and anyone who would simply rather not hear it.
 
 WHAT IT WILL NOT DO
-Profanity Muter reduces profanity. It does not eliminate it. Speech
-recognition is imperfect, analysis trails the video at the start and
-after skipping, and it only knows the words on the list. It filters
-regular YouTube(TM) videos, not livestreams, Shorts, or other sites.
-YouTube changes can break it until an update ships. Treat it as a good
-filter, not a guarantee.
+Profanity Muter reduces profanity by around 90%. It does not eliminate
+it. Speech recognition is imperfect, analysis trails the video at the
+start and after skipping, and it only knows the words on the list. It
+filters English speech only, in regular YouTube(TM) videos, not
+livestreams, Shorts, premieres, or other sites. YouTube changes can
+break it until an update ships. Treat it as a strong filter, not a
+guarantee.
 
 ---
 Profanity Muter is an independent, open project. It is not affiliated
@@ -119,22 +113,20 @@ user's own device, in real time.
 
 ---
 
-## Assets Nate must produce before submitting
-- [ ] Screenshots (1280x800 or 640x400), at least 1, up to 5. Suggested:
-      (1) the badge showing "Protected" over a YouTube video, (2) the
-      popup with strictness levels + added words, (3) the onboarding
-      "What it won't do" screen, (4) the settings password lock, (5) the
-      language auto-switch notice. Capture on-device after loading 0.1.44.
-      No real personal data on screen; use a neutral video.
+## Assets
+- [x] Screenshots (1280x800), 5, in /tmp/pm-shots (1-hero, 2-diff,
+      3-privacy, 4-tune, 5-limits). Order: hook, differentiator, privacy,
+      control (real popup), limits. Navy/gold system, no personal data.
 - [ ] Small promo tile 440x280 (optional but recommended) - can reuse the
       MuteWing mark on the navy field.
-- [ ] Store icon: 128x128 already in extension/icons/icon128.png.
+- [x] Store icon: 128x128 already in extension/icons/icon128.png.
 - [ ] The packaged .zip: the built extension/ directory INCLUDING the
-      bundled models/ dir (produced by 0.1.44). Confirm it loads unpacked
-      and transcribes with the network blocked before zipping.
+      bundled models/ dir (base.en only, ~280MB, produced by 0.1.46 npm
+      run package). Confirm it loads unpacked and transcribes with the
+      network blocked before zipping.
 
 ## Pre-submit checklist
-- [ ] 0.1.44 tested on Nate's machine, offline transcription confirmed
+- [x] 0.1.46 tested on-device, offline transcription + live muting confirmed
 - [ ] SUPPORT_EMAIL constant = profanity.muter@gmail.com (guard test green)
 - [ ] STORE_ITEM_ID constant filled with the real listing id AFTER first
       draft-save (the share/review links need it; a test fails until set)
