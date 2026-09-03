@@ -113,6 +113,14 @@
           Slang, misspellings and new coinages won't match until someone
           adds them.
         </li>
+        <!-- English-only limit. Present only in the english build; removed by
+             onboarding.js when PM_BUILD_CONFIG.englishOnly is false (the
+             multilingual build supports many languages, so it would be
+             false there). See shared/build-config.global.js. -->
+        <li id="ob-limit-english-only">
+          <strong>English only.</strong>
+          It filters English speech. Other languages are not muted yet.
+        </li>
         <li>
           <strong>Caption censoring depends on the captions.</strong>
           If a video has no subtitles, or its subtitles are poorly timed or
@@ -423,6 +431,9 @@
     </nav>
   </main>
 
+  <!-- Build variant flag (generated). Must load before onboarding.js so the
+       english-only limit can be gated. -->
+  <script src="../shared/build-config.global.js"></script>
   <script src="../shared/wordlist.js"></script>
   <script src="../shared/lock.js"></script>
   <script src="../shared/moments.js"></script>

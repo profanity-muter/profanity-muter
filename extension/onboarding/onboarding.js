@@ -22,6 +22,18 @@
 (function () {
   "use strict";
 
+  // 0.1.46: the "What it won't do" step carries an "English only" limit that
+  // is true ONLY in the english build. The multilingual build supports many
+  // languages, so remove that <li> there. Gated on the same generated build
+  // flag the popup uses (shared/build-config.global.js). Default (flag
+  // absent) is to keep the limit, so a build without the generated file
+  // never makes a false multi-language promise.
+  var englishOnly = !(globalThis.PM_BUILD_CONFIG && globalThis.PM_BUILD_CONFIG.englishOnly === false);
+  if (!englishOnly) {
+    var englishOnlyLimit = document.getElementById("ob-limit-english-only");
+    if (englishOnlyLimit) englishOnlyLimit.remove();
+  }
+
   // Four navigable setup steps, plus a fifth DONE view reached only by
   // finishing (never by Next/Back), which is why the rail and the nav both
   // hide there rather than the rail growing a fifth station: setup is over,
