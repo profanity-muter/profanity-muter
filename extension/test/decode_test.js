@@ -361,6 +361,38 @@ test("with no playhead known, the old unconditional behavior is preserved", () =
   assert.strictEqual(D.playheadPassed(119.60, undefined), true);
 });
 
+// ---- anchor coverage tolerance (0.1.48) ----------------------------------
+//
+// The real-run regression: a decode that landed EXACTLY where requested
+// (startDelta 0.00, to float rounding) was reported "still uncovered",
+// firing the WINDOW-LOOP path and the DECODE-DELTA "did NOT cover" line on
+// every good window. An exact/near-exact match must count as covering.
+
+test("a decode starting exactly at the requested anchor covers it", () => {
+  assert.strictEqual(D.decodeCoversAnchor(2599.61, 2599.61), true);
+});
+
+test("a decode starting a few ms LATER (float rounding) still covers the anchor", () => {
+  // startDelta ~0.005s - the exact false-positive shape from the field log.
+  assert.strictEqual(D.decodeCoversAnchor(2599.615, 2599.61), true);
+  assert.strictEqual(D.decodeCoversAnchor(2609.93 - 10.32, 2599.61), true);
+});
+
+test("a decode starting BEFORE the anchor covers it", () => {
+  assert.strictEqual(D.decodeCoversAnchor(2599.50, 2599.61), true);
+});
+
+test("a decode starting well AFTER the anchor is a real head hole, not covered", () => {
+  // A genuine offset (far beyond the epsilon slack) must still report a miss.
+  assert.strictEqual(D.decodeCoversAnchor(2601.00, 2599.61), false);
+});
+
+test("the tolerance matches mergeRangeInto's 0.05s join granularity", () => {
+  assert.strictEqual(D.ANCHOR_EPS_S, 0.05);
+  assert.strictEqual(D.decodeCoversAnchor(2599.66, 2599.61), true);   // within 0.05
+  assert.strictEqual(D.decodeCoversAnchor(2599.67, 2599.61), false);  // just past 0.05
+});
+
 // ---- summary -------------------------------------------------------------
 
 Promise.all(pending).then(function () {

@@ -267,6 +267,24 @@
     return playheadT >= spanEnd + margin;
   }
 
+  // ---- anchor coverage tolerance (0.1.48) --------------------------------
+  //
+  // Does a decode whose audio BEGINS at `decodedStart` cover a requested
+  // anchor point `requestedStart`? A decode that lands exactly where it was
+  // asked (startDelta 0, to sub-centisecond float rounding) plainly does -
+  // but a strict `decodedStart <= requestedStart` (or a half-open-interval
+  // firstUncoveredPoint comparing floats without slack) reported a decode
+  // that started a few microseconds LATER as "still uncovered", which fired
+  // the WINDOW-LOOP path and the DECODE-DELTA "did NOT cover" line on
+  // perfectly good windows every cycle. The tolerance matches the 0.05s slack
+  // mergeRangeInto already uses to join adjacent coverage, so the two agree
+  // on what "touching" means.
+  var ANCHOR_EPS_S = 0.05;
+  function decodeCoversAnchor(decodedStart, requestedStart, epsS) {
+    var eps = typeof epsS === "number" ? epsS : ANCHOR_EPS_S;
+    return decodedStart <= requestedStart + eps;
+  }
+
   // Always resolves. A teardown that throws must never mask the failure
   // that caused it, and must never prevent the caller from carrying on.
   function closeIterator(iterator) {
@@ -291,11 +309,13 @@
     HANG_REBUILD_AT: HANG_REBUILD_AT,
     HANG_SKIP_AT: HANG_SKIP_AT,
     HANG_THRESHOLD: HANG_THRESHOLD,
+    ANCHOR_EPS_S: ANCHOR_EPS_S,
     stageTimeoutMsFor: stageTimeoutMsFor,
     hangAction: hangAction,
     drainWithTimeout: drainWithTimeout,
     closeIterator: closeIterator,
-    playheadPassed: playheadPassed
+    playheadPassed: playheadPassed,
+    decodeCoversAnchor: decodeCoversAnchor
   };
 
   root.PMDecode = PMDecodeCore;

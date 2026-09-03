@@ -585,15 +585,26 @@ function mergeRangeInto(list, start, end) {
   return list;
 }
 
+// 0.1.48: EPS-tolerant. A coverage interval that begins within COVERAGE_EPS_S
+// of the cursor is treated as covering it - a decode that landed exactly
+// where requested (startDelta 0, to sub-centisecond float rounding) used to
+// be reported as leaving a microscopic hole at `lo`, which fired the
+// WINDOW-LOOP path on good windows. The slack matches mergeRangeInto's own
+// 0.05s join granularity, so coverage this function already treats as one
+// contiguous block is never re-split into a spurious sliver hole. A genuine
+// hole (far larger than a window) is unaffected.
+const COVERAGE_EPS_S = globalThis.PMDecode && typeof globalThis.PMDecode.ANCHOR_EPS_S === 'number'
+  ? globalThis.PMDecode.ANCHOR_EPS_S
+  : 0.05;
 function firstUncoveredPoint(intervals, lo, hi) {
   let p = lo;
   for (const iv of intervals) {
-    if (iv.end <= p) continue;
-    if (iv.start > p) return p;
+    if (iv.end <= p + COVERAGE_EPS_S) continue;
+    if (iv.start > p + COVERAGE_EPS_S) return p;
     p = iv.end;
-    if (p >= hi) return null;
+    if (p >= hi - COVERAGE_EPS_S) return null;
   }
-  return p < hi ? p : null;
+  return p < hi - COVERAGE_EPS_S ? p : null;
 }
 
 // Loudness normalization (0.1.13): quiet passages were under-driving
@@ -1021,7 +1032,16 @@ function coverageViewForPicking(s) {
 // reported) can legitimately race ahead of what any ONE specific run's own
 // stream has actually been fed - this guard keeps window requests within
 // what's verifiably already in the run's stream.
-const DECODE_FED_GUARD_S = 0.25;
+// 0.1.48: widened 0.25 -> 1.0. The real run's residual [PM-REBUILD] churn
+// (~every 30s, foreground, NOT throttle-driven) was entirely the NEWEST
+// window decoding right up to the current fed edge and stalling there, then
+// succeeding a cycle later once a hair more data was fed (e.g. [.. ,2609.60)
+// hangs, [.. ,2609.92) succeeds). A quarter-second was not enough margin to
+// clear the trailing, still-arriving cluster. A full second keeps the tail
+// window's decode request off the fed edge, so it stops stalling. This costs
+// no coverage: the held-back sliver decodes on the very next cycle once more
+// data is fed, still far ahead of the playhead under normal playback.
+const DECODE_FED_GUARD_S = 1.0;
 
 function pickNextWindow(s, run) {
   const ct = s.currentTimeS;
@@ -1516,7 +1536,15 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   const startDelta = actualMinStart - absStart; // >0: decoded audio begins LATER than asked (head hole)
   const endDelta = actualMaxEnd - absEnd;        // decoded audio ends past/short of the requested end
   const DECODE_DELTA_SLACK_S = 0.2;
-  const anchorUncovered = firstUncoveredPoint(s.covered, absStart, Math.min(absEnd, absStart + 1)) !== null;
+  // 0.1.48: measured against THIS window's own decoded start (not the pre-
+  // merge s.covered, which never includes this window yet and so always read
+  // "uncovered" on a fresh forward window - the false positive the real run
+  // flagged). A decode that begins at/near the requested start covers the
+  // anchor; only a decode that genuinely starts LATER than requested leaves a
+  // real head hole worth logging.
+  const anchorUncovered = !(globalThis.PMDecode
+    ? globalThis.PMDecode.decodeCoversAnchor(actualMinStart, absStart)
+    : actualMinStart <= absStart + 0.05);
   if (Math.abs(startDelta) > DECODE_DELTA_SLACK_S || anchorUncovered) {
     notifyTab(
       s,

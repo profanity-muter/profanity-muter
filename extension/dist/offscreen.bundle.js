@@ -13969,6 +13969,11 @@
           var margin = typeof marginS === "number" ? marginS : 0;
           return playheadT >= spanEnd + margin;
         }
+        var ANCHOR_EPS_S = 0.05;
+        function decodeCoversAnchor(decodedStart, requestedStart, epsS) {
+          var eps = typeof epsS === "number" ? epsS : ANCHOR_EPS_S;
+          return decodedStart <= requestedStart + eps;
+        }
         function closeIterator(iterator) {
           if (!iterator || typeof iterator.return !== "function") return Promise.resolve(false);
           try {
@@ -13994,11 +13999,13 @@
           HANG_REBUILD_AT,
           HANG_SKIP_AT,
           HANG_THRESHOLD,
+          ANCHOR_EPS_S,
           stageTimeoutMsFor,
           hangAction,
           drainWithTimeout,
           closeIterator,
-          playheadPassed
+          playheadPassed,
+          decodeCoversAnchor
         };
         root.PMDecode = PMDecodeCore;
         if (typeof module !== "undefined" && module.exports) {
@@ -14610,15 +14617,16 @@
         list.push(...merged);
         return list;
       }
+      var COVERAGE_EPS_S = globalThis.PMDecode && typeof globalThis.PMDecode.ANCHOR_EPS_S === "number" ? globalThis.PMDecode.ANCHOR_EPS_S : 0.05;
       function firstUncoveredPoint(intervals, lo, hi) {
         let p = lo;
         for (const iv of intervals) {
-          if (iv.end <= p) continue;
-          if (iv.start > p) return p;
+          if (iv.end <= p + COVERAGE_EPS_S) continue;
+          if (iv.start > p + COVERAGE_EPS_S) return p;
           p = iv.end;
-          if (p >= hi) return null;
+          if (p >= hi - COVERAGE_EPS_S) return null;
         }
-        return p < hi ? p : null;
+        return p < hi - COVERAGE_EPS_S ? p : null;
       }
       var NORMALIZE_TARGET_PEAK = 0.9;
       var NORMALIZE_MIN_PEAK = 0.02;
@@ -14829,7 +14837,7 @@
         for (const sp of activeSkipped) extra.push({ start: sp.start, end: sp.end });
         return s.covered.concat(extra).sort((a, b) => a.start - b.start);
       }
-      var DECODE_FED_GUARD_S = 0.25;
+      var DECODE_FED_GUARD_S = 1;
       function pickNextWindow(s, run) {
         const ct = s.currentTimeS;
         let containing = null;
@@ -15107,7 +15115,7 @@
         const startDelta = actualMinStart - absStart;
         const endDelta = actualMaxEnd - absEnd;
         const DECODE_DELTA_SLACK_S = 0.2;
-        const anchorUncovered = firstUncoveredPoint(s.covered, absStart, Math.min(absEnd, absStart + 1)) !== null;
+        const anchorUncovered = !(globalThis.PMDecode ? globalThis.PMDecode.decodeCoversAnchor(actualMinStart, absStart) : actualMinStart <= absStart + 0.05);
         if (Math.abs(startDelta) > DECODE_DELTA_SLACK_S || anchorUncovered) {
           notifyTab(
             s,
