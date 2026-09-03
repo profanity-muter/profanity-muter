@@ -38,7 +38,6 @@
         "shared/pill.js",
         "shared/preempt.js",
         "shared/runs.js",
-        "shared/language.js",
         "shared/catchup.js",
         "content.js",
         "captions.js"
@@ -61,7 +60,6 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "shared/packs/*.json",
         "icons/icon32.png",
         "models/*"
       ],

@@ -301,14 +301,12 @@ test("unrelated settings still resolve alongside the new keys", () => {
     pm_strictness: "none",
     pm_catchupMode: "play",
     pm_padding: "wide",
-    pm_enabled: false,
-    pm_multilingual: false
+    pm_enabled: false
   });
   assert.strictEqual(r.catchupMode, "play");
   assert.strictEqual(r.safeMode, false);
   assert.strictEqual(r.padding, "wide");
   assert.strictEqual(r.enabled, false);
-  assert.strictEqual(r.multilingual, false);
   assert.deepStrictEqual(r.wordlist, ["alpha"]);
 });
 

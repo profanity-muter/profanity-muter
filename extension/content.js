@@ -126,7 +126,6 @@
   function devlogSettingsSnapshot() {
     var pm = globalThis.PMWordlist;
     var s = (pm && pm.settings) || {};
-    var lang = (pm && pm.activeLanguage) || 'en';
     var count = (pm && pm._state && pm._state.wordlist && pm._state.wordlist.length) || 0;
     // 0.1.29: the active English list is the built-in TIER plus the
     // user's own additive words, so the source has to name both - a bare
@@ -134,10 +133,7 @@
     // could have come from the user's own list. Still only counts and a
     // tier name, never contents.
     var added = typeof s.additionalWordCount === 'number' ? s.additionalWordCount : 0;
-    var source = lang === 'en'
-      ? 'tier:' + (s.strictness || 'strict') + '+own:' + added
-      : 'pack:' + lang;
-    if (pm && pm.packAvailable === false) source += ' (pack unavailable)';
+    var source = 'tier:' + (s.strictness || 'strict') + '+own:' + added;
     return {
       enabled: s.enabled !== false,
       strictness: s.strictness || 'strict',
@@ -310,7 +306,6 @@
       // 0.1.28 - the currently-open catch-up gap for the persistent dev
       // log ({start, end, mode}), or null. See trackDevlogGap() below.
       devlogGap: null,
-      language: null, // 0.1.25 - detected language ('en', a real code, or null before/without detection); see handleLanguage()/addWords()
       // 0.1.32 health monitor (see shared/health.js). All per-video, all
       // reset with the session, because "is this working" is a question
       // about THIS video: a previous video's success says nothing about
@@ -555,32 +550,8 @@
     }
   }
 
-  // Multilingual support (0.1.25) - applies a detected language to the
-  // current session, once, only on an actual CHANGE (offscreen sends the
-  // language on every 'words'/'resync-result' message once resolved, not
-  // just the first - this guards against redundant PMWordlist.setLanguage
-  // calls / duplicate [PM-LANG-APPLIED] noise on every single window).
-  // PMWordlist.setLanguage is called defensively (the wordlist agent owns
-  // per-language wordlist packs and may not have shipped this method yet,
-  // or ever, for a given build) - its absence must never break anything
-  // else here.
-  function applyDetectedLanguage(videoId, language) {
+  function addWords(videoId, rawWords, windowStartS, windowEndS, wallMs, rtf, modelRtf, decodeMs, queueMs, computeMs, model) {
     if (!session || session.videoId !== videoId) return;
-    if (!language || session.language === language) return;
-    session.language = language;
-    TLOG(TAG, '[PM-LANG-APPLIED] language=' + language);
-    try {
-      if (globalThis.PMWordlist && typeof globalThis.PMWordlist.setLanguage === 'function') {
-        globalThis.PMWordlist.setLanguage(language);
-      }
-    } catch (e) {
-      TWARN(TAG, 'PMWordlist.setLanguage threw:', e);
-    }
-  }
-
-  function addWords(videoId, rawWords, windowStartS, windowEndS, wallMs, rtf, modelRtf, decodeMs, queueMs, computeMs, language, model) {
-    if (!session || session.videoId !== videoId) return;
-    applyDetectedLanguage(videoId, language);
 
     // Health monitor (0.1.32): a window coming back at all is THE evidence
     // that the pipeline works end to end. Counted before anything below
@@ -693,9 +664,8 @@
   // for this session (words computed while the port was down must not be
   // silently lost) - this REPLACES local state rather than merging, since it
   // is authoritative.
-  function handleResync(videoId, words, coveredIntervals, language) {
+  function handleResync(videoId, words, coveredIntervals) {
     if (!session || session.videoId !== videoId) return;
-    applyDetectedLanguage(videoId, language);
     TLOG(TAG, 'resync received:', (words || []).length, 'words,', (coveredIntervals || []).length, 'covered intervals');
     var result = applyWordsToIntervals(words || []);
     session.intervals = result.intervals;
@@ -2831,15 +2801,9 @@
     port.onMessage.addListener(function (msg) {
       if (!msg || !msg.type) return;
       if (msg.type === 'words') {
-        addWords(msg.videoId, msg.words || [], msg.windowStartS, msg.windowEndS, msg.wallMs, msg.rtf, msg.modelRtf, msg.decodeMs, msg.queueMs, msg.computeMs, msg.language, msg.model);
+        addWords(msg.videoId, msg.words || [], msg.windowStartS, msg.windowEndS, msg.wallMs, msg.rtf, msg.modelRtf, msg.decodeMs, msg.queueMs, msg.computeMs, msg.model);
       } else if (msg.type === 'resync-result') {
-        handleResync(msg.videoId, msg.words, msg.coveredIntervals, msg.language);
-      } else if (msg.type === 'language') {
-        // 0.1.25: snappier-UI push, sent once right when detection resolves
-        // - the same 'words'/'resync-result' path above is the authoritative
-        // source (applyDetectedLanguage is idempotent past the first
-        // real change either way).
-        applyDetectedLanguage(msg.videoId, msg.language);
+        handleResync(msg.videoId, msg.words, msg.coveredIntervals);
       } else if (msg.type === 'preempt-decision') {
         TLOG(
           TAG,
@@ -2878,22 +2842,6 @@
           reason: msg.reason,
           spanStart: msg.spanStart,
           spanEnd: msg.spanEnd
-        });
-      } else if (msg.type === 'language-decision') {
-        // 0.1.37: recorded whatever the outcome, including holds.
-        TLOG(
-          TAG,
-          '[PM-LANG] observed=' + (msg.observed || 'none') +
-            (msg.score != null ? ' score=' + msg.score.toFixed(2) : '') +
-            ' action=' + msg.action + ' (' + msg.reason + ') active=' + msg.active
-        );
-        devlog('logLanguage', {
-          observed: msg.observed,
-          score: msg.score,
-          action: msg.action,
-          reason: msg.reason,
-          active: msg.active,
-          model: msg.model
         });
       } else if (msg.type === 'open-ui-outcome') {
         // 0.1.37: the badge click ladder reporting what actually happened,

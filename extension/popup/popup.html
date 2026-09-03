@@ -108,19 +108,6 @@
     </label>
   </section>
 
-  <section class="pm-row pm-row--toggle">
-    <label class="pm-switch-label">
-      <span class="pm-switch-text">
-        <span class="pm-switch-title">Filter other languages</span>
-        <span class="pm-switch-sub">Auto-detect the spoken language and filter its own profanity too</span>
-      </span>
-      <span class="pm-switch">
-        <input type="checkbox" id="pm-multilingual" checked />
-        <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
-      </span>
-    </label>
-  </section>
-
   <section class="pm-row pm-row--radio">
     <span class="pm-label">While catching up</span>
     <div class="pm-radio-group" role="radiogroup" aria-label="While catching up">
@@ -201,7 +188,6 @@
     <p id="pm-wordlist-mode-note" class="pm-hint pm-wordlist-mode-note">
       Strict list, plus 0 of your own
     </p>
-    <p id="pm-active-language-note" class="pm-hint pm-active-language-note pm-hidden" aria-hidden="true"></p>
     <p id="pm-wordlist-hint" class="pm-hint">
       Words you add here are filtered on top of the built-in list, one word
       or phrase per line. They're masked until you click "Show words to edit".
@@ -323,9 +309,6 @@
     <span id="pm-status" class="pm-status" role="status" aria-live="polite"></span>
   </section>
 
-  <!-- Build variant flag (generated). Must load before popup.js so the
-       english build can hide multilingual-only affordances. -->
-  <script src="../shared/build-config.global.js"></script>
   <script src="../shared/wordlist.js"></script>
   <script src="../shared/lock.js"></script>
   <script src="../shared/moments.js"></script>

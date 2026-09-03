@@ -301,14 +301,12 @@ function openExtensionUi(plan, index, tabId) {
 
 function sendModelConfig(tabId, videoId) {
   try {
-    // pm_multilingual (0.1.25, default true - the wordlist agent owns the
-    // popup toggle for this) read the same way pm_model already is: once
-    // per video reset, not reactively mid-video (matches pm_model's own
-    // existing behavior - a mid-video toggle takes effect on the NEXT video).
-    chrome.storage.sync.get({ pm_model: 'base', pm_multilingual: true }, function (items) {
+    // pm_model read once per video reset, not reactively mid-video (a
+    // mid-video change takes effect on the NEXT video).
+    chrome.storage.sync.get({ pm_model: 'base' }, function (items) {
       if (chrome.runtime.lastError) return;
       chrome.runtime
-        .sendMessage({ type: 'pm-config', tabId: tabId, videoId: videoId, model: items.pm_model, multilingual: items.pm_multilingual })
+        .sendMessage({ type: 'pm-config', tabId: tabId, videoId: videoId, model: items.pm_model })
         .catch(function () {});
     });
   } catch (e) {}
@@ -482,7 +480,6 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
           decodeMs: msg.decodeMs,
           queueMs: msg.queueMs,
           computeMs: msg.computeMs,
-          language: msg.language, // 0.1.25
           model: msg.model
         });
       } catch (e) {
@@ -545,26 +542,6 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
         });
       } catch (e) {}
     }
-  } else if (msg.type === 'pm-language-decision') {
-    // 0.1.37: every language decision, including the ones that declined to
-    // act, relayed to the tab so it lands in the devlog. See
-    // shared/language.js for why a wrong switch is a protection failure
-    // and not just a slower model.
-    var langPort = portsByTabId.get(msg.tabId);
-    if (langPort) {
-      try {
-        langPort.postMessage({
-          type: 'language-decision',
-          videoId: msg.videoId,
-          observed: msg.observed,
-          score: msg.score,
-          action: msg.action,
-          reason: msg.reason,
-          active: msg.active,
-          model: msg.model
-        });
-      } catch (e) {}
-    }
   } else if (msg.type === 'pm-diag') {
     // Tab-visible diagnostics: anything offscreen determined could block
     // coverage indefinitely (a skipped window, a demux error, a stall) -
@@ -594,27 +571,12 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     var syncPort = portsByTabId.get(msg.tabId);
     if (syncPort) {
       try {
-        syncPort.postMessage({ type: 'resync-result', videoId: msg.videoId, words: msg.words, coveredIntervals: msg.coveredIntervals, language: msg.language });
+        syncPort.postMessage({ type: 'resync-result', videoId: msg.videoId, words: msg.words, coveredIntervals: msg.coveredIntervals });
       } catch (e) {
         console.warn('[PM-BG] failed to relay resync-result:', String(e));
       }
     }
     console.log('[PM-BG] resync-result relayed:', (msg.words || []).length, 'words,', (msg.coveredIntervals || []).length, 'covered intervals');
-  } else if (msg.type === 'pm-language') {
-    // 0.1.25: sent once, right when detection resolves - a snappier-UI
-    // nice-to-have on top of the language field already carried on every
-    // 'words'/'resync-result' message (that's the authoritative source;
-    // this is not relied upon alone, since ordering between two separate
-    // sendMessage calls isn't guaranteed - see PIPELINE_NOTES "0.1.23"'s
-    // ordering caveat).
-    var langPort = portsByTabId.get(msg.tabId);
-    if (langPort) {
-      try {
-        langPort.postMessage({ type: 'language', videoId: msg.videoId, language: msg.language });
-      } catch (e) {
-        /* not critical -- the next words/resync message carries it too */
-      }
-    }
   } else if (msg.type === 'pm-log') {
     console.log('[PM-OFFSCREEN]', msg.text);
   }

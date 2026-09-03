@@ -36,11 +36,8 @@ import { MODEL_REPOS, MODEL_FILES, MIN_ONNX_BYTES } from './model-manifest.mjs';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const MODELS_DIR = path.join(__dirname, '..', 'models');
 
-// The repos the shipped code can actually load, chosen by PM_VARIANT via
-// scripts/model-manifest.mjs: english bundles only base.en (~280MB);
-// multilingual also bundles the whisper-tiny language probe and the
-// whisper-base multilingual transcriber (~707MB). See model-manifest.mjs
-// for the full reasoning.
+// 0.1.46 (English-only): the shipped code loads exactly one model, base.en
+// (~280MB). See scripts/model-manifest.mjs for the reasoning.
 const REPOS = MODEL_REPOS;
 const FILES = MODEL_FILES;
 const BASE = 'https://huggingface.co';

@@ -13860,111 +13860,6 @@
     }
   });
 
-  // shared/language.js
-  var require_language = __commonJS({
-    "shared/language.js"(exports, module) {
-      (function(root) {
-        "use strict";
-        var MIN_SWITCH_SCORE = 16;
-        var MIN_REVERT_SCORE = 12;
-        var CONSECUTIVE_REQUIRED = 2;
-        var DEFAULT_LANGUAGE = "en";
-        function newState() {
-          return {
-            active: DEFAULT_LANGUAGE,
-            // what the pipeline is currently using
-            streakLang: null,
-            // the language currently accumulating agreement
-            streakCount: 0,
-            observations: 0
-          };
-        }
-        function decide(state, observation) {
-          var s = state && typeof state === "object" ? state : newState();
-          var next = {
-            active: s.active || DEFAULT_LANGUAGE,
-            streakLang: s.streakLang || null,
-            streakCount: s.streakCount || 0,
-            observations: (s.observations || 0) + 1
-          };
-          var obs = observation || {};
-          var lang = typeof obs.language === "string" && obs.language ? obs.language : null;
-          var score = typeof obs.score === "number" && isFinite(obs.score) ? obs.score : null;
-          if (!lang) {
-            next.streakLang = null;
-            next.streakCount = 0;
-            return { state: next, action: "hold", language: next.active, reason: "no-detection", score };
-          }
-          if (lang === DEFAULT_LANGUAGE) {
-            next.streakLang = null;
-            next.streakCount = 0;
-            if (next.active === DEFAULT_LANGUAGE) {
-              return { state: next, action: "hold", language: DEFAULT_LANGUAGE, reason: "already-english", score };
-            }
-            if (score == null || score < MIN_REVERT_SCORE) {
-              return { state: next, action: "hold", language: next.active, reason: "revert-low-confidence", score };
-            }
-            next.active = DEFAULT_LANGUAGE;
-            return { state: next, action: "revert", language: DEFAULT_LANGUAGE, reason: "confident-english", score };
-          }
-          if (score == null || score < MIN_SWITCH_SCORE) {
-            next.streakLang = null;
-            next.streakCount = 0;
-            return { state: next, action: "hold", language: next.active, reason: "low-confidence", score };
-          }
-          if (lang === next.active) {
-            next.streakLang = null;
-            next.streakCount = 0;
-            return { state: next, action: "hold", language: next.active, reason: "already-active", score };
-          }
-          next.streakCount = next.streakLang === lang ? next.streakCount + 1 : 1;
-          next.streakLang = lang;
-          if (next.streakCount < CONSECUTIVE_REQUIRED) {
-            return {
-              state: next,
-              action: "hold",
-              language: next.active,
-              reason: "awaiting-corroboration",
-              score
-            };
-          }
-          next.active = lang;
-          next.streakLang = null;
-          next.streakCount = 0;
-          return { state: next, action: "switch", language: lang, reason: "confirmed", score };
-        }
-        var MAX_PROBES = 3;
-        function shouldProbe(state, maxProbes) {
-          var s = state || newState();
-          var limit = typeof maxProbes === "number" ? maxProbes : MAX_PROBES;
-          return (s.observations || 0) < limit;
-        }
-        var PMLanguageCore = {
-          MIN_SWITCH_SCORE,
-          MIN_REVERT_SCORE,
-          CONSECUTIVE_REQUIRED,
-          MAX_PROBES,
-          DEFAULT_LANGUAGE,
-          newState,
-          decide,
-          shouldProbe
-        };
-        root.PMLanguage = PMLanguageCore;
-        if (typeof module !== "undefined" && module.exports) {
-          module.exports = { PMLanguageCore };
-        }
-      })(typeof globalThis !== "undefined" ? globalThis : exports);
-    }
-  });
-
-  // shared/build-config.js
-  var BUILD_CONFIG;
-  var init_build_config = __esm({
-    "shared/build-config.js"() {
-      BUILD_CONFIG = { englishOnly: true };
-    }
-  });
-
   // shared/decode.js
   var require_decode = __commonJS({
     "shared/decode.js"(exports, module) {
@@ -14282,17 +14177,11 @@
   var require_offscreen_src = __commonJS({
     "src/offscreen-src.js"() {
       init_src();
-      var import_language = __toESM(require_language());
-      init_build_config();
       var import_decode = __toESM(require_decode());
       var import_runs = __toESM(require_runs());
       var import_preempt = __toESM(require_preempt());
       var MODEL_IDS = {
-        tiny: "Xenova/whisper-tiny.en",
-        base: "Xenova/whisper-base.en",
-        small: "Xenova/whisper-small.en",
-        multilingual: "Xenova/whisper-base",
-        "lang-detect": "Xenova/whisper-tiny"
+        base: "Xenova/whisper-base.en"
       };
       var DEFAULT_MODEL = "base";
       var WINDOW_S = 18;
@@ -14379,7 +14268,7 @@
         const pending = pendingWorkerRequests.get(msg.requestId);
         if (!pending) return;
         pendingWorkerRequests.delete(msg.requestId);
-        if (msg.type === "result" || msg.type === "lang-result") pending.resolve(msg);
+        if (msg.type === "result") pending.resolve(msg);
         else pending.reject(new Error(msg.error || "unknown whisper worker error"));
       }
       spawnWhisperWorker();
@@ -14388,13 +14277,6 @@
           const requestId = nextWorkerRequestId++;
           pendingWorkerRequests.set(requestId, { resolve, reject });
           whisperWorker.postMessage({ type: "transcribe", requestId, modelId, float16k, options }, [float16k.buffer]);
-        });
-      }
-      function detectLanguageInWorker(float16k) {
-        return new Promise((resolve, reject) => {
-          const requestId = nextWorkerRequestId++;
-          pendingWorkerRequests.set(requestId, { resolve, reject });
-          whisperWorker.postMessage({ type: "detect-language", requestId, float16k });
         });
       }
       var inFlightCompute = null;
@@ -14593,26 +14475,7 @@
             processing: false,
             pendingRerun: false,
             modelId: DEFAULT_MODEL,
-            // the user's configured ENGLISH model (tiny/base/small/multilingual) - unaffected by auto language-switching below; the model actually used for a given window is resolved fresh each time (see transcribeWindow's effectiveModelId)
-            // MULTILINGUAL SUPPORT (0.1.25) - see PIPELINE_NOTES "0.1.25".
-            // `multilingualEnabled` mirrors pm_multilingual (default true, set via
-            // pm-config); when false, this session behaves exactly as before -
-            // always `modelId`, detection never runs. `languageState` starts
-            // 'pending' (detection not yet attempted); the FIRST window of a
-            // session (before any real coverage exists) triggers a cheap,
-            // separate-model language-ID probe (never delaying that window's own
-            // transcription, which still runs on `modelId` as normal) and moves
-            // to 'detecting', then 'resolved' once the probe's result lands.
-            // Detection is pinned for the WHOLE video once resolved - a mid-video
-            // language switch is a known, accepted limitation (see PIPELINE_NOTES).
-            multilingualEnabled: true,
-            languageState: "pending",
-            detectedLanguage: null,
-            // e.g. 'en', 'es' - null until languageState becomes 'resolved'
-            // 0.1.37: the gate's accumulating state (confidence + consecutive
-            // agreement). See shared/language.js for why a single confident-
-            // looking probe is not enough to leave English.
-            languageGate: globalThis.PMLanguage ? globalThis.PMLanguage.newState() : null,
+            // 0.1.46 English-only: always resolves to base.en; the worker falls back to DEFAULT_MODEL for any unknown id
             // 0.1.42 preemption inputs.
             wallRtf: null,
             // EWMA of wall ms per second of audio
@@ -15177,51 +15040,7 @@
           const resolvedId = MODEL_IDS[s.modelId] ? s.modelId : DEFAULT_MODEL;
           notifyTab(s, '[PM-MODEL] using model="' + resolvedId + '" (' + MODEL_IDS[resolvedId] + '), default="' + DEFAULT_MODEL + '"' + (resolvedId !== DEFAULT_MODEL ? " [overridden via pm_model]" : ""));
         }
-        const langApi = globalThis.PMLanguage;
-        const wantsProbe = !BUILD_CONFIG.englishOnly && // english build never probes: base.en, always English
-        s.multilingualEnabled && s.modelId !== "multilingual" && s.languageState !== "detecting" && (!langApi || langApi.shouldProbe(s.languageGate));
-        if (wantsProbe) {
-          s.languageState = "detecting";
-          runSerialized(() => detectLanguageInWorker(float16k)).then((res) => {
-            const observed = res && res.language ? res.language : null;
-            const score = res && res.score != null ? res.score : null;
-            const verdict = langApi ? langApi.decide(s.languageGate, { language: observed, score }) : { state: null, action: observed && observed !== "en" ? "switch" : "hold", language: observed || "en", reason: "no-gate" };
-            if (verdict.state) s.languageGate = verdict.state;
-            s.languageState = "resolved";
-            const acted = verdict.action === "switch" || verdict.action === "revert";
-            if (acted) s.detectedLanguage = verdict.language;
-            const lang = s.detectedLanguage || "en";
-            const usingModel = lang === "en" ? s.modelId : "multilingual";
-            notifyTab(
-              s,
-              "[PM-LANG] observed=" + (observed || "none") + (score != null ? " score=" + score.toFixed(2) : "") + " action=" + verdict.action + " (" + verdict.reason + ") active=" + lang + " model=" + usingModel
-            );
-            chrome.runtime.sendMessage({
-              type: "pm-language-decision",
-              tabId: s.tabId,
-              videoId: s.videoId,
-              observed,
-              score,
-              action: verdict.action,
-              reason: verdict.reason,
-              active: lang,
-              model: usingModel
-            }).catch(() => {
-            });
-            if (acted && lang !== "en") {
-              whisperWorker.postMessage({ type: "preload", modelId: "multilingual" });
-            }
-            if (acted) {
-              chrome.runtime.sendMessage({ type: "pm-language", tabId: s.tabId, videoId: s.videoId, language: lang }).catch(() => {
-              });
-            }
-          }).catch((e) => {
-            notifyTab(s, "[PM-LANG] detection failed, staying on English default: " + String(e && e.message ? e.message : e));
-            s.languageState = "resolved";
-            if (s.languageGate) s.languageGate.observations = (s.languageGate.observations || 0) + 1;
-          });
-        }
-        const effectiveModelId = !BUILD_CONFIG.englishOnly && s.multilingualEnabled && s.languageState === "resolved" && s.detectedLanguage && s.detectedLanguage !== "en" ? "multilingual" : s.modelId;
+        const effectiveModelId = s.modelId;
         const tBeforeQueue = performance.now();
         let tTranscribeStart = 0;
         const computeToken = { cancelled: false };
@@ -15420,14 +15239,8 @@
             queueMs,
             computeMs,
             lagMs,
-            // 0.1.25: current detected language (null until resolved, 'en' or a
-            // real code thereafter - pinned per video, see languageState above)
-            // and the model THIS window actually ran on, so content.js/the pill
-            // always has the latest without needing a separate message to have
-            // landed first (the dedicated 'pm-language' push, sent once right
-            // when detection resolves, is a snappier-UI nice-to-have on top of
-            // this, not the only source of truth).
-            language: s.detectedLanguage,
+            // The model THIS window actually ran on (always base.en in this
+            // English-only build), for content.js/the pill.
             model: effectiveModelId
           });
         } catch (e) {
@@ -15627,7 +15440,6 @@
             s.modelId = msg.model;
             if (changed) whisperWorker.postMessage({ type: "preload", modelId: msg.model });
           }
-          if (typeof msg.multilingual === "boolean") s.multilingualEnabled = msg.multilingual;
           return;
         }
         if (msg.type === "pm-disable") {
@@ -15685,7 +15497,7 @@
           const s = sessions.get(key);
           if (s) {
             log("[PM-RESYNC] resending", s.allWords.length, "words and", s.covered.length, "covered intervals for", key);
-            chrome.runtime.sendMessage({ type: "pm-resync-result", tabId: msg.tabId, videoId: msg.videoId, words: s.allWords, coveredIntervals: s.covered, language: s.detectedLanguage }).catch(() => {
+            chrome.runtime.sendMessage({ type: "pm-resync-result", tabId: msg.tabId, videoId: msg.videoId, words: s.allWords, coveredIntervals: s.covered }).catch(() => {
             });
           }
           return;

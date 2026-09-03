@@ -26,7 +26,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { pipeline, env } from '@huggingface/transformers';
 import { MODEL_REPOS, MODEL_FILES } from '../scripts/model-manifest.mjs';
-import { isEnglishOnly } from '../scripts/variant.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.resolve(__dirname, '..');
@@ -111,30 +110,6 @@ async function main() {
     }
   } catch (e) {
     check('base.en offline transcription', false, e && e.message ? e.message : String(e));
-  }
-
-  // Every bundled model must load offline, including the multilingual one a
-  // non-English detection switches to. The gate probes with tiny and, on a
-  // confirmed non-English video, transcribes with 'multilingual'
-  // (Xenova/whisper-base) and matches against that language's pack - so the
-  // whole non-English path is offline only if this model is.
-  for (const repo of REPOS) {
-    if (repo === 'Xenova/whisper-base.en') continue; // already loaded and transcribed above
-    try {
-      await pipeline('automatic-speech-recognition', repo, { dtype: 'fp32', device: 'cpu' });
-      check(repo + ' loaded offline', true);
-    } catch (e) {
-      check(repo + ' loaded offline', false, e && e.message ? e.message : String(e));
-    }
-  }
-
-  // The per-language wordlist packs the non-English path matches against
-  // are shipped in shared/packs/ and were already local; confirm a sample
-  // is present so the non-English path is local end to end (model + pack).
-  // Only the multilingual variant ever exercises that path.
-  if (!isEnglishOnly()) {
-    const koPack = path.join(EXT, 'shared', 'packs', 'ko.json');
-    check('a language pack (ko.json) is bundled for the non-English path', fs.existsSync(koPack));
   }
 
   globalThis.fetch = realFetch;
