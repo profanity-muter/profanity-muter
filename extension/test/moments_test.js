@@ -216,6 +216,13 @@ test("the store id is pinned to the live listing id", () => {
   assert.strictEqual(M.STORE_ITEM_ID, "oejickocjjdcckcjiabjeakcjkjpabgk");
 });
 
+test("the repository URL is pinned to the open-source repo", () => {
+  // The one place REPO_URL lives; the popup footer and the onboarding
+  // colophon both read it from here. Pinned so any change is deliberate,
+  // exactly like the store id: old builds keep sending readers to it.
+  assert.strictEqual(M.REPO_URL, "https://github.com/profanity-muter/profanity-muter");
+});
+
 test("the support address is the real mailbox, pinned so a change is deliberate", () => {
   // Was a placeholder assertion until 0.1.33; now it pins the live
   // address. If the profanitymuter.com domain ever lands this becomes

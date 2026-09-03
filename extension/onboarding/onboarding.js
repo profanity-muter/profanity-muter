@@ -53,6 +53,7 @@
 
   var ackCheckEl = document.getElementById("ob-ack-check");
   var reportProblemEl = document.getElementById("ob-report-problem");
+  var viewSourceEl = document.getElementById("ob-view-source");
   var openYouTubeEl = document.getElementById("ob-open-youtube");
   var shareEl = document.getElementById("ob-share");
   var doneStatusEl = document.getElementById("ob-done-status");
@@ -499,6 +500,18 @@
       chrome.tabs.create({ url: url });
     } catch (e) {
       window.open(url, "_blank");
+    }
+  });
+
+  // "View source" opens the repository (the single REPO_URL constant in
+  // shared/moments.js) in a new tab, so a reader mid-setup keeps their place.
+  viewSourceEl.addEventListener("click", function () {
+    var m = moments();
+    if (!m) return;
+    try {
+      chrome.tabs.create({ url: m.REPO_URL });
+    } catch (e) {
+      window.open(m.REPO_URL, "_blank");
     }
   });
 

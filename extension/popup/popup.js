@@ -156,6 +156,7 @@
   var shareRowEl = document.getElementById("pm-share-row");
   var shareEl = document.getElementById("pm-share");
   var reportProblemEl = document.getElementById("pm-report-problem");
+  var viewSourceEl = document.getElementById("pm-view-source");
   var healthEl = document.getElementById("pm-health");
   var healthMessageEl = document.getElementById("pm-health-message");
   var healthDetailEl = document.getElementById("pm-health-detail");
@@ -983,6 +984,21 @@
     openExtensionPage("report/report.html");
   }
 
+  // "View source on GitHub" - opens the repository in a new tab. Unlike
+  // openExtensionPage (which resolves an extension-relative path), this is an
+  // external URL, opened the same way onReviewYes opens the store link. The
+  // URL is the single REPO_URL constant in shared/moments.js.
+  function openRepo() {
+    var m = momentsApi();
+    if (!m) return;
+    try {
+      chrome.tabs.create({ url: m.REPO_URL });
+      window.close();
+    } catch (e) {
+      window.open(m.REPO_URL, "_blank");
+    }
+  }
+
   // The "Finish setup" banner and the share row are both driven off the
   // acknowledgment record, in opposite directions: the banner shows until
   // it exists, the share row shows only once it does. Nobody should be
@@ -1292,6 +1308,7 @@
   shareEl.addEventListener("click", shareWithFriend);
   reportProblemEl.addEventListener("click", openReportProblem);
   healthReportEl.addEventListener("click", openReportProblem);
+  viewSourceEl.addEventListener("click", openRepo);
   lockPasswordEl.addEventListener("keydown", function (ev) {
     if (ev.key === "Enter") unlock();
   });

@@ -72,6 +72,13 @@
   var STORE_URL = "https://chromewebstore.google.com/detail/" + STORE_ITEM_ID;
   var REVIEW_URL = STORE_URL + "/reviews";
 
+  // Where "View source on GitHub" sends people. The extension is open
+  // source, and this is the ONE place the repository URL lives - the popup
+  // and the onboarding flow both read it from here rather than hardcoding a
+  // second copy in markup, exactly as they do with STORE_URL/REVIEW_URL.
+  // test/moments_test.js pins it so any change is deliberate.
+  var REPO_URL = "https://github.com/profanity-muter/profanity-muter";
+
   // Where "Report a problem" sends its mail.
   //
   // This MUST stay a role address the project controls, never a personal
@@ -363,6 +370,7 @@
     STORE_ITEM_ID: STORE_ITEM_ID,
     STORE_URL: STORE_URL,
     REVIEW_URL: REVIEW_URL,
+    REPO_URL: REPO_URL,
     SUPPORT_EMAIL: SUPPORT_EMAIL,
     SHARE_TEXT: SHARE_TEXT,
     ACK_VERSION: ACK_VERSION,

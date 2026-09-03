@@ -309,6 +309,14 @@
     <span id="pm-status" class="pm-status" role="status" aria-live="polite"></span>
   </section>
 
+  <!-- Open-source footer. Quiet trust signal, always available: the whole
+       extension is open source, and the repository link changes no setting,
+       so like "Copy debug log" it is never lock-gated. The URL lives in one
+       constant in shared/moments.js (REPO_URL). -->
+  <footer class="pm-footer">
+    <button id="pm-view-source" class="pm-link-button" type="button">View source on GitHub</button>
+  </footer>
+
   <script src="../shared/wordlist.js"></script>
   <script src="../shared/lock.js"></script>
   <script src="../shared/moments.js"></script>

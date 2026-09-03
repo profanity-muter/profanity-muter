@@ -58,6 +58,15 @@ body {
   gap: 10px;
 }
 
+/* Open-source footer: a quiet trust signal, set apart from the action row
+   above by a hairline and centered so it reads as a colophon rather than a
+   control. */
+.pm-footer {
+  padding: 10px 16px 14px;
+  border-top: 1px solid var(--pm-border);
+  text-align: center;
+}
+
 .pm-switch-label {
   display: flex;
   align-items: center;
