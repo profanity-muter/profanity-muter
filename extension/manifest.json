@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Profanity Muter",
   "version": "0.1.46",
-  "description": "On-device YouTube profanity muting: transcribes pre-buffered audio locally (Whisper) and mutes/censors matched words.",
+  "description": "Mutes swearing in YouTube videos, on your device. Real-time speech filtering. Private, no account, open source.",
   "permissions": [
     "storage",
     "offscreen",
