@@ -450,7 +450,7 @@ const browser = await chromium.launch();
   check('share: copies the blurb', /^I use Profanity Muter to auto-mute swearing/.test(text || ''), text);
   check('share: includes the store link', (text || '').includes('chromewebstore.google.com'), text);
   check('share: no tracking parameters', !(text || '').includes('?'), text);
-  check('share: status toast', s.status === 'Copied!', s.status);
+  check('share: status toast', s.status === 'Link copied', s.status);
   await page.close();
 }
 
@@ -498,6 +498,7 @@ const browser = await chromium.launch();
       ? document.getElementById('ob-review').classList.contains('pm-hidden') : true,
     reviewHref: (document.getElementById('ob-review-link') || {}).href,
     pinShown: !!document.querySelector('.ob-pin'),
+    ballotShown: !!document.querySelector('.ob-ballot'),
     markAlt: (document.querySelector('.ob-header .ob-mark') || {}).alt
   });
 
@@ -569,7 +570,8 @@ const browser = await chromium.launch();
   check('done: the setup nav goes with it', s.navHidden === true);
   check('done: review module shown', s.reviewHidden === false);
   check('done: review CTA points at the store review URL', /\/reviews$/.test(s.reviewHref || ''), s.reviewHref);
-  check('done: pin request present', s.pinShown === true);
+  check('done: pin request removed', s.pinShown === false);
+  check('done: ballot illustration present', s.ballotShown === true);
 
   const doneText = await page.evaluate(() => document.getElementById('ob-step-5').innerText);
   check('done: no incentive language anywhere in the ask',

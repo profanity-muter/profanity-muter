@@ -385,16 +385,72 @@
   // there is one piece of share copy in the product rather than two.
   // Offered here because sharing needs no product experience to be
   // sincere, unlike a review.
+  // Robust clipboard copy with a fallback for when the async Clipboard API
+  // is missing or rejects (some contexts, older engines, permission quirks):
+  // a hidden textarea plus execCommand('copy'). Returns a Promise<boolean>
+  // so every caller can report a clear result in BOTH branches - never a
+  // silent no-op.
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(
+        function () { return true; },
+        function () { return fallbackCopyText(text); }
+      );
+    }
+    return Promise.resolve(fallbackCopyText(text));
+  }
+
+  function fallbackCopyText(text) {
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "-1000px";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      var ok = document.execCommand && document.execCommand("copy");
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // Prominent, immediate feedback: the share control briefly BECOMES its own
+  // confirmation ("Link copied"), reverting after a few seconds, so there is
+  // no doubt the click did something even if the small status line is missed.
+  function flashShareCopied() {
+    if (flashShareCopied._t) {
+      window.clearTimeout(flashShareCopied._t);
+    } else {
+      flashShareCopied._label = shareEl.textContent;
+    }
+    shareEl.textContent = "Link copied";
+    shareEl.classList.add("ob-share--copied");
+    flashShareCopied._t = window.setTimeout(function () {
+      shareEl.textContent = flashShareCopied._label;
+      shareEl.classList.remove("ob-share--copied");
+      flashShareCopied._t = null;
+    }, 2500);
+  }
+
   function shareWithFriend() {
     var m = moments();
-    if (!m || !navigator.clipboard || !navigator.clipboard.writeText) {
-      setDoneStatus("Clipboard unavailable");
+    if (!m) {
+      setDoneStatus("Share link unavailable");
       return;
     }
-    navigator.clipboard.writeText(m.SHARE_TEXT).then(
-      function () { setDoneStatus("Copied!"); },
-      function () { setDoneStatus("Copy failed"); }
-    );
+    copyText(m.SHARE_TEXT).then(function (ok) {
+      if (ok) {
+        flashShareCopied();
+        setDoneStatus("Link copied to your clipboard.");
+      } else {
+        setDoneStatus("Couldn't copy automatically - select the link and copy it.");
+      }
+    });
   }
 
   // ---- completion review module -------------------------------------------

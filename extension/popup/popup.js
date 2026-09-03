@@ -1113,17 +1113,69 @@
     setStatus("Thanks - we won't ask again");
   }
 
+  // Robust clipboard copy with a hidden-textarea fallback, so a missing or
+  // rejecting Clipboard API still copies and still reports a result rather
+  // than failing silently. Returns Promise<boolean>. Mirrors onboarding.js.
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(
+        function () { return true; },
+        function () { return fallbackCopyText(text); }
+      );
+    }
+    return Promise.resolve(fallbackCopyText(text));
+  }
+
+  function fallbackCopyText(text) {
+    try {
+      var ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.top = "-1000px";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      ta.setSelectionRange(0, text.length);
+      var ok = document.execCommand && document.execCommand("copy");
+      document.body.removeChild(ta);
+      return !!ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  // The share button briefly becomes its own confirmation, so the feedback
+  // is unmissable and not only in the small status line.
+  function flashShareCopied() {
+    if (flashShareCopied._t) {
+      window.clearTimeout(flashShareCopied._t);
+    } else {
+      flashShareCopied._label = shareEl.textContent;
+    }
+    shareEl.textContent = "Link copied";
+    shareEl.classList.add("pm-share--copied");
+    flashShareCopied._t = window.setTimeout(function () {
+      shareEl.textContent = flashShareCopied._label;
+      shareEl.classList.remove("pm-share--copied");
+      flashShareCopied._t = null;
+    }, 2500);
+  }
+
   function shareWithFriend() {
     var m = momentsApi();
-    if (!m) return;
-    if (!navigator.clipboard || !navigator.clipboard.writeText) {
-      setStatus("Clipboard unavailable");
+    if (!m) {
+      setStatus("Share link unavailable");
       return;
     }
-    navigator.clipboard.writeText(m.SHARE_TEXT).then(
-      function () { setStatus("Copied!"); },
-      function () { setStatus("Copy failed"); }
-    );
+    copyText(m.SHARE_TEXT).then(function (ok) {
+      if (ok) {
+        flashShareCopied();
+        setStatus("Link copied");
+      } else {
+        setStatus("Couldn't copy - select the link and copy it");
+      }
+    });
   }
 
   // One read for all three surfaces. pm_stats lives in the LOCAL area (see

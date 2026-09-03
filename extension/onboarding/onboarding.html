@@ -353,64 +353,40 @@
       <!-- THE REVIEW MODULE. The one card-treatment element on this page,
            ranked directly under the headline and deliberately ABOVE the
            exit button, so the highest-traffic eyeballs in the product
-           cross it before they leave.
+           cross it before they leave. A short personal letter on the left,
+           a ballot-with-check illustration on the right.
 
            It asks for support of the project, not a verdict on a product
            nobody has used yet: at minute zero "is it working well?" has no
            answer, and inviting a rating anyway produces uninformed
-           reviews. "Reviews decide whether people find this" is true and
-           answerable on day one.
+           reviews. That a review is how the next person finds it is true
+           and answerable on day one.
 
            Policy line, absolute: no incentive, nothing gated on it, and
            declining is one plain click with no ceremony and no guilt copy.
            No fake counts, no pre-filled stars. See shared/moments.js. -->
       <section class="ob-review" id="ob-review">
-        <p class="ob-review-terms">Free, no account, and nothing leaves your device.</p>
-        <h3 class="ob-review-title">You're one of the first.</h3>
-        <p class="ob-review-body">
-          Reviews decide whether people find this or never hear of it. If you
-          want this to exist, half a minute here does more than anything else.
-        </p>
-        <div class="ob-review-actions">
-          <a id="ob-review-link" class="pm-button ob-review-cta" href="#" target="_blank" rel="noreferrer">
-            Leave a review
-          </a>
-          <button id="ob-review-later" class="ob-review-later" type="button">Maybe later</button>
+        <div class="ob-review-letter">
+          <h3 class="ob-review-title">Reviews are the only vote that counts.</h3>
+          <span class="ob-review-quote" aria-hidden="true">&ldquo;</span>
+          <p class="ob-review-body">I built Profanity Muter because I wanted it to exist. It's free, with no ads and no account.</p>
+          <p class="ob-review-body">That's why reviews matter: with nothing pushing it, a review is how the next person finds it when they go looking.</p>
+          <p class="ob-review-body">If it helped you, would you leave one? A single line is plenty.</p>
+          <div class="ob-review-actions">
+            <a id="ob-review-link" class="pm-button ob-review-cta" href="#" target="_blank" rel="noreferrer">Leave a review</a>
+            <button id="ob-review-later" class="ob-review-later" type="button">Maybe later</button>
+          </div>
         </div>
-        <p class="ob-review-effort">Takes about 30 seconds.</p>
-      </section>
-
-      <!-- Pin request. Chrome offers no programmatic pin, so this is
-           instructional only. The diagram is a schematic drawn in this
-           page's own navy/gold system, NOT a mock of Chrome's UI: a fake
-           screenshot of someone else's interface ages badly, misleads when
-           their UI changes, and edges toward impersonation. -->
-      <section class="ob-pin">
-        <div class="ob-pin-copy">
-          <h3 class="ob-pin-title">Pin for one-click access</h3>
-          <p class="ob-pin-line">
-            Open the extensions menu, then click the pin next to Profanity
-            Muter. You can always reach settings from the badge on the video
-            itself; pinning just puts them in the toolbar too.
-          </p>
+        <div class="ob-review-art" aria-hidden="true">
+          <div class="ob-ballot">
+            <span class="ob-ballot-slot"></span>
+            <svg class="ob-ballot-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6"/></svg>
+          </div>
         </div>
-        <svg class="ob-pin-diagram" viewBox="0 0 132 46" role="img"
-             aria-label="Open the extensions menu in the toolbar, then click the pin next to Profanity Muter">
-          <rect x="1" y="1" width="130" height="44" rx="7" fill="none"
-                stroke="var(--hairline)" stroke-width="1.5"/>
-          <g fill="none" stroke="var(--ink-60)" stroke-width="1.6" stroke-linejoin="round">
-            <path d="M16 15h7a3.2 3.2 0 0 1 6.4 0H36v8a3.2 3.2 0 0 0 0 6.4V31H16z"/>
-          </g>
-          <rect x="48" y="14" width="52" height="4" rx="2" fill="var(--ink-30)"/>
-          <rect x="48" y="26" width="34" height="4" rx="2" fill="var(--ink-30)"/>
-          <g stroke="var(--gold-deep)" stroke-width="2" stroke-linecap="round" fill="none">
-            <path d="M112 14v8"/><path d="M108 22h8"/><path d="M112 22v8"/>
-          </g>
-        </svg>
       </section>
 
       <div class="ob-done-actions">
-        <button id="ob-open-youtube" class="pm-button" type="button">Open YouTube&trade;</button>
+        <button id="ob-open-youtube" class="pm-button ob-open-youtube" type="button">Open YouTube&trade;</button>
         <button id="ob-share" class="pm-link-button" type="button">Share with a friend</button>
       </div>
       <p class="pm-hint ob-done-hint">
