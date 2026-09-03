@@ -227,6 +227,172 @@ test("the ladder is ordered and reaches recovery fast", () => {
   assert.ok(worstMs <= 30000, "advance within ~30s, was ~60s: " + worstMs);
 });
 
+// ---- suspend / background-throttle awareness (0.1.48) --------------------
+//
+// A frozen timer thread (machine sleep, hidden/throttled offscreen document)
+// must not be counted as a decode hang. These drive an injected clock so the
+// "freeze" is deterministic rather than wall-clock-dependent.
+
+// A controllable fake clock + timer queue. Timers fire in due order only
+// when we advance the clock, so a test can simulate a long freeze by jumping
+// the clock forward in one step (exactly what a suspend looks like: the timer
+// that was due long ago runs, and now() has leapt).
+function fakeClock() {
+  const c = { t: 0, timers: [], seq: 1 };
+  c.now = function () { return c.t; };
+  c.setTimer = function (fn, ms) {
+    const id = c.seq++;
+    c.timers.push({ id: id, due: c.t + (ms || 0), fn: fn });
+    return id;
+  };
+  c.clearTimer = function (id) {
+    c.timers = c.timers.filter(function (x) { return x.id !== id; });
+  };
+  // Advance real awake time in small steps so ticks fire on schedule.
+  c.advance = function (ms) {
+    const target = c.t + ms;
+    for (;;) {
+      const due = c.timers.filter(function (x) { return x.due <= target; }).sort(function (a, b) { return a.due - b.due; });
+      if (due.length === 0) break;
+      const next = due[0];
+      c.timers = c.timers.filter(function (x) { return x.id !== next.id; });
+      c.t = next.due;
+      next.fn();
+    }
+    c.t = target;
+  };
+  // Jump the clock WITHOUT running intermediate ticks - a freeze. The next
+  // scheduled tick then runs with now() already leapt far past its due time.
+  c.freezeJump = function (ms) {
+    c.t += ms;
+    const due = c.timers.filter(function (x) { return x.due <= c.t; }).sort(function (a, b) { return a.due - b.due; });
+    for (const timer of due) {
+      c.timers = c.timers.filter(function (x) { return x.id !== timer.id; });
+      timer.fn();
+    }
+  };
+  return c;
+}
+
+test("a long freeze is credited back, not counted as a hang", () => {
+  // The iterator never yields (a genuine wedge would look identical), but the
+  // ONLY elapsed time is a 1-hour freeze. Awake time spent is ~0, so this
+  // must NOT be reported as a timeout: it is a suspend, and the report says
+  // so via suspendedMs.
+  const clock = fakeClock();
+  const it = fakeIterator({ hangAfter: 0, total: 5 });
+  const p = D.drainWithTimeout(it, {
+    timeoutMs: 25000, noProgressMs: 2000, tickMs: 1000,
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer
+  });
+  // One tick's worth of awake time, then a huge freeze, then a little more
+  // awake time - nowhere near 2s of CONTIGUOUS awake time without progress.
+  clock.advance(1000);
+  clock.freezeJump(3600 * 1000);
+  clock.advance(500);
+  // Let the wedge actually time out on awake time to prove the budget still
+  // works AFTER a freeze (it was only credited the frozen portion).
+  clock.advance(2000);
+  return p.then(function (r) {
+    assert.strictEqual(r.timedOut, true, "a real wedge still times out eventually");
+    assert.ok(r.suspendedMs >= 3500 * 1000, "the frozen hour must be credited back: " + r.suspendedMs);
+    assert.strictEqual(it._state.decoderOpen, false, "and the decoder is still released");
+  });
+});
+
+test("a wedge with no freeze trips the fast no-progress budget", () => {
+  // No suspend at all: 2s of awake time with zero buffers delivered is a
+  // stuck decoder and must be caught fast, well before the 25s ceiling.
+  const clock = fakeClock();
+  const it = fakeIterator({ hangAfter: 0, total: 5 });
+  const p = D.drainWithTimeout(it, {
+    timeoutMs: 25000, noProgressMs: 2000, tickMs: 1000,
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer
+  });
+  clock.advance(2500);
+  return p.then(function (r) {
+    assert.strictEqual(r.timedOut, true);
+    assert.strictEqual(r.suspendedMs, 0, "no freeze happened, nothing to credit");
+  });
+});
+
+test("a decode that keeps delivering buffers is never killed by the no-progress budget", () => {
+  // Yields one buffer every ~1.5s for well past the 2s no-progress budget and
+  // past the 25s ceiling would-be point IF it were counted from the start -
+  // but progress resets the no-progress deadline each time, so it completes.
+  const clock = fakeClock();
+  let delivered = 0;
+  const it = {
+    async next() {
+      if (delivered >= 30) return { value: undefined, done: true };
+      delivered++;
+      return { value: "chunk" + delivered, done: false };
+    },
+    async return() { return { value: undefined, done: true }; }
+  };
+  const p = D.drainWithTimeout(it, {
+    timeoutMs: 60000, noProgressMs: 2000, tickMs: 1000,
+    now: clock.now, setTimer: clock.setTimer, clearTimer: clock.clearTimer
+  });
+  // The async next() resolves on microtasks; advance a little to let ticks
+  // interleave. 30 buffers resolve well within the microtask queue here since
+  // the fake next() is synchronous-ish, so a small advance settles it.
+  clock.advance(100);
+  return p.then(function (r) {
+    assert.strictEqual(r.timedOut, false, "steady progress must not time out");
+    assert.strictEqual(r.values.length, 30);
+  });
+});
+
+// ---- fail-safe accounting: playheadPassed --------------------------------
+
+test("a span the playhead has NOT reached is never safe to abandon", () => {
+  // Playhead at 71.59, window ends at 119.60: ~48s of lead remains. Giving up
+  // here is the core defect - the window still had time to be covered.
+  assert.strictEqual(D.playheadPassed(119.60, 71.59), false);
+});
+
+test("a span the playhead has moved past is safe to abandon", () => {
+  assert.strictEqual(D.playheadPassed(119.60, 130.0), true);
+});
+
+test("with no playhead known, the old unconditional behavior is preserved", () => {
+  assert.strictEqual(D.playheadPassed(119.60, null), true);
+  assert.strictEqual(D.playheadPassed(119.60, undefined), true);
+});
+
+// ---- anchor coverage tolerance (0.1.48) ----------------------------------
+//
+// The real-run regression: a decode that landed EXACTLY where requested
+// (startDelta 0.00, to float rounding) was reported "still uncovered",
+// firing the WINDOW-LOOP path and the DECODE-DELTA "did NOT cover" line on
+// every good window. An exact/near-exact match must count as covering.
+
+test("a decode starting exactly at the requested anchor covers it", () => {
+  assert.strictEqual(D.decodeCoversAnchor(2599.61, 2599.61), true);
+});
+
+test("a decode starting a few ms LATER (float rounding) still covers the anchor", () => {
+  // startDelta ~0.005s - the exact false-positive shape from the field log.
+  assert.strictEqual(D.decodeCoversAnchor(2599.615, 2599.61), true);
+  assert.strictEqual(D.decodeCoversAnchor(2609.93 - 10.32, 2599.61), true);
+});
+
+test("a decode starting BEFORE the anchor covers it", () => {
+  assert.strictEqual(D.decodeCoversAnchor(2599.50, 2599.61), true);
+});
+
+test("a decode starting well AFTER the anchor is a real head hole, not covered", () => {
+  // A genuine offset (far beyond the epsilon slack) must still report a miss.
+  assert.strictEqual(D.decodeCoversAnchor(2601.00, 2599.61), false);
+});
+
+test("the tolerance matches mergeRangeInto's 0.05s join granularity", () => {
+  assert.strictEqual(D.ANCHOR_EPS_S, 0.05);
+  assert.strictEqual(D.decodeCoversAnchor(2599.66, 2599.61), true);   // within 0.05
+  assert.strictEqual(D.decodeCoversAnchor(2599.67, 2599.61), false);  // just past 0.05
+});
+
 // ---- summary -------------------------------------------------------------
 
 Promise.all(pending).then(function () {

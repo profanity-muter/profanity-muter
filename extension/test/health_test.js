@@ -161,7 +161,8 @@ test("no audio intercepted", () => {
   const v = evaluate({ windowsCompleted: 0, audioSegments: 0 });
   assert.strictEqual(v.status, S.UNHEALTHY);
   assert.strictEqual(v.reason, R.NO_AUDIO);
-  assert.ok(/NOT being filtered/.test(v.message), v.message);
+  assert.ok(/Filtering is off/.test(v.message), v.message);
+  assert.ok(/can't read this video's audio/.test(v.message), v.message);
   assert.ok(v.detail.length > 0);
 });
 
@@ -220,7 +221,7 @@ test("a livestream is unsupported, never 'broken'", () => {
   const v = evaluate({ isLive: true, windowsCompleted: 0, audioSegments: 0 });
   assert.strictEqual(v.status, S.UNSUPPORTED);
   assert.strictEqual(v.reason, R.LIVESTREAM);
-  assert.ok(/Livestreams aren't supported/.test(v.message), v.message);
+  assert.ok(/Livestreams aren't filtered/.test(v.message), v.message);
   assert.ok(!/isn't working/.test(v.message), "must not use the alarming copy");
 });
 
@@ -241,7 +242,7 @@ test("a Short is unsupported, never 'broken'", () => {
   const v = evaluate({ isShorts: true, windowsCompleted: 0, audioSegments: 0 });
   assert.strictEqual(v.status, S.UNSUPPORTED);
   assert.strictEqual(v.reason, R.SHORTS);
-  assert.ok(/Shorts aren't supported yet/.test(v.message), v.message);
+  assert.ok(/Shorts aren't filtered yet/.test(v.message), v.message);
   assert.ok(!/isn't working/.test(v.message), "must not use the alarming copy");
 });
 
@@ -273,6 +274,53 @@ test("protected/undecodable content is unsupported, not broken", () => {
 test("live outranks unanalyzable when both are somehow set", () => {
   const v = evaluate({ isLive: true, unanalyzable: true });
   assert.strictEqual(v.reason, R.LIVESTREAM);
+});
+
+// ---- served elsewhere (0.1.49 active-tab-follow) -------------------------
+
+test("a tab served elsewhere is waiting, not broken", () => {
+  // Inactive tab, no windows, no audio: without the servedElsewhere branch
+  // this would be a NO_AUDIO false alarm.
+  const v = evaluate({ servedElsewhere: true, windowsCompleted: 0, audioSegments: 0 });
+  assert.strictEqual(v.status, S.WAITING);
+  assert.strictEqual(v.reason, R.OTHER_TAB);
+  assert.strictEqual(v.due, true);
+  assert.ok(/another tab/i.test(v.message), v.message);
+  assert.ok(!/isn't working/.test(v.message), "waiting is not an error");
+});
+
+test("served-elsewhere outranks a stale OK from earlier coverage", () => {
+  // A tab that analyzed windows earlier, then was switched away from, must
+  // not keep reporting a green 'protected' while it is no longer being served.
+  const v = evaluate({ servedElsewhere: true, windowsCompleted: 12 });
+  assert.strictEqual(v.status, S.WAITING);
+  assert.strictEqual(v.reason, R.OTHER_TAB);
+});
+
+test("served-elsewhere never fires the stall warning", () => {
+  // An outstanding promise on an inactive tab is moot: we deliberately are
+  // not analyzing it, so it must never escalate to STALLED.
+  const v = evaluate({
+    servedElsewhere: true,
+    windowsCompleted: 0,
+    promiseAgeMs: 999999,
+    promiseEtaMs: 3000
+  });
+  assert.strictEqual(v.status, S.WAITING);
+  assert.strictEqual(v.reason, R.OTHER_TAB);
+});
+
+test("becoming active again clears the waiting state", () => {
+  const waiting = evaluate({ servedElsewhere: true, windowsCompleted: 0 });
+  assert.strictEqual(waiting.status, S.WAITING);
+  const active = evaluate({ servedElsewhere: false, windowsCompleted: 2 });
+  assert.strictEqual(active.status, S.OK);
+  assert.strictEqual(H.isTransition(waiting, active), true);
+});
+
+test("a documented limit outranks served-elsewhere (a Short is a Short in any tab)", () => {
+  const v = evaluate({ servedElsewhere: true, isShorts: true });
+  assert.strictEqual(v.reason, R.SHORTS);
 });
 
 // ---- recovery ------------------------------------------------------------

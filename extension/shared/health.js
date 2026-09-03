@@ -78,7 +78,14 @@
     LIVESTREAM: "livestream-unsupported",
     SHORTS: "shorts-unsupported",
     STALLED: "stalled-analysis",
-    UNANALYZABLE: "content-unanalyzable"
+    UNANALYZABLE: "content-unanalyzable",
+    // 0.1.49: this tab is not the one the shared pipeline is analyzing right
+    // now, because another tab is. Not a fault and not a documented limit:
+    // it clears itself the moment this tab becomes the active one (see
+    // shared/active_tab.js and the active-tab-follow flow). It gets its own
+    // reason so the message can be specific and actionable rather than
+    // collapsing into "not working".
+    OTHER_TAB: "served-elsewhere"
   };
 
   // Statuses:
@@ -87,11 +94,17 @@
   //   "unhealthy"   - broken; warn loudly.
   //   "unsupported" - a documented limit (live, DRM); calm notice, never
   //                   the alarming one.
+  //   "waiting"     - nothing is wrong and nothing is unsupported; the shared
+  //                   pipeline is simply busy with another tab right now, and
+  //                   this state resolves itself when this tab becomes active.
+  //                   Never badges the toolbar (see moments.badgeDecision) and
+  //                   never shows the alarming on-video warning.
   var STATUS = {
     PENDING: "pending",
     OK: "ok",
     UNHEALTHY: "unhealthy",
-    UNSUPPORTED: "unsupported"
+    UNSUPPORTED: "unsupported",
+    WAITING: "waiting"
   };
 
   // The user-facing sentence for each outcome. Kept here, beside the logic
@@ -101,22 +114,31 @@
   // filtered") rather than only the cause, because the consequence is what
   // the user actually needs to act on.
   var MESSAGES = {};
+  // The interception layer itself never delivered any audio. After a YouTube
+  // player change this is the most likely casualty, so the message names that
+  // cause and the protected-content cause together, and states the
+  // consequence plainly. This is a fail-closed case: filtering is off.
   MESSAGES[REASONS.NO_AUDIO] =
-    "Profanity Muter isn't working on this video. Audio is NOT being filtered.";
+    "Profanity Muter can't read this video's audio. YouTube may have changed how it delivers audio, or this video is protected. Filtering is off for this video.";
   MESSAGES[REASONS.MODEL_LOAD_FAILED] =
-    "Profanity Muter isn't working on this video. Audio is NOT being filtered.";
+    "Profanity Muter couldn't load its speech model, so this video is NOT being filtered. Reload the page to try again.";
   MESSAGES[REASONS.WORKER_DEAD] =
-    "Profanity Muter isn't working on this video. Audio is NOT being filtered.";
+    "Profanity Muter's analysis stopped responding, so this video is NOT being filtered. Reload the page to try again.";
+  // Audio arrived but 20+ seconds of playback produced not one analyzed
+  // window. That is a genuine failure, distinct from the transient
+  // "catching up" the pill shows in the first few seconds.
   MESSAGES[REASONS.ZERO_WINDOWS] =
-    "Profanity Muter isn't working on this video. Audio is NOT being filtered.";
+    "Profanity Muter received this video's audio but couldn't analyze any of it, so it is NOT being filtered. Reload the page to try again.";
   MESSAGES[REASONS.LIVESTREAM] =
-    "Livestreams aren't supported. Audio is not filtered on this video.";
+    "Livestreams aren't filtered. Profanity Muter needs to analyze audio a little ahead of what you hear, which a live stream doesn't allow.";
   MESSAGES[REASONS.STALLED] =
-    "Profanity Muter has stopped analyzing this video. Audio is NOT being filtered.";
+    "Profanity Muter stopped analyzing this video, so it is NOT being filtered. Reload the page to try again.";
   MESSAGES[REASONS.SHORTS] =
-    "Shorts aren't supported yet. Audio is not filtered here.";
+    "Shorts aren't filtered yet. They're too short, and change too fast, to analyze before they play.";
   MESSAGES[REASONS.UNANALYZABLE] =
-    "This video's audio is protected and can't be analyzed. Audio is not filtered on this video.";
+    "Profanity Muter can't read this video's audio because it's protected. Filtering is off for this video.";
+  MESSAGES[REASONS.OTHER_TAB] =
+    "Profanity Muter filters one video at a time, and another tab is being filtered right now. Switch to this tab, or pause the other video, to filter this one.";
 
   // A short, plain-language explanation of the cause, for the places with
   // room for one (the popup banner, the dev log). Deliberately does not
@@ -124,12 +146,13 @@
   var DETAILS = {};
   DETAILS[REASONS.NO_AUDIO] = "No audio from this video reached the extension.";
   DETAILS[REASONS.MODEL_LOAD_FAILED] = "The speech model could not be loaded.";
-  DETAILS[REASONS.WORKER_DEAD] = "The transcription process stopped responding.";
+  DETAILS[REASONS.WORKER_DEAD] = "The analysis process stopped responding.";
   DETAILS[REASONS.ZERO_WINDOWS] = "Audio arrived but no part of it was analyzed.";
   DETAILS[REASONS.LIVESTREAM] = "Live video can't be analyzed ahead of playback.";
   DETAILS[REASONS.STALLED] = "Analysis was expected to finish and did not.";
   DETAILS[REASONS.SHORTS] = "Shorts are too short, and swap too fast, to analyze before they play.";
   DETAILS[REASONS.UNANALYZABLE] = "The audio is encrypted (protected content).";
+  DETAILS[REASONS.OTHER_TAB] = "The shared analyzer is busy with another tab and will switch to this one when you do.";
 
   function messageFor(reason) {
     return MESSAGES[reason] || MESSAGES[REASONS.ZERO_WINDOWS];
@@ -242,6 +265,9 @@
   //                       from firing on a pipeline that is merely slow.
   //   promiseEtaMs        the ETA that was quoted, in ms
   //   unanalyzable        offscreen gave up (DRM/undecodable)
+  //   servedElsewhere     true when the shared pipeline is currently analyzing
+  //                       a DIFFERENT tab, so this one is waiting its turn
+  //                       (0.1.49 active-tab-follow). Calm, self-resolving.
   //   windowsCompleted    analysis windows finished for this video
   //   audioSegments       audio segments intercepted for this video
   //   fatalReasons        array of reason codes from classifyDiag
@@ -300,6 +326,29 @@
         reason: REASONS.UNANALYZABLE,
         message: messageFor(REASONS.UNANALYZABLE),
         detail: detailFor(REASONS.UNANALYZABLE),
+        due: true
+      };
+    }
+
+    // 0.1.49: SERVED ELSEWHERE. The shared pipeline analyzes one video at a
+    // time, and right now this tab is not the one. That is neither a fault
+    // nor a documented limit, so it must never reach the broken checks below:
+    // an inactive tab legitimately has zero completed windows, and calling
+    // that "not working" would be a false alarm that clears itself the moment
+    // the user switches tabs.
+    //
+    // Placed ABOVE the windowsCompleted OK check on purpose. A tab that
+    // analyzed the first minute and was then switched away from is NOT still
+    // "protected": if it keeps playing in the background it falls behind, and
+    // reporting a stale green while that happens is exactly the silent-failure
+    // trap this module exists to prevent. The truthful current state is
+    // "waiting", and it is a calm, self-resolving one.
+    if (input.servedElsewhere === true) {
+      return {
+        status: STATUS.WAITING,
+        reason: REASONS.OTHER_TAB,
+        message: messageFor(REASONS.OTHER_TAB),
+        detail: detailFor(REASONS.OTHER_TAB),
         due: true
       };
     }

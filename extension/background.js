@@ -15,7 +15,7 @@
 // and milestone decisions so the SW and the popup cannot disagree about
 // what "eligible" means (0.1.33).
 try {
-  importScripts('shared/moments.js', 'shared/pill.js');
+  importScripts('shared/moments.js', 'shared/pill.js', 'shared/active_tab.js');
 } catch (e) {
   console.warn('[PM-BG] could not load shared/moments.js:', String(e));
 }
@@ -23,6 +23,94 @@ try {
 var portsByTabId = new Map(); // tabId -> chrome.runtime.Port
 var videoIdByTabId = new Map(); // tabId -> last known videoId (0.1.15: needed to re-push pm-config on offscreen respawn without waiting for a video change)
 var creatingOffscreen = null;
+
+// ---- active-tab-follow (0.1.49) --------------------------------------------
+//
+// The shared pipeline serves one tab at a time (see shared/active_tab.js and
+// the offscreen document's sessionIsServing gate). This file owns the raw
+// signals that feed that decision, because the service worker is the only
+// context that sees focus, tab activation, and every tab's play state at once.
+//
+// No new permission is needed: chrome.tabs.onActivated and
+// chrome.windows.onFocusChanged deliver only ids (never url/title), and the
+// candidate set is portsByTabId, so we already know which tabs are YouTube
+// without querying anything.
+var focusedWindowId = null; // chrome.windows.WINDOW_ID_NONE (-1) when focus left Chrome entirely
+var activeTabByWindow = new Map(); // windowId -> the tab currently active in that window
+var activatedWallByTabId = new Map(); // tabId -> wall ms when it last became its window's active tab
+var playStateByTabId = new Map(); // tabId -> { playing: bool } as reported by content.js
+var currentServedTabId = null; // the tab we last told the offscreen doc to serve
+
+function activeTabApi() {
+  return typeof PMActiveTab !== 'undefined' ? PMActiveTab : null;
+}
+
+// The focused tab, but only if it is one of our YouTube tabs. When the user is
+// focused on a non-YouTube tab or another app, this is undefined and the
+// chooser falls through to the playing/most-recent rules.
+function focusedYouTubeTabId() {
+  if (focusedWindowId == null) return undefined;
+  var t = activeTabByWindow.get(focusedWindowId);
+  return (t != null && portsByTabId.has(t)) ? t : undefined;
+}
+
+// Rebuild the candidate set from the tabs that actually have the extension
+// attached, decide which one the pipeline should serve, and broadcast the
+// result. Cheap and only called on real events (connect, disconnect, focus,
+// activation, play/pause, tab close), never in a loop.
+function recomputeActiveTab() {
+  var api = activeTabApi();
+  var candidates = [];
+  portsByTabId.forEach(function (port, tabId) {
+    var ps = playStateByTabId.get(tabId) || {};
+    candidates.push({
+      tabId: tabId,
+      playing: ps.playing === true,
+      lastActiveWall: activatedWallByTabId.get(tabId) || 0
+    });
+  });
+
+  var winner = api
+    ? api.choose(candidates, { focusedTabId: focusedYouTubeTabId() })
+    : (candidates.length ? candidates[0].tabId : null);
+
+  // Always tell each content tab its own status, even when the global winner
+  // did not change, so a freshly-connected tab learns it is inactive right
+  // away. content.js treats this idempotently.
+  portsByTabId.forEach(function (port, tabId) {
+    try {
+      port.postMessage({ type: 'active-status', active: tabId === winner });
+    } catch (e) {}
+  });
+
+  // Only re-tell the offscreen document when the served tab actually changes:
+  // that is what triggers the re-bind (old tab stops, new tab resumes).
+  if (winner !== currentServedTabId) {
+    currentServedTabId = winner;
+    console.log('[PM-BG] active tab -> ' + (winner == null ? 'none' : winner));
+    ensureOffscreenDocument().then(function () {
+      chrome.runtime.sendMessage({ type: 'pm-active-tab', tabId: winner }).catch(function () {});
+    });
+  }
+}
+
+try {
+  chrome.tabs.onActivated.addListener(function (info) {
+    if (!info || info.tabId == null) return;
+    activeTabByWindow.set(info.windowId, info.tabId);
+    activatedWallByTabId.set(info.tabId, Date.now());
+    recomputeActiveTab();
+  });
+  chrome.windows.onFocusChanged.addListener(function (windowId) {
+    focusedWindowId = windowId;
+    recomputeActiveTab();
+  });
+} catch (e) {
+  // If either API is unavailable the extension still works, it just falls back
+  // to serving the first-connected tab (single-tab installs, the common case,
+  // are unaffected).
+  console.warn('[PM-BG] active-tab listeners unavailable:', String(e));
+}
 
 // Any error in this file must not stay invisible in the SW's own
 // (user-inaccessible) console - broadcast to every connected tab so it
@@ -320,6 +408,10 @@ chrome.runtime.onConnect.addListener(function (port) {
   console.log('[PM-BG] content port connected, tabId=' + tabId);
 
   ensureOffscreenDocument();
+  // A new YouTube tab changes who should be served (0.1.49). Recompute so the
+  // pipeline follows, and so this new tab is told its own active/inactive
+  // status immediately.
+  recomputeActiveTab();
 
   port.onMessage.addListener(function (msg) {
     if (!msg || !msg.type) return;
@@ -374,6 +466,13 @@ chrome.runtime.onConnect.addListener(function (port) {
           console.error('[PM-BG] failed to forward segment to offscreen, recreating doc', e);
           ensureOffscreenDocument();
         });
+    } else if (msg.type === 'playstate') {
+      // 0.1.49: content.js reports this tab's play/pause on every play, pause,
+      // and visibility change. Feeds active_tab.choose so a video playing in a
+      // background tab (focus elsewhere) can still be the served one. No
+      // offscreen round-trip: this only informs the local arbitration.
+      playStateByTabId.set(tabId, { playing: msg.playing === true });
+      recomputeActiveTab();
     } else if (msg.type === 'disable' || msg.type === 'enable') {
       // pm_enabled=false (0.1.13): idle the session's transcription CPU
       // entirely rather than just having content.js stop acting on results
@@ -390,7 +489,12 @@ chrome.runtime.onConnect.addListener(function (port) {
     // reconnect race (old port's onDisconnect firing AFTER a new port for
     // the same tabId has already been onConnect'd and stored) could
     // otherwise delete the NEWER, live port's map entry out from under it.
-    if (portsByTabId.get(tabId) === port) portsByTabId.delete(tabId);
+    if (portsByTabId.get(tabId) === port) {
+      portsByTabId.delete(tabId);
+      // The served tab may have just gone away (navigation, close). Recompute
+      // so the pipeline hands off to a survivor rather than serving nothing.
+      recomputeActiveTab();
+    }
     console.log('[PM-BG] content port disconnected, tabId=' + tabId);
   });
 });
@@ -403,6 +507,12 @@ chrome.runtime.onConnect.addListener(function (port) {
 chrome.tabs.onRemoved.addListener(function (tabId) {
   portsByTabId.delete(tabId);
   videoIdByTabId.delete(tabId);
+  // 0.1.49: forget this tab's active-tab-follow bookkeeping and recompute, so
+  // closing the served tab re-binds the pipeline to whatever remains.
+  playStateByTabId.delete(tabId);
+  activatedWallByTabId.delete(tabId);
+  activeTabByWindow.forEach(function (t, w) { if (t === tabId) activeTabByWindow.delete(w); });
+  recomputeActiveTab();
   chrome.runtime.sendMessage({ type: 'pm-tab-closed', tabId: tabId }).catch(function () {});
 });
 

@@ -37,7 +37,7 @@
     mod
   ));
 
-  // node_modules/mediabunny/dist/modules/src/misc.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/misc.js
   function assert(x) {
     if (!x) {
       throw new Error("Assertion failed.");
@@ -45,7 +45,7 @@
   }
   var normalizeRotation, last, readExpGolomb, readSignedExpGolomb, toUint8Array, toDataView, textDecoder, invertObject, COLOR_PRIMARIES_MAP, COLOR_PRIMARIES_MAP_INVERSE, TRANSFER_CHARACTERISTICS_MAP, TRANSFER_CHARACTERISTICS_MAP_INVERSE, MATRIX_COEFFICIENTS_MAP, MATRIX_COEFFICIENTS_MAP_INVERSE, isAllowSharedBufferSource, AsyncMutex, HEX_STRING_REGEX, bytesToHexString, hexStringToBytes, reverseBitsU32, binarySearchExact, binarySearchLessOrEqual, promiseWithResolvers, removeItem, findLastIndex, toAsyncIterator, validateAnyIterable, assertNever, getUint24, getInt24, mapAsyncGenerator, clamp, UNDETERMINED_LANGUAGE, roundIfAlmostInteger, roundToMultiple, roundToDivisor, popcount, ISO_639_2_REGEX, isIso639Dash2LanguageCode, SECOND_TO_MICROSECOND_FACTOR, CallSerializer, isWebKitCache, isWebKit, isChromiumCache, isChromium, chromiumVersionCache, getChromiumVersion, missingWebCodecsClassMessage, NativePromiseConstructor, isThenable, coalesceIndex, uint8ArraysAreEqual, polyfillSymbolDispose, isNumber, arrayCount, arrayArgmin, simplifyRational, EventEmitter;
   var init_misc = __esm({
-    "node_modules/mediabunny/dist/modules/src/misc.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/misc.js"() {
       normalizeRotation = (rotation) => {
         const mappedRotation = (rotation % 360 + 360) % 360;
         if (mappedRotation === 0 || mappedRotation === 90 || mappedRotation === 180 || mappedRotation === 270) {
@@ -466,10 +466,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/logging.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/logging.js
   var LogLevel, Logging;
   var init_logging = __esm({
-    "node_modules/mediabunny/dist/modules/src/logging.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/logging.js"() {
       init_misc();
       (function(LogLevel2) {
         LogLevel2[LogLevel2["Silent"] = 0] = "Silent";
@@ -525,10 +525,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/metadata.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/metadata.js
   var RichImageData, AttachedFile, DEFAULT_TRACK_DISPOSITION;
   var init_metadata = __esm({
-    "node_modules/mediabunny/dist/modules/src/metadata.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/metadata.js"() {
       RichImageData = class {
         /** Creates a new {@link RichImageData}. */
         constructor(data, mimeType) {
@@ -575,10 +575,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/shared/bitstream.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/bitstream.js
   var Bitstream;
   var init_bitstream = __esm({
-    "node_modules/mediabunny/dist/modules/shared/bitstream.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/bitstream.js"() {
       Bitstream = class _Bitstream {
         constructor(bytes) {
           this.bytes = bytes;
@@ -642,10 +642,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/shared/aac-misc.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/aac-misc.js
   var aacFrequencyTable, aacChannelMap, parseAacAudioSpecificConfig, readAacObjectType, readAacSamplingFrequency;
   var init_aac_misc = __esm({
-    "node_modules/mediabunny/dist/modules/shared/aac-misc.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/aac-misc.js"() {
       init_bitstream();
       aacFrequencyTable = [
         96e3,
@@ -733,10 +733,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/codec.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/codec.js
   var PCM_AUDIO_CODECS, NON_PCM_AUDIO_CODECS, AUDIO_CODECS, AVC_LEVEL_TABLE, VP9_LEVEL_TABLE, VP9_DEFAULT_SUFFIX, AV1_DEFAULT_SUFFIX, PRORES_FOURCCS, DTS_FOURCCS, extractVideoCodecString, extractAudioCodecString, OPUS_SAMPLE_RATE, PCM_CODEC_REGEX, parsePcmCodec, VALID_VIDEO_CODEC_STRING_PREFIXES;
   var init_codec = __esm({
-    "node_modules/mediabunny/dist/modules/src/codec.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/codec.js"() {
       init_aac_misc();
       init_misc();
       PCM_AUDIO_CODECS = [
@@ -1059,10 +1059,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/shared/mp3-misc.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/mp3-misc.js
   var decodeSynchsafe, XingFlags;
   var init_mp3_misc = __esm({
-    "node_modules/mediabunny/dist/modules/shared/mp3-misc.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/mp3-misc.js"() {
       decodeSynchsafe = (synchsafed) => {
         let mask = 2130706432;
         let unsynchsafed = 0;
@@ -1081,19 +1081,19 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/shared/ac3-misc.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/ac3-misc.js
   var AC3_SAMPLE_RATES, EAC3_REDUCED_SAMPLE_RATES;
   var init_ac3_misc = __esm({
-    "node_modules/mediabunny/dist/modules/shared/ac3-misc.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/ac3-misc.js"() {
       AC3_SAMPLE_RATES = [48e3, 44100, 32e3];
       EAC3_REDUCED_SAMPLE_RATES = [24e3, 22050, 16e3];
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/codec-data.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/codec-data.js
   var AvcNalUnitType, HevcNalUnitType, iterateNalUnitsInAnnexB, iterateNalUnitsInLengthPrefixed, iterateAvcNalUnits, extractNalUnitTypeForAvc, removeEmulationPreventionBytes, ANNEX_B_START_CODE, extractAvcDecoderConfigurationRecord, AVC_HEVC_ASPECT_RATIO_IDC_TABLE, parseAvcSps, skipAvcHrdParameters, iterateHevcNalUnits, extractNalUnitTypeForHevc, parseHevcSps, extractHevcDecoderConfigurationRecord, parseProfileTierLevel, skipScalingListData, skipAllStRefPicSets, skipStRefPicSet, parseHevcVui, skipHevcHrdParameters, skipSubLayerHrdParameters, HevcNaluOrderState, extractVp9CodecInfoFromPacket, iterateAv1PacketObus, extractAv1CodecInfoFromPacket, determineVideoPacketType, FlacBlockType, AC3_ACMOD_CHANNEL_COUNTS, AC3_FRAME_SIZES, AC3_REGISTRATION_DESCRIPTOR, EAC3_REGISTRATION_DESCRIPTOR, parseEac3Config, getEac3SampleRate, getEac3ChannelCount, DTS_EXSS_SYNC_WORD, DTS_CORE_FRAME_HEADER_SIZE, DTS_EXSS_HEADER_PREFIX_SIZE, DTS_PCM_BLOCK_SAMPLES, DTS_SPECIFIC_BOX_SIZE, DTS_SUBBAND_SAMPLES, DTS_CORE_SAMPLE_RATES, DTS_CORE_BIT_RATES, DTS_PCM_RESOLUTIONS, DTS_AMODE_CHANNEL_COUNTS, DTS_AMODE_CHANNEL_LAYOUTS, DTS_CHANNEL_LAYOUT_LFE1, DTS_CHANNEL_LAYOUT_PAIR_MASK, DTS_EXSS_REF_CLOCKS, DTS_EXSS_SAMPLE_RATES, DTS_SPECIFIC_BOX_FRAME_DURATIONS, parseDtsFrame, extractDtsFourCcFromPacket, parseDtsCoreFrameHeader, parseDtsExssHeader, parseDtsSpecificBox, getDtsChannelCount;
   var init_codec_data = __esm({
-    "node_modules/mediabunny/dist/modules/src/codec-data.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/codec-data.js"() {
       init_codec();
       init_misc();
       init_logging();
@@ -2921,10 +2921,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/demuxer.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/demuxer.js
   var Demuxer;
   var init_demuxer = __esm({
-    "node_modules/mediabunny/dist/modules/src/demuxer.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/demuxer.js"() {
       Demuxer = class {
         constructor(input) {
           this.input = input;
@@ -2935,10 +2935,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/packet.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/packet.js
   var PLACEHOLDER_DATA, EncodedPacket;
   var init_packet = __esm({
-    "node_modules/mediabunny/dist/modules/src/packet.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/packet.js"() {
       init_misc();
       PLACEHOLDER_DATA = /* @__PURE__ */ new Uint8Array(0);
       EncodedPacket = class _EncodedPacket {
@@ -3102,10 +3102,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/isobmff/isobmff-misc.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-misc.js
   var buildIsobmffMimeType, parsePsshBoxContents, psshBoxesAreEqual;
   var init_isobmff_misc = __esm({
-    "node_modules/mediabunny/dist/modules/src/isobmff/isobmff-misc.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-misc.js"() {
       init_misc();
       buildIsobmffMimeType = (info) => {
         const base = info.hasVideo ? "video/" : info.hasAudio ? "audio/" : "application/";
@@ -3148,10 +3148,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/isobmff/isobmff-reader.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-reader.js
   var MIN_BOX_HEADER_SIZE, MAX_BOX_HEADER_SIZE, readBoxHeader, readFixed_16_16, readFixed_2_30, readIsomVariableInteger, readMetadataStringShort, readDataBox;
   var init_isobmff_reader = __esm({
-    "node_modules/mediabunny/dist/modules/src/isobmff/isobmff-reader.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-reader.js"() {
       init_metadata();
       init_misc();
       init_reader();
@@ -3227,10 +3227,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/aes.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/aes.js
   var AES_128_BLOCK_SIZE, Te4, Td0, Td1, Td2, Td3, Td4, rcon, tablesGenerated, generateAesTables, Aes128CbcContext;
   var init_aes = __esm({
-    "node_modules/mediabunny/dist/modules/src/aes.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/aes.js"() {
       init_misc();
       AES_128_BLOCK_SIZE = 16;
       Te4 = new Uint32Array(256);
@@ -3364,10 +3364,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/isobmff/isobmff-demuxer.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-demuxer.js
   var IsobmffDemuxer, IsobmffTrackBacking, IsobmffVideoTrackBacking, IsobmffAudioTrackBacking, getSampleIndexForTimestamp, getKeyframeSampleIndexForTimestamp, getSampleInfo, getNextKeyframeIndexForSample, offsetFragmentTrackDataByTimestamp, extractRotationFromMatrix, sampleTableIsEmpty, getOrCreateEncryptionAuxInfo, resolveEncryptionAuxInfo, getDefaultSampleEncryption, decryptSample, decryptCtr, decryptCbcs, collectCryptRanges;
   var init_isobmff_demuxer = __esm({
-    "node_modules/mediabunny/dist/modules/src/isobmff/isobmff-demuxer.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-demuxer.js"() {
       init_aac_misc();
       init_codec();
       init_codec_data();
@@ -6368,7 +6368,7 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/matroska/ebml.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/ebml.js
   function assertDefinedSize(size) {
     if (size === void 0) {
       throw new Error("Undefined element size is used in a place where it is not supported.");
@@ -6376,7 +6376,7 @@
   }
   var EBMLId, LEVEL_0_EBML_IDS, LEVEL_1_EBML_IDS, LEVEL_0_AND_1_EBML_IDS, MAX_VAR_INT_SIZE, MIN_HEADER_SIZE, MAX_HEADER_SIZE, readVarIntSize, readVarInt, readUnsignedInt, readUnsignedBigInt, readElementId, readElementSize, readElementHeader, readAsciiString, readUnicodeString, readFloat, searchForNextElementId, resync, CODEC_STRING_MAP;
   var init_ebml = __esm({
-    "node_modules/mediabunny/dist/modules/src/matroska/ebml.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/ebml.js"() {
       init_misc();
       init_reader();
       (function(EBMLId2) {
@@ -6713,10 +6713,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/matroska/matroska-misc.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/matroska-misc.js
   var buildMatroskaMimeType;
   var init_matroska_misc = __esm({
-    "node_modules/mediabunny/dist/modules/src/matroska/matroska-misc.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/matroska-misc.js"() {
       buildMatroskaMimeType = (info) => {
         const base = info.hasVideo ? "video/" : info.hasAudio ? "audio/" : "application/";
         let string = base + (info.isWebM ? "webm" : "x-matroska");
@@ -6729,10 +6729,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/matroska/matroska-demuxer.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/matroska-demuxer.js
   var BlockLacing, ContentEncodingScope, ContentCompAlgo, METADATA_ELEMENTS, MAX_RESYNC_LENGTH, MatroskaDemuxer, MatroskaTrackBacking, MatroskaVideoTrackBacking, MatroskaAudioTrackBacking;
   var init_matroska_demuxer = __esm({
-    "node_modules/mediabunny/dist/modules/src/matroska/matroska-demuxer.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/matroska-demuxer.js"() {
       init_codec_data();
       init_codec();
       init_demuxer();
@@ -8794,10 +8794,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/adts/adts-reader.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/adts/adts-reader.js
   var MIN_ADTS_FRAME_HEADER_SIZE, MAX_ADTS_FRAME_HEADER_SIZE, readAdtsFrameHeader;
   var init_adts_reader = __esm({
-    "node_modules/mediabunny/dist/modules/src/adts/adts-reader.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/adts/adts-reader.js"() {
       init_bitstream();
       init_reader();
       MIN_ADTS_FRAME_HEADER_SIZE = 7;
@@ -8855,10 +8855,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/adts/adts-demuxer.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/adts/adts-demuxer.js
   var SAMPLES_PER_AAC_FRAME, AdtsDemuxer, AdtsAudioTrackBacking;
   var init_adts_demuxer = __esm({
-    "node_modules/mediabunny/dist/modules/src/adts/adts-demuxer.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/adts/adts-demuxer.js"() {
       init_aac_misc();
       init_demuxer();
       init_id3();
@@ -9127,10 +9127,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/source.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/source.js
   var DEFAULT_MIN_READ_POSITION, DEFAULT_MAX_READ_POSITION, sourceFinalizationRegistry, Source, SourceRef, PathedSource, sourceRequestsAreEqual, URL_SOURCE_MIN_LOAD_AMOUNT, ReadableStreamSource, RangedSource;
   var init_source = __esm({
-    "node_modules/mediabunny/dist/modules/src/source.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/source.js"() {
       init_misc();
       init_input();
       polyfillSymbolDispose();
@@ -9535,10 +9535,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/input-format.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input-format.js
   var InputFormat, IsobmffInputFormat, Mp4InputFormat, MatroskaInputFormat, WebMInputFormat, AdtsInputFormat, MP4, WEBM, ADTS, validateInputFormatOptions;
   var init_input_format = __esm({
-    "node_modules/mediabunny/dist/modules/src/input-format.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input-format.js"() {
       init_isobmff_demuxer();
       init_ebml();
       init_matroska_demuxer();
@@ -9803,10 +9803,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/sample.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/sample.js
   var lastVideoGcErrorLog, lastAudioGcErrorLog, finalizationRegistry, VIDEO_SAMPLE_PIXEL_FORMATS, VIDEO_SAMPLE_PIXEL_FORMATS_SET, AUDIO_SAMPLE_FORMATS, AudioSampleResource, AudioSample, getBytesPerSample, formatIsPlanar, getReadFunction, getWriteFunction, isAudioData, doAudioDataCopyToWebKitWorkaround;
   var init_sample = __esm({
-    "node_modules/mediabunny/dist/modules/src/sample.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/sample.js"() {
       init_misc();
       init_logging();
       polyfillSymbolDispose();
@@ -10536,19 +10536,19 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/custom-coder.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/custom-coder.js
   var customVideoDecoders, customAudioDecoders;
   var init_custom_coder = __esm({
-    "node_modules/mediabunny/dist/modules/src/custom-coder.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/custom-coder.js"() {
       customVideoDecoders = [];
       customAudioDecoders = [];
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/pcm.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/pcm.js
   var fromUlaw, fromAlaw;
   var init_pcm = __esm({
-    "node_modules/mediabunny/dist/modules/src/pcm.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/pcm.js"() {
       fromUlaw = (u8) => {
         const MULAW_BIAS = 33;
         let sign = 0;
@@ -10582,10 +10582,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/media-sink.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/media-sink.js
   var validatePacketRetrievalOptions, validateTimestamp, maybeFixPacketType, EncodedPacketSink, DecoderWrapper, BaseMediaSampleSink, computeMaxQueueSize, AudioDecoderWrapper, PcmAudioDecoderWrapper, AudioSampleSink, AudioBufferSink;
   var init_media_sink = __esm({
-    "node_modules/mediabunny/dist/modules/src/media-sink.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/media-sink.js"() {
       init_codec();
       init_custom_coder();
       init_input();
@@ -11575,10 +11575,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/input-track.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input-track.js
   var InputTrack, requireSync, toValidatedPredicate, InputVideoTrack, InputAudioTrack, desc, prefer, toValidatedInputTrackQuery, mergeInputTrackQueries, queryInputTracks, findUnderlyingFrameRate, simplestFractionBetween, getBestGuessFrameRate;
   var init_input_track = __esm({
-    "node_modules/mediabunny/dist/modules/src/input-track.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input-track.js"() {
       init_codec_data();
       init_custom_coder();
       init_logging();
@@ -12607,10 +12607,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/input.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input.js
   var DEFAULT_SOURCE_CACHE_GROUP, Input, UnsupportedInputFormatError, InputDisposedError;
   var init_input = __esm({
-    "node_modules/mediabunny/dist/modules/src/input.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input.js"() {
       init_input_format();
       init_input_track();
       init_misc();
@@ -12970,10 +12970,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/reader.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/reader.js
   var Reader, FileSlice, checkIsInRange, readBytes, readU8, readU16Be, readU24Be, readI16Be, readU32Be, readI32Be, readU64Be, readI64Be, readF32Be, readF64Be, readAscii;
   var init_reader = __esm({
-    "node_modules/mediabunny/dist/modules/src/reader.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/reader.js"() {
       init_input();
       init_misc();
       init_source();
@@ -13192,10 +13192,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/id3.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/id3.js
   var Id3V2HeaderFlags, Id3V2TextEncoding, ID3_V2_HEADER_SIZE, ID3_V1_GENRES, readId3V2Header, parseId3V2Tag, Id3V2Reader;
   var init_id3 = __esm({
-    "node_modules/mediabunny/dist/modules/src/id3.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/id3.js"() {
       init_mp3_misc();
       init_logging();
       init_misc();
@@ -13843,10 +13843,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/index.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/index.js
   var MEDIABUNNY_LOADED_SYMBOL;
   var init_src = __esm({
-    "node_modules/mediabunny/dist/modules/src/index.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/index.js"() {
       init_logging();
       init_source();
       init_input_format();
@@ -13870,6 +13870,10 @@
         function stageTimeoutMsFor(attemptsSoFar) {
           return attemptsSoFar > 0 ? STAGE_TIMEOUT_MS : STAGE_TIMEOUT_FIRST_MS;
         }
+        var SUSPEND_TICK_MS = 1e3;
+        var SUSPEND_GRACE_MS = 4e3;
+        var NO_PROGRESS_MS = 2e3;
+        var DECODER_RECYCLE_EVERY = 40;
         var HANG_REBUILD_AT = 1;
         var HANG_SKIP_AT = 2;
         var HANG_THRESHOLD = 6;
@@ -13883,20 +13887,52 @@
         function drainWithTimeout(iterator, options) {
           options = options || {};
           var timeoutMs = typeof options.timeoutMs === "number" ? options.timeoutMs : STAGE_TIMEOUT_MS;
+          var noProgressMs = typeof options.noProgressMs === "number" ? options.noProgressMs : timeoutMs;
           var setTimer = options.setTimer || (typeof setTimeout === "function" ? setTimeout : null);
           var clearTimer = options.clearTimer || (typeof clearTimeout === "function" ? clearTimeout : null);
+          var now = options.now || (typeof Date !== "undefined" && Date.now ? Date.now : function() {
+            return 0;
+          });
+          var tickMs = typeof options.tickMs === "number" ? options.tickMs : SUSPEND_TICK_MS;
+          var graceMs = typeof options.suspendGraceMs === "number" ? options.suspendGraceMs : SUSPEND_GRACE_MS;
           var values = [];
           var aborted = false;
           var timer = null;
+          var suspendedMs = 0;
           if (!iterator || typeof iterator.next !== "function") {
-            return Promise.resolve({ values, timedOut: false, error: new Error("not an iterator") });
+            return Promise.resolve({ values, timedOut: false, error: new Error("not an iterator"), suspendedMs: 0 });
           }
+          var startWall = now();
+          var overallDeadline = startWall + timeoutMs;
+          var progressDeadline = startWall + noProgressMs;
           var timeoutPromise = new Promise(function(resolve) {
             if (!setTimer) return;
-            timer = setTimer(function() {
-              aborted = true;
-              resolve("timeout");
-            }, timeoutMs);
+            var lastTick = now();
+            function scheduleNext() {
+              var t = now();
+              var soonest = Math.min(overallDeadline, progressDeadline);
+              var delay = Math.max(1, Math.min(tickMs, soonest - t));
+              timer = setTimer(tick, delay);
+            }
+            function tick() {
+              var t = now();
+              var gap = t - lastTick;
+              var overshoot = gap - tickMs;
+              if (overshoot > graceMs) {
+                suspendedMs += overshoot;
+                overallDeadline += overshoot;
+                progressDeadline += overshoot;
+              }
+              lastTick = t;
+              if (aborted) return;
+              if (t >= overallDeadline || t >= progressDeadline) {
+                aborted = true;
+                resolve("timeout");
+                return;
+              }
+              scheduleNext();
+            }
+            scheduleNext();
           });
           var drainPromise = (function() {
             function step() {
@@ -13904,6 +13940,7 @@
                 if (aborted) return "aborted";
                 if (result && result.done) return "done";
                 values.push(result ? result.value : void 0);
+                progressDeadline = now() + noProgressMs;
                 return step();
               });
             }
@@ -13912,20 +13949,30 @@
           return Promise.race([drainPromise, timeoutPromise]).then(
             function(outcome) {
               if (clearTimer && timer != null) clearTimer(timer);
-              if (outcome === "done") return { values, timedOut: false, error: null };
+              if (outcome === "done") return { values, timedOut: false, error: null, suspendedMs };
               aborted = true;
               return closeIterator(iterator).then(function() {
-                return { values, timedOut: true, error: null };
+                return { values, timedOut: true, error: null, suspendedMs };
               });
             },
             function(err) {
               if (clearTimer && timer != null) clearTimer(timer);
               aborted = true;
               return closeIterator(iterator).then(function() {
-                return { values, timedOut: false, error: err };
+                return { values, timedOut: false, error: err, suspendedMs };
               });
             }
           );
+        }
+        function playheadPassed(spanEnd, playheadT, marginS) {
+          if (typeof playheadT !== "number") return true;
+          var margin = typeof marginS === "number" ? marginS : 0;
+          return playheadT >= spanEnd + margin;
+        }
+        var ANCHOR_EPS_S = 0.05;
+        function decodeCoversAnchor(decodedStart, requestedStart, epsS) {
+          var eps = typeof epsS === "number" ? epsS : ANCHOR_EPS_S;
+          return decodedStart <= requestedStart + eps;
         }
         function closeIterator(iterator) {
           if (!iterator || typeof iterator.return !== "function") return Promise.resolve(false);
@@ -13945,13 +13992,20 @@
         var PMDecodeCore = {
           STAGE_TIMEOUT_FIRST_MS,
           STAGE_TIMEOUT_MS,
+          NO_PROGRESS_MS,
+          SUSPEND_TICK_MS,
+          SUSPEND_GRACE_MS,
+          DECODER_RECYCLE_EVERY,
           HANG_REBUILD_AT,
           HANG_SKIP_AT,
           HANG_THRESHOLD,
+          ANCHOR_EPS_S,
           stageTimeoutMsFor,
           hangAction,
           drainWithTimeout,
-          closeIterator
+          closeIterator,
+          playheadPassed,
+          decodeCoversAnchor
         };
         root.PMDecode = PMDecodeCore;
         if (typeof module !== "undefined" && module.exports) {
@@ -14199,6 +14253,13 @@
         chrome.runtime.sendMessage({ type: "pm-diag", tabId: s.tabId, videoId: s.videoId, text }).catch(() => {
         });
       }
+      function documentIsHidden() {
+        try {
+          return typeof document !== "undefined" && document.visibilityState === "hidden";
+        } catch (e) {
+          return false;
+        }
+      }
       function base64ToUint8(b64) {
         const binary = atob(b64);
         const bytes = new Uint8Array(binary.length);
@@ -14292,6 +14353,10 @@
         return run;
       }
       var sessions = /* @__PURE__ */ new Map();
+      var activeTabId = null;
+      function sessionIsServing(s) {
+        return activeTabId == null || s.tabId === activeTabId;
+      }
       function broadcastDiag(text) {
         log("[UNCAUGHT]", text);
         for (const s of sessions.values()) {
@@ -14556,15 +14621,16 @@
         list.push(...merged);
         return list;
       }
+      var COVERAGE_EPS_S = globalThis.PMDecode && typeof globalThis.PMDecode.ANCHOR_EPS_S === "number" ? globalThis.PMDecode.ANCHOR_EPS_S : 0.05;
       function firstUncoveredPoint(intervals, lo, hi) {
         let p = lo;
         for (const iv of intervals) {
-          if (iv.end <= p) continue;
-          if (iv.start > p) return p;
+          if (iv.end <= p + COVERAGE_EPS_S) continue;
+          if (iv.start > p + COVERAGE_EPS_S) return p;
           p = iv.end;
-          if (p >= hi) return null;
+          if (p >= hi - COVERAGE_EPS_S) return null;
         }
-        return p < hi ? p : null;
+        return p < hi - COVERAGE_EPS_S ? p : null;
       }
       var NORMALIZE_TARGET_PEAK = 0.9;
       var NORMALIZE_MIN_PEAK = 0.02;
@@ -14635,6 +14701,7 @@
       var MIN_TAIL_S = 2;
       var TAIL_STALL_MS = 3e3;
       var WINDOW_LOOP_THRESHOLD = 3;
+      var WINDOW_LOOP_COOLDOWN_MS = 8e3;
       var ALL_WORDS_CAP = 2e3;
       var SINK_ERROR_THRESHOLD = 3;
       var HANG_REBUILD_AT = globalThis.PMDecode ? globalThis.PMDecode.HANG_REBUILD_AT : 1;
@@ -14751,18 +14818,30 @@
         }
         return cursor >= end - EPS;
       }
+      function recordMissedSpan(s, start, end) {
+        s.skippedSpans.push({ start, end, missed: true });
+        s.missedTotalS = (s.missedTotalS || 0) + Math.max(0, end - start);
+      }
+      function recordCooldownSpan(s, start, end, cooldownMs) {
+        s.skippedSpans.push({ start, end, retryAfter: Date.now() + cooldownMs });
+      }
       function coverageViewForPicking(s) {
+        const now = Date.now();
+        if (s.skippedSpans && s.skippedSpans.length) {
+          s.skippedSpans = s.skippedSpans.filter((sp) => sp.missed || sp.retryAfter == null || sp.retryAfter > now);
+        }
         const skipped = s.skippedSpans || [];
-        if (s.inFlightWindows.size === 0 && skipped.length === 0) return s.covered;
+        const activeSkipped = skipped.filter((sp) => sp.missed || sp.retryAfter == null || sp.retryAfter > now);
+        if (s.inFlightWindows.size === 0 && activeSkipped.length === 0) return s.covered;
         const extra = [];
         for (const key of s.inFlightWindows) {
           const idx = key.indexOf(",");
           extra.push({ start: parseFloat(key.slice(0, idx)), end: parseFloat(key.slice(idx + 1)) });
         }
-        for (const sp of skipped) extra.push({ start: sp.start, end: sp.end });
+        for (const sp of activeSkipped) extra.push({ start: sp.start, end: sp.end });
         return s.covered.concat(extra).sort((a, b) => a.start - b.start);
       }
-      var DECODE_FED_GUARD_S = 0.25;
+      var DECODE_FED_GUARD_S = 1;
       function pickNextWindow(s, run) {
         const ct = s.currentTimeS;
         let containing = null;
@@ -14942,14 +15021,26 @@
         }
         const wrapped = [];
         try {
+          s.decodeOpens = (s.decodeOpens || 0) + 1;
+          const hiddenAtStart = documentIsHidden();
           decodeIterator = sink.buffers(absStart, absEnd)[Symbol.asyncIterator]();
           const budgetMs = stageTimeoutMsFor(s.hangAttempts.get(windowKeyForErrors) || 0);
-          const drain = globalThis.PMDecode ? await globalThis.PMDecode.drainWithTimeout(decodeIterator, { timeoutMs: budgetMs }) : { values: [], timedOut: true, error: null };
+          const drain = globalThis.PMDecode ? await globalThis.PMDecode.drainWithTimeout(decodeIterator, {
+            timeoutMs: budgetMs,
+            noProgressMs: Math.min(budgetMs, globalThis.PMDecode.NO_PROGRESS_MS || 2e3)
+          }) : { values: [], timedOut: true, error: null, suspendedMs: 0 };
           decodeIterator = null;
+          s.decodeCompletes = (s.decodeCompletes || 0) + 1;
+          if (drain.suspendedMs > 0) {
+            notifyTab(
+              s,
+              "[PM-SUSPEND] window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") decode spanned ~" + Math.round(drain.suspendedMs / 1e3) + "s of machine sleep / background throttle (credited back, NOT counted as a hang) hiddenAtStart=" + hiddenAtStart
+            );
+          }
           if (drain.error) throw drain.error;
           if (drain.timedOut) {
             const timeoutErr = new Error(
-              'stage "decode" did not settle within ' + budgetMs + "ms (hung promise, not a thrown error)"
+              'stage "decode" did not settle within ' + budgetMs + "ms (no buffer delivered for " + Math.min(budgetMs, globalThis.PMDecode.NO_PROGRESS_MS || 2e3) + "ms of awake time - wedged decoder, not a thrown error; suspendedMs=" + Math.round(drain.suspendedMs) + " hidden=" + documentIsHidden() + ")"
             );
             timeoutErr.isStageTimeout = true;
             throw timeoutErr;
@@ -14978,12 +15069,24 @@
           }
           if (isHang && errCount === HANG_REBUILD_AT) {
             rebuildRunDecodePipeline(run);
-            notifyTab(s, "[PM-REBUILD] " + span + " hung " + errCount + "x: rebuilding this run's decode pipeline before the next attempt");
+            notifyTab(s, "[PM-REBUILD] " + span + " hung " + errCount + "x: rebuilding this run's decode pipeline before the next attempt (hidden=" + documentIsHidden() + ")");
             return false;
           }
           if (isHang && errCount >= HANG_SKIP_AT) {
-            s.skippedSpans.push({ start: absStart, end: absEnd });
-            notifyTab(s, "[PM-GIVEUP] " + span + " hung " + errCount + "x even after a pipeline rebuild: skipping this span and advancing (it stays UNANALYZED, not marked covered)");
+            const playheadPassed = globalThis.PMDecode ? globalThis.PMDecode.playheadPassed(absEnd, s.currentTimeS) : true;
+            if (!playheadPassed) {
+              rebuildRunDecodePipeline(run);
+              notifyTab(
+                s,
+                "[PM-REBUILD] " + span + " hung " + errCount + "x but is still AHEAD of the playhead (currentTime=" + (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : "?") + ", ~" + (s.currentTimeS != null ? Math.max(0, absEnd - s.currentTimeS).toFixed(1) : "?") + "s of lead) - rebuilding and re-attempting rather than abandoning a window that can still be covered in time (hidden=" + documentIsHidden() + ")"
+              );
+              return false;
+            }
+            recordMissedSpan(s, absStart, absEnd);
+            notifyTab(
+              s,
+              "[PM-GIVEUP] " + span + " hung " + errCount + "x and the playhead (currentTime=" + (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : "?") + ") has already passed it - recording as MISSED/unanalyzed (NOT covered) and advancing (hidden=" + documentIsHidden() + ")"
+            );
             return false;
           }
           notifyTab(s, "[PM-SKIP] " + span + " skipped: sink.buffers " + (isHang ? "hang" : "error") + " (" + errCount + "/" + threshold + "): " + String(e && e.message ? e.message : e));
@@ -15011,6 +15114,16 @@
           notifyTab(
             s,
             "[PM-COVERAGE-GAP] requested window [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") but decoded audio only actually spans [" + coverStart.toFixed(2) + "," + coverEnd.toFixed(2) + ") - treating the shortfall as a real gap (will be revisited), not marking the full requested window covered"
+          );
+        }
+        const startDelta = actualMinStart - absStart;
+        const endDelta = actualMaxEnd - absEnd;
+        const DECODE_DELTA_SLACK_S = 0.2;
+        const anchorUncovered = !(globalThis.PMDecode ? globalThis.PMDecode.decodeCoversAnchor(actualMinStart, absStart) : actualMinStart <= absStart + 0.05);
+        if (Math.abs(startDelta) > DECODE_DELTA_SLACK_S || anchorUncovered) {
+          notifyTab(
+            s,
+            "[PM-DECODE-DELTA] requested=[" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ") decoded=[" + actualMinStart.toFixed(2) + "," + actualMaxEnd.toFixed(2) + ") startDelta=" + startDelta.toFixed(2) + "s endDelta=" + endDelta.toFixed(2) + "s buffers=" + wrapped.length + " anchorStillUncovered=" + anchorUncovered + (anchorUncovered ? " <- decoded timestamps did NOT cover the requested start (WINDOW-LOOP cause)" : "")
           );
         }
         const decodedDurationSum = wrapped.reduce((acc, wb) => acc + wb.buffer.duration, 0);
@@ -15276,11 +15389,21 @@
           const attempts = (s.windowAttempts.get(locKey) || 0) + 1;
           s.windowAttempts.set(locKey, attempts);
           if (attempts >= WINDOW_LOOP_THRESHOLD) {
-            notifyTab(
-              s,
-              "[PM-WINDOW-LOOP] location near " + absStart.toFixed(2) + " attempted " + attempts + "x (latest span [" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ")) without ever registering as covered (likely a decoded-timestamp mismatch at this exact position) - force-marking covered to break the loop"
-            );
-            mergeRangeInto(s.covered, absStart, anchorEnd);
+            const passed = globalThis.PMDecode ? globalThis.PMDecode.playheadPassed(anchorEnd, s.currentTimeS) : true;
+            if (passed) {
+              notifyTab(
+                s,
+                "[PM-WINDOW-LOOP] location near " + absStart.toFixed(2) + " attempted " + attempts + "x without ever registering covered (decoded-timestamp mismatch) and the playhead (currentTime=" + (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : "?") + ") has passed it - recording as MISSED/unanalyzed (NOT covered) to break the loop"
+              );
+              recordMissedSpan(s, absStart, anchorEnd);
+            } else {
+              notifyTab(
+                s,
+                "[PM-WINDOW-LOOP] location near " + absStart.toFixed(2) + " attempted " + attempts + "x without ever registering covered (decoded-timestamp mismatch) but still AHEAD of the playhead (currentTime=" + (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : "?") + ") - re-anchoring the decode pipeline and cooling down " + WINDOW_LOOP_COOLDOWN_MS / 1e3 + "s before re-attempting, NOT force-marking covered"
+              );
+              rebuildRunDecodePipeline(run);
+              recordCooldownSpan(s, absStart, anchorEnd, WINDOW_LOOP_COOLDOWN_MS);
+            }
             s.windowAttempts.delete(locKey);
           }
         } else {
@@ -15291,6 +15414,57 @@
       function sendHeartbeat(s) {
         chrome.runtime.sendMessage({ type: "pm-heartbeat", tabId: s.tabId, videoId: s.videoId }).catch(() => {
         });
+      }
+      function maybeRecycleDecoder(s, run) {
+        const every = globalThis.PMDecode && globalThis.PMDecode.DECODER_RECYCLE_EVERY ? globalThis.PMDecode.DECODER_RECYCLE_EVERY : 40;
+        s.windowsSinceRecycle = (s.windowsSinceRecycle || 0) + 1;
+        if (s.windowsSinceRecycle < every) return;
+        s.windowsSinceRecycle = 0;
+        if (!run || run.closed || !run.sink) return;
+        rebuildRunDecodePipeline(run);
+        notifyTab(
+          s,
+          "[PM-RECYCLE] proactively rebuilt the decode pipeline after " + every + " windows (decodeOpens=" + (s.decodeOpens || 0) + " decodeCompletes=" + (s.decodeCompletes || 0) + ") - forcing a clean WebCodecs decoder lineage before decoders can accumulate over a long session"
+        );
+      }
+      var COVERAGE_SUMMARY_THROTTLE_MS = 3e4;
+      function totalSpan(intervals) {
+        let sum = 0;
+        for (const iv of intervals) sum += Math.max(0, iv.end - iv.start);
+        return sum;
+      }
+      function maybeLogCoverageSummary(s) {
+        const now = Date.now();
+        if (s.lastCoverageSummaryWall && now - s.lastCoverageSummaryWall < COVERAGE_SUMMARY_THROTTLE_MS) return;
+        s.lastCoverageSummaryWall = now;
+        const capturedS = totalSpan(s.bufferedRanges);
+        const analyzedS = totalSpan(s.covered);
+        const ct = s.currentTimeS != null ? s.currentTimeS : 0;
+        const holes = [];
+        for (const r of s.bufferedRanges) {
+          const hi = Math.min(r.end, ct);
+          if (hi <= r.start) continue;
+          let p = r.start;
+          const spans = s.covered.slice().sort((a, b) => a.start - b.start);
+          for (const iv of spans) {
+            if (iv.end <= p) continue;
+            if (iv.start > p) {
+              holes.push({ start: p, end: Math.min(iv.start, hi) });
+              if (holes.length >= 8) break;
+            }
+            p = Math.max(p, iv.end);
+            if (p >= hi) break;
+          }
+          if (p < hi && holes.length < 8) holes.push({ start: p, end: hi });
+          if (holes.length >= 8) break;
+        }
+        const behindHoleS = totalSpan(holes);
+        const missedS = s.missedTotalS || 0;
+        const holeStr = holes.length ? holes.map((h) => "[" + h.start.toFixed(1) + "," + h.end.toFixed(1) + ")").join(" ") : "none";
+        notifyTab(
+          s,
+          "[PM-COVERAGE-SUMMARY] playhead=" + ct.toFixed(1) + " captured=" + capturedS.toFixed(1) + "s analyzed=" + analyzedS.toFixed(1) + "s holesBehindPlayhead=" + behindHoleS.toFixed(1) + "s missedRecorded=" + missedS.toFixed(1) + "s decodeOpens=" + (s.decodeOpens || 0) + " decodeCompletes=" + (s.decodeCompletes || 0) + " hidden=" + documentIsHidden() + " holes=" + holeStr
+        );
       }
       var IDLE_GATE_DIAG_THROTTLE_MS = 5e3;
       var WORK_CHECK_HORIZON_S = 5;
@@ -15305,7 +15479,9 @@
         }
         return false;
       }
+      var BENIGN_IDLE_GATES = /* @__PURE__ */ new Set(["disabled", "unanalyzable", "not-active-tab"]);
       function reportIdleGate(s, gateName, detail) {
+        if (BENIGN_IDLE_GATES.has(gateName)) return;
         if (!hasUncoveredCapturedWorkNearPlayhead(s)) return;
         const now = Date.now();
         const lastByGate = s.lastIdleGateDiagWall || (s.lastIdleGateDiagWall = {});
@@ -15315,6 +15491,7 @@
       }
       async function maybeProcess(s) {
         if (s.disabled || s.unanalyzable) return;
+        if (!sessionIsServing(s)) return;
         if (s.processing) {
           s.pendingRerun = true;
           return;
@@ -15336,6 +15513,11 @@
             if (s.unanalyzable) {
               exitGate = "unanalyzable";
               exitDetail = "DRM/undecodable content - transcription given up for this session";
+              break;
+            }
+            if (!sessionIsServing(s)) {
+              exitGate = "not-active-tab";
+              exitDetail = "another tab became the active/served tab (0.1.49)";
               break;
             }
             if (s.generation !== loopGeneration) {
@@ -15373,6 +15555,8 @@
             }
             s.hadFirstWindow = true;
             s.windowsDone = (s.windowsDone || 0) + 1;
+            maybeRecycleDecoder(s, run);
+            maybeLogCoverageSummary(s);
             exitGate = null;
           }
         } catch (e) {
@@ -15416,6 +15600,17 @@
         if (!msg || !msg.type) return;
         if (msg.type === "pm-reset") {
           dropSessionsForTab(msg.tabId);
+          return;
+        }
+        if (msg.type === "pm-active-tab") {
+          const prev = activeTabId;
+          activeTabId = typeof msg.tabId === "number" ? msg.tabId : null;
+          if (activeTabId !== prev) {
+            log("[PM-ACTIVE-TAB] serving tab " + (activeTabId == null ? "none" : activeTabId) + " (was " + (prev == null ? "none" : prev) + ")");
+            for (const s of sessions.values()) {
+              if (sessionIsServing(s)) maybeProcess(s);
+            }
+          }
           return;
         }
         if (msg.type === "pm-seek") {

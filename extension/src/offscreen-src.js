@@ -81,6 +81,22 @@ function notifyTab(s, text) {
   chrome.runtime.sendMessage({ type: 'pm-diag', tabId: s.tabId, videoId: s.videoId, text }).catch(() => {});
 }
 
+// 0.1.48: is this offscreen document hidden / likely throttled right now?
+// Chrome throttles timers and starves WebCodecs/WebAudio in a hidden
+// document (and freezes everything outright when the machine sleeps), which
+// is what produced the field logs' multi-thousand-second wall-clock jumps
+// between windows and the resulting [PM-REBUILD]/[PM-GIVEUP] storms. Used to
+// keep a throttled decode from being mislabeled a wedged one. Best-effort:
+// if the API is unavailable for any reason, report "not hidden" so behavior
+// falls back to the pre-0.1.48 path rather than silently suppressing hangs.
+function documentIsHidden() {
+  try {
+    return typeof document !== 'undefined' && document.visibilityState === 'hidden';
+  } catch (e) {
+    return false;
+  }
+}
+
 function base64ToUint8(b64) {
   const binary = atob(b64);
   const bytes = new Uint8Array(binary.length);
@@ -236,6 +252,23 @@ function runSerialized(fn) {
 
 // --- per (tabId, videoId) session -------------------------------------------
 const sessions = new Map(); // key "tabId:videoId" -> session
+
+// 0.1.49 ACTIVE-TAB-FOLLOW. The worker and the ~280MB model are shared by
+// every tab, and the worker is a single thread: analyzing two videos at once
+// makes BOTH fall behind the playhead rather than serving each at half speed.
+// So the pipeline serves exactly one tab at a time, the one the user is
+// actually watching, and background.js (shared/active_tab.js) decides which.
+//
+// `activeTabId` is that tab's id, or null before background has ever told us
+// (in which case every session is served, which is the correct single-tab
+// default and keeps a fresh offscreen document working before the first
+// pm-active-tab arrives). A session whose tab is not the active one is gated
+// out of maybeProcess entirely: it consumes no worker time, exactly like a
+// disabled session, and resumes the instant its tab becomes active again.
+let activeTabId = null;
+function sessionIsServing(s) {
+  return activeTabId == null || s.tabId === activeTabId;
+}
 
 // Any uncaught error here must not stay invisible in this document's own
 // (user-inaccessible) console - broadcast to every known session's tab.
@@ -569,15 +602,26 @@ function mergeRangeInto(list, start, end) {
   return list;
 }
 
+// 0.1.48: EPS-tolerant. A coverage interval that begins within COVERAGE_EPS_S
+// of the cursor is treated as covering it - a decode that landed exactly
+// where requested (startDelta 0, to sub-centisecond float rounding) used to
+// be reported as leaving a microscopic hole at `lo`, which fired the
+// WINDOW-LOOP path on good windows. The slack matches mergeRangeInto's own
+// 0.05s join granularity, so coverage this function already treats as one
+// contiguous block is never re-split into a spurious sliver hole. A genuine
+// hole (far larger than a window) is unaffected.
+const COVERAGE_EPS_S = globalThis.PMDecode && typeof globalThis.PMDecode.ANCHOR_EPS_S === 'number'
+  ? globalThis.PMDecode.ANCHOR_EPS_S
+  : 0.05;
 function firstUncoveredPoint(intervals, lo, hi) {
   let p = lo;
   for (const iv of intervals) {
-    if (iv.end <= p) continue;
-    if (iv.start > p) return p;
+    if (iv.end <= p + COVERAGE_EPS_S) continue;
+    if (iv.start > p + COVERAGE_EPS_S) return p;
     p = iv.end;
-    if (p >= hi) return null;
+    if (p >= hi - COVERAGE_EPS_S) return null;
   }
-  return p < hi ? p : null;
+  return p < hi - COVERAGE_EPS_S ? p : null;
 }
 
 // Loudness normalization (0.1.13): quiet passages were under-driving
@@ -715,7 +759,8 @@ const COLD_START_RTF_CLAMP_MAX = 0.7;
 // end of video) - otherwise it'll just be picked up, larger, next time.
 const MIN_TAIL_S = 2;
 const TAIL_STALL_MS = 3000;
-const WINDOW_LOOP_THRESHOLD = 3; // same exact [absStart,absEnd) attempted this many times without ever registering covered -> force-cover and alarm (see transcribeWindow)
+const WINDOW_LOOP_THRESHOLD = 3; // same exact [absStart,absEnd) attempted this many times without ever registering covered -> break the loop (see transcribeWindow)
+const WINDOW_LOOP_COOLDOWN_MS = 8000; // 0.1.48: after a decoded-timestamp-mismatch loop on a span still AHEAD of the playhead, cool it down this long (picker advances meanwhile) then re-attempt, instead of force-marking it covered (the old fail-safe violation)
 const ALL_WORDS_CAP = 2000; // trailing-window cap for s.allWords/s.emittedKeys - see the memory-leak note at the trim site
 const SINK_ERROR_THRESHOLD = 3; // same exact window THROWING a decode error this many times in a row -> DRM/undecodable, see markUnanalyzable
 // 0.1.34 hang escalation. The field log showed the same window hanging
@@ -953,17 +998,44 @@ function isCovered(s, start, end) {
   return cursor >= end - EPS;
 }
 
+// 0.1.48: record a span the pipeline could not analyze. Two flavors, both
+// excluded from PICKING and NEITHER ever added to s.covered (coverage means
+// "analyzed and clean"; claiming it for audio we failed to decode is exactly
+// the fail-safe violation this release removes):
+//   * MISSED  - the playhead has already passed it, so re-analysis is
+//               pointless. Permanently picker-excluded. Under catch-up=play
+//               the audio already played; the record keeps the coverage
+//               summary truthful about where a hole was.
+//   * COOLDOWN - a transient loop/mismatch on a span still relevant; excluded
+//               only until `retryAfter`, so the picker moves on to later
+//               audio now and comes back to re-attempt this span shortly
+//               (before the playhead arrives) rather than hot-looping on it.
+function recordMissedSpan(s, start, end) {
+  s.skippedSpans.push({ start, end, missed: true });
+  s.missedTotalS = (s.missedTotalS || 0) + Math.max(0, end - start);
+}
+function recordCooldownSpan(s, start, end, cooldownMs) {
+  s.skippedSpans.push({ start, end, retryAfter: Date.now() + cooldownMs });
+}
+
 function coverageViewForPicking(s) {
+  const now = Date.now();
+  // Prune expired cooldown entries so the list cannot grow without bound over
+  // a long session; missed entries are permanent and kept.
+  if (s.skippedSpans && s.skippedSpans.length) {
+    s.skippedSpans = s.skippedSpans.filter((sp) => sp.missed || sp.retryAfter == null || sp.retryAfter > now);
+  }
   const skipped = s.skippedSpans || [];
-  if (s.inFlightWindows.size === 0 && skipped.length === 0) return s.covered;
+  const activeSkipped = skipped.filter((sp) => sp.missed || sp.retryAfter == null || sp.retryAfter > now);
+  if (s.inFlightWindows.size === 0 && activeSkipped.length === 0) return s.covered;
   const extra = [];
   for (const key of s.inFlightWindows) {
     const idx = key.indexOf(',');
     extra.push({ start: parseFloat(key.slice(0, idx)), end: parseFloat(key.slice(idx + 1)) });
   }
-  // Skipped spans count as "do not pick again" but NOT as coverage - see
-  // the skippedSpans comment in the session initializer.
-  for (const sp of skipped) extra.push({ start: sp.start, end: sp.end });
+  // Excluded spans count as "do not pick right now" but NOT as coverage - see
+  // recordMissedSpan / recordCooldownSpan above.
+  for (const sp of activeSkipped) extra.push({ start: sp.start, end: sp.end });
   return s.covered.concat(extra).sort((a, b) => a.start - b.start);
 }
 
@@ -977,7 +1049,16 @@ function coverageViewForPicking(s) {
 // reported) can legitimately race ahead of what any ONE specific run's own
 // stream has actually been fed - this guard keeps window requests within
 // what's verifiably already in the run's stream.
-const DECODE_FED_GUARD_S = 0.25;
+// 0.1.48: widened 0.25 -> 1.0. The real run's residual [PM-REBUILD] churn
+// (~every 30s, foreground, NOT throttle-driven) was entirely the NEWEST
+// window decoding right up to the current fed edge and stalling there, then
+// succeeding a cycle later once a hair more data was fed (e.g. [.. ,2609.60)
+// hangs, [.. ,2609.92) succeeds). A quarter-second was not enough margin to
+// clear the trailing, still-arriving cluster. A full second keeps the tail
+// window's decode request off the fed edge, so it stops stalling. This costs
+// no coverage: the held-back sliver decodes on the very next cycle once more
+// data is fed, still far ahead of the playhead under normal playback.
+const DECODE_FED_GUARD_S = 1.0;
 
 function pickNextWindow(s, run) {
   const ct = s.currentTimeS;
@@ -1282,18 +1363,54 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     //
     // The fix is to own the iterator and always close it. Abandoning it is
     // the bug; the timeout is fine.
+    // 0.1.48: live decoder accounting. Every sink.buffers() call spins up its
+    // own WebCodecs AudioDecoder; this counter (with the completed count set
+    // just after the drain settles) is what the per-video summary and the
+    // recycle cadence read to reason about decoder lineage over a long
+    // session. Incremented BEFORE the call so a decode that never settles is
+    // still counted as opened.
+    s.decodeOpens = (s.decodeOpens || 0) + 1;
+    const hiddenAtStart = documentIsHidden();
     decodeIterator = sink.buffers(absStart, absEnd)[Symbol.asyncIterator]();
     const budgetMs = stageTimeoutMsFor(s.hangAttempts.get(windowKeyForErrors) || 0);
+    // 0.1.48: a fast no-PROGRESS budget catches a genuinely wedged decoder in
+    // ~2s of AWAKE time instead of letting it sit on the full stage budget
+    // (the very lead the playhead needs), while drainWithTimeout credits back
+    // any sleep/throttle so a merely-frozen decode is never mislabeled a hang.
     const drain = globalThis.PMDecode
-      ? await globalThis.PMDecode.drainWithTimeout(decodeIterator, { timeoutMs: budgetMs })
-      : { values: [], timedOut: true, error: null };
+      ? await globalThis.PMDecode.drainWithTimeout(decodeIterator, {
+          timeoutMs: budgetMs,
+          noProgressMs: Math.min(budgetMs, globalThis.PMDecode.NO_PROGRESS_MS || 2000)
+        })
+      : { values: [], timedOut: true, error: null, suspendedMs: 0 };
     // drainWithTimeout owns the teardown, so by the time it resolves the
     // iterator is closed whichever way it ended.
     decodeIterator = null;
+    s.decodeCompletes = (s.decodeCompletes || 0) + 1;
+    if (drain.suspendedMs > 0) {
+      notifyTab(
+        s,
+        '[PM-SUSPEND] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') decode spanned ~' +
+          Math.round(drain.suspendedMs / 1000) + 's of machine sleep / background throttle (credited back, NOT counted as a hang)' +
+          ' hiddenAtStart=' + hiddenAtStart
+      );
+    }
     if (drain.error) throw drain.error;
     if (drain.timedOut) {
+      // 0.1.48: throttle-awareness is handled by drainWithTimeout CREDITING
+      // suspended wall-clock time (grounded in real Date.now() jumps between
+      // ticks), NOT by this document's visibilityState - an offscreen document
+      // reports 'hidden' essentially always, so gating the anti-freeze
+      // backstop on it would suppress EVERY real hang and defeat the ladder.
+      // So by the time timedOut is true, the budget was exhausted in genuine
+      // AWAKE time with no buffer delivered: a real wedged decoder, not a
+      // throttled one (a throttled decode simply never times out - its
+      // deadlines were pushed out by the credit). Route it to the hang ladder.
+      // documentIsHidden()/suspendedMs are logged as diagnostics only.
       const timeoutErr = new Error(
-        'stage "decode" did not settle within ' + budgetMs + 'ms (hung promise, not a thrown error)'
+        'stage "decode" did not settle within ' + budgetMs + 'ms (no buffer delivered for ' +
+          Math.min(budgetMs, globalThis.PMDecode.NO_PROGRESS_MS || 2000) + 'ms of awake time - wedged decoder, not a thrown error; suspendedMs=' +
+          Math.round(drain.suspendedMs) + ' hidden=' + documentIsHidden() + ')'
       );
       timeoutErr.isStageTimeout = true;
       throw timeoutErr;
@@ -1343,17 +1460,45 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     // request is what the field log showed being useless.
     if (isHang && errCount === HANG_REBUILD_AT) {
       rebuildRunDecodePipeline(run);
-      notifyTab(s, '[PM-REBUILD] ' + span + ' hung ' + errCount + 'x: rebuilding this run\'s decode pipeline before the next attempt');
+      notifyTab(s, '[PM-REBUILD] ' + span + ' hung ' + errCount + 'x: rebuilding this run\'s decode pipeline before the next attempt (hidden=' + documentIsHidden() + ')');
       return false;
     }
     if (isHang && errCount >= HANG_SKIP_AT) {
-      // Skip and advance. The span is excluded from PICKING only: it is
-      // never added to coverage, so content.js still treats this audio as
-      // unanalyzed and mute/pause catch-up still protects it. What changes
-      // is that the pipeline stops re-attempting it and gets on with the
-      // rest of the video.
-      s.skippedSpans.push({ start: absStart, end: absEnd });
-      notifyTab(s, '[PM-GIVEUP] ' + span + ' hung ' + errCount + 'x even after a pipeline rebuild: skipping this span and advancing (it stays UNANALYZED, not marked covered)');
+      // 0.1.48: the give-up is now PLAYHEAD-AWARE. Abandoning a span the
+      // playhead has not yet reached throws away coverage that still had time
+      // to land ahead of playback - the exact defect the field logs showed
+      // ([PM-GIVEUP] on [107.61,119.60] fired at playhead t=71.59, ~48s of
+      // lead wasted). So while the span is still AHEAD, keep the anti-freeze
+      // ladder repairing rather than abandoning: rebuild and re-attempt. Each
+      // attempt is cheap now (fast no-progress detection + suspend credit),
+      // and HANG_THRESHOLD above still ends a genuinely undecodable session.
+      // Only once the playhead has PASSED the span (re-analysis then is
+      // pointless, the audio already played) do we stop re-attempting - and
+      // even then it is recorded as MISSED, never marked covered/clean.
+      const playheadPassed = globalThis.PMDecode
+        ? globalThis.PMDecode.playheadPassed(absEnd, s.currentTimeS)
+        : true;
+      if (!playheadPassed) {
+        rebuildRunDecodePipeline(run);
+        notifyTab(
+          s,
+          '[PM-REBUILD] ' + span + ' hung ' + errCount + 'x but is still AHEAD of the playhead (currentTime=' +
+            (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : '?') + ', ~' +
+            (s.currentTimeS != null ? Math.max(0, absEnd - s.currentTimeS).toFixed(1) : '?') +
+            's of lead) - rebuilding and re-attempting rather than abandoning a window that can still be covered in time (hidden=' + documentIsHidden() + ')'
+        );
+        return false;
+      }
+      // Playhead has moved past this span: stop re-attempting and advance.
+      // Recorded as MISSED (picker-excluded, NEVER coverage) so content.js
+      // still treats this audio as unanalyzed - under catch-up=play it already
+      // played, and claiming it clean would corrupt the coverage accounting.
+      recordMissedSpan(s, absStart, absEnd);
+      notifyTab(
+        s,
+        '[PM-GIVEUP] ' + span + ' hung ' + errCount + 'x and the playhead (currentTime=' +
+          (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : '?') + ') has already passed it - recording as MISSED/unanalyzed (NOT covered) and advancing (hidden=' + documentIsHidden() + ')'
+      );
       return false;
     }
     notifyTab(s, '[PM-SKIP] ' + span + ' skipped: sink.buffers ' + (isHang ? 'hang' : 'error') + ' (' + errCount + '/' + threshold + '): ' + String(e && e.message ? e.message : e));
@@ -1392,6 +1537,39 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       '[PM-COVERAGE-GAP] requested window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) +
         ') but decoded audio only actually spans [' + coverStart.toFixed(2) + ',' + coverEnd.toFixed(2) +
         ') - treating the shortfall as a real gap (will be revisited), not marking the full requested window covered'
+    );
+  }
+
+  // [PM-DECODE-DELTA] (0.1.48) - the diagnostic that will CONFIRM or REFUTE
+  // the boundary-timeline-shift hypothesis on the next real run. Compares the
+  // requested media-time range against the actual FIRST and LAST decoded
+  // sample timestamps mediabunny returned, and the resulting head/tail
+  // offsets. If the recurring WINDOW-LOOP / TIMELINE-ALARM positions are a
+  // real container-vs-presentation timeline shift, this line at those exact
+  // spans will show a startDelta that is NON-trivial and roughly constant
+  // (the shift), rather than the near-zero it should be everywhere else. Only
+  // logged when there is an actual offset worth recording, so it stays
+  // greppable and does not evict the ring buffer.
+  const startDelta = actualMinStart - absStart; // >0: decoded audio begins LATER than asked (head hole)
+  const endDelta = actualMaxEnd - absEnd;        // decoded audio ends past/short of the requested end
+  const DECODE_DELTA_SLACK_S = 0.2;
+  // 0.1.48: measured against THIS window's own decoded start (not the pre-
+  // merge s.covered, which never includes this window yet and so always read
+  // "uncovered" on a fresh forward window - the false positive the real run
+  // flagged). A decode that begins at/near the requested start covers the
+  // anchor; only a decode that genuinely starts LATER than requested leaves a
+  // real head hole worth logging.
+  const anchorUncovered = !(globalThis.PMDecode
+    ? globalThis.PMDecode.decodeCoversAnchor(actualMinStart, absStart)
+    : actualMinStart <= absStart + 0.05);
+  if (Math.abs(startDelta) > DECODE_DELTA_SLACK_S || anchorUncovered) {
+    notifyTab(
+      s,
+      '[PM-DECODE-DELTA] requested=[' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) +
+        ') decoded=[' + actualMinStart.toFixed(2) + ',' + actualMaxEnd.toFixed(2) +
+        ') startDelta=' + startDelta.toFixed(2) + 's endDelta=' + endDelta.toFixed(2) +
+        's buffers=' + wrapped.length + ' anchorStillUncovered=' + anchorUncovered +
+        (anchorUncovered ? ' <- decoded timestamps did NOT cover the requested start (WINDOW-LOOP cause)' : '')
     );
   }
 
@@ -1882,13 +2060,45 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     const attempts = (s.windowAttempts.get(locKey) || 0) + 1;
     s.windowAttempts.set(locKey, attempts);
     if (attempts >= WINDOW_LOOP_THRESHOLD) {
-      notifyTab(
-        s,
-        '[PM-WINDOW-LOOP] location near ' + absStart.toFixed(2) + ' attempted ' + attempts +
-          'x (latest span [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ')) without ever registering as covered ' +
-          '(likely a decoded-timestamp mismatch at this exact position) - force-marking covered to break the loop'
-      );
-      mergeRangeInto(s.covered, absStart, anchorEnd);
+      // 0.1.48 FAIL-SAFE: the old code force-MARKED this span COVERED to break
+      // the loop, which is exactly backwards - it presented audio that never
+      // actually decoded into this range as analyzed/clean, silently unmuting
+      // it under the mute/pause catch-up modes. A span we could not analyze
+      // must be treated as UNCHECKED, never clean. This loop is the
+      // decoded-timestamp-mismatch symptom (the decoder returns buffers whose
+      // OWN timestamps sit outside the requested [absStart,absEnd), so the
+      // anchor never registers covered), so the two correct responses are:
+      //   * still AHEAD of the playhead -> rebuild the decode pipeline to re-
+      //     anchor its timeline and put the location on a short cooldown so
+      //     the picker advances now and re-attempts shortly, WITHOUT lying
+      //     about coverage. It still has lead time to land correctly.
+      //   * already PASSED by the playhead -> record MISSED (never covered);
+      //     re-analysis is pointless and force-covering would corrupt the
+      //     coverage summary.
+      const passed = globalThis.PMDecode
+        ? globalThis.PMDecode.playheadPassed(anchorEnd, s.currentTimeS)
+        : true;
+      if (passed) {
+        notifyTab(
+          s,
+          '[PM-WINDOW-LOOP] location near ' + absStart.toFixed(2) + ' attempted ' + attempts +
+            'x without ever registering covered (decoded-timestamp mismatch) and the playhead (currentTime=' +
+            (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : '?') +
+            ') has passed it - recording as MISSED/unanalyzed (NOT covered) to break the loop'
+        );
+        recordMissedSpan(s, absStart, anchorEnd);
+      } else {
+        notifyTab(
+          s,
+          '[PM-WINDOW-LOOP] location near ' + absStart.toFixed(2) + ' attempted ' + attempts +
+            'x without ever registering covered (decoded-timestamp mismatch) but still AHEAD of the playhead (currentTime=' +
+            (s.currentTimeS != null ? s.currentTimeS.toFixed(2) : '?') +
+            ') - re-anchoring the decode pipeline and cooling down ' + (WINDOW_LOOP_COOLDOWN_MS / 1000) +
+            's before re-attempting, NOT force-marking covered'
+        );
+        rebuildRunDecodePipeline(run);
+        recordCooldownSpan(s, absStart, anchorEnd, WINDOW_LOOP_COOLDOWN_MS);
+      }
       s.windowAttempts.delete(locKey);
     }
   } else {
@@ -1900,6 +2110,79 @@ async function transcribeWindow(s, run, absStart, absEnd) {
 
 function sendHeartbeat(s) {
   chrome.runtime.sendMessage({ type: 'pm-heartbeat', tabId: s.tabId, videoId: s.videoId }).catch(() => {});
+}
+
+// 0.1.48: force a clean decoder lineage every DECODER_RECYCLE_EVERY completed
+// windows. Drops the run's cached track/sink so the next attempt builds fresh
+// ones over the SAME already-fed bytes - so no run can carry a slowly-growing
+// pile of WebCodecs decoders into a deep-video stall. No-op if the run was
+// torn down in the meantime.
+function maybeRecycleDecoder(s, run) {
+  const every = globalThis.PMDecode && globalThis.PMDecode.DECODER_RECYCLE_EVERY
+    ? globalThis.PMDecode.DECODER_RECYCLE_EVERY
+    : 40;
+  s.windowsSinceRecycle = (s.windowsSinceRecycle || 0) + 1;
+  if (s.windowsSinceRecycle < every) return;
+  s.windowsSinceRecycle = 0;
+  if (!run || run.closed || !run.sink) return;
+  rebuildRunDecodePipeline(run);
+  notifyTab(
+    s,
+    '[PM-RECYCLE] proactively rebuilt the decode pipeline after ' + every +
+      ' windows (decodeOpens=' + (s.decodeOpens || 0) + ' decodeCompletes=' + (s.decodeCompletes || 0) +
+      ') - forcing a clean WebCodecs decoder lineage before decoders can accumulate over a long session'
+  );
+}
+
+// 0.1.48: per-video coverage accounting. Sums the analyzed (covered) seconds
+// against the captured span and enumerates the holes near/behind the playhead
+// so the next real run can quantify "how much played unanalyzed and where",
+// and confirm whether the decode-reliability fixes actually closed the gaps.
+// Fail-safe by construction: MISSED spans are counted as holes, never as
+// analyzed, because they are exactly the audio we could not check.
+const COVERAGE_SUMMARY_THROTTLE_MS = 30000;
+function totalSpan(intervals) {
+  let sum = 0;
+  for (const iv of intervals) sum += Math.max(0, iv.end - iv.start);
+  return sum;
+}
+function maybeLogCoverageSummary(s) {
+  const now = Date.now();
+  if (s.lastCoverageSummaryWall && now - s.lastCoverageSummaryWall < COVERAGE_SUMMARY_THROTTLE_MS) return;
+  s.lastCoverageSummaryWall = now;
+  const capturedS = totalSpan(s.bufferedRanges);
+  const analyzedS = totalSpan(s.covered);
+  // Holes = captured audio behind/at the playhead that never became covered
+  // (the part the viewer has already reached). Enumerate up to a few.
+  const ct = s.currentTimeS != null ? s.currentTimeS : 0;
+  const holes = [];
+  for (const r of s.bufferedRanges) {
+    const hi = Math.min(r.end, ct);
+    if (hi <= r.start) continue;
+    let p = r.start;
+    const spans = s.covered.slice().sort((a, b) => a.start - b.start);
+    for (const iv of spans) {
+      if (iv.end <= p) continue;
+      if (iv.start > p) { holes.push({ start: p, end: Math.min(iv.start, hi) }); if (holes.length >= 8) break; }
+      p = Math.max(p, iv.end);
+      if (p >= hi) break;
+    }
+    if (p < hi && holes.length < 8) holes.push({ start: p, end: hi });
+    if (holes.length >= 8) break;
+  }
+  const behindHoleS = totalSpan(holes);
+  const missedS = s.missedTotalS || 0;
+  const holeStr = holes.length
+    ? holes.map((h) => '[' + h.start.toFixed(1) + ',' + h.end.toFixed(1) + ')').join(' ')
+    : 'none';
+  notifyTab(
+    s,
+    '[PM-COVERAGE-SUMMARY] playhead=' + ct.toFixed(1) + ' captured=' + capturedS.toFixed(1) +
+      's analyzed=' + analyzedS.toFixed(1) + 's holesBehindPlayhead=' + behindHoleS.toFixed(1) +
+      's missedRecorded=' + missedS.toFixed(1) + 's decodeOpens=' + (s.decodeOpens || 0) +
+      ' decodeCompletes=' + (s.decodeCompletes || 0) + ' hidden=' + documentIsHidden() +
+      ' holes=' + holeStr
+  );
 }
 
 // OBSERVABILITY CHOKE POINT (0.1.23) - see PIPELINE_NOTES "0.1.23": a live
@@ -1935,7 +2218,13 @@ function hasUncoveredCapturedWorkNearPlayhead(s) {
   }
   return false;
 }
+// Gates that are DELIBERATE idles, not stalls: the pipeline stopped on
+// purpose and uncovered work near the playhead is expected, not a symptom.
+// 'not-active-tab' (0.1.49) joins disabled/unanalyzable here so an inactive
+// tab does not emit a [PM-IDLE-GATE] every loop while another tab is served.
+const BENIGN_IDLE_GATES = new Set(['disabled', 'unanalyzable', 'not-active-tab']);
 function reportIdleGate(s, gateName, detail) {
+  if (BENIGN_IDLE_GATES.has(gateName)) return;
   if (!hasUncoveredCapturedWorkNearPlayhead(s)) return; // nothing left to do near the playhead right now - this exit is legitimate, not a bug, don't alarm
   const now = Date.now();
   const lastByGate = s.lastIdleGateDiagWall || (s.lastIdleGateDiagWall = {});
@@ -1946,6 +2235,11 @@ function reportIdleGate(s, gateName, detail) {
 
 async function maybeProcess(s) {
   if (s.disabled || s.unanalyzable) return; // pm_enabled=false (0.1.13), or DRM/undecodable content (0.1.15) - idle, no transcription CPU
+  // 0.1.49: not the active tab - the shared pipeline is serving another tab
+  // right now. Return before marking `processing` or starting a heartbeat, so
+  // an inactive tab is genuinely idle and does not even look busy. It resumes
+  // when background sends pm-active-tab naming this tab.
+  if (!sessionIsServing(s)) return;
   if (s.processing) {
     s.pendingRerun = true;
     return;
@@ -1988,6 +2282,13 @@ async function maybeProcess(s) {
       // already-queued windows for the rest of that loop.
       if (s.disabled) { exitGate = 'disabled'; exitDetail = 'pm_enabled=false'; break; }
       if (s.unanalyzable) { exitGate = 'unanalyzable'; exitDetail = 'DRM/undecodable content - transcription given up for this session'; break; }
+      // 0.1.49: the active tab changed mid-loop (each transcribeWindow await
+      // is a real yield point). Stop picking further windows for a tab that is
+      // no longer the served one; the newly-active tab's loop takes over. Any
+      // window already in flight cannot be aborted and simply finishes (its
+      // result is still valid coverage), so the switch costs at most one
+      // window of the shared worker's time.
+      if (!sessionIsServing(s)) { exitGate = 'not-active-tab'; exitDetail = 'another tab became the active/served tab (0.1.49)'; break; }
       if (s.generation !== loopGeneration) {
         log('[PM-STALE] maybeProcess loop stopping: generation changed (' + loopGeneration + ' -> ' + s.generation + ')');
         exitGate = 'generation-changed';
@@ -2032,6 +2333,19 @@ async function maybeProcess(s) {
       }
       s.hadFirstWindow = true; // cold-start window sizing only applies until the first one actually lands
       s.windowsDone = (s.windowsDone || 0) + 1; // 0.1.43: coldness for the preemption estimator
+      // 0.1.48: PROACTIVE decoder recycling. Every completed window opened its
+      // own WebCodecs AudioDecoder inside mediabunny; even with the disposal
+      // contract honored, forcing a fresh track/sink lineage on a cadence
+      // guarantees a 30-minute session cannot accumulate decoders into the
+      // deep-video stalls the field logs showed. A rebuild reparses nothing
+      // (same Input, same fed bytes) - the next window just constructs a clean
+      // track/sink. Cheap insurance, not a substitute for the disposal
+      // contract.
+      maybeRecycleDecoder(s, run);
+      // 0.1.48: periodic per-video coverage summary so the next real run can
+      // MEASURE whether holes are actually gone - analyzed seconds vs holes vs
+      // missed, and where. Throttled to keep the ring buffer useful.
+      maybeLogCoverageSummary(s);
       exitGate = null; // this iteration completed normally and is about to loop again - no exit to report yet
     }
   } catch (e) {
@@ -2095,6 +2409,27 @@ chrome.runtime.onMessage.addListener((msg) => {
 
   if (msg.type === 'pm-reset') {
     dropSessionsForTab(msg.tabId);
+    return;
+  }
+
+  if (msg.type === 'pm-active-tab') {
+    // 0.1.49 active-tab-follow. background decided which single tab the shared
+    // pipeline should serve (shared/active_tab.js). Re-bind: the newly-active
+    // tab's sessions resume, and the previously-active ones stop at the
+    // sessionIsServing gate on their next loop iteration (or right here if
+    // they are idle). A null id means "no YouTube tab qualifies right now"
+    // (e.g. every tab closed), which simply leaves nothing serving.
+    const prev = activeTabId;
+    activeTabId = (typeof msg.tabId === 'number') ? msg.tabId : null;
+    if (activeTabId !== prev) {
+      log('[PM-ACTIVE-TAB] serving tab ' + (activeTabId == null ? 'none' : activeTabId) + ' (was ' + (prev == null ? 'none' : prev) + ')');
+      // Kick every session that is now serving. Sessions that are no longer
+      // serving need no action: a running loop notices at its next iteration,
+      // and an idle one simply will not be re-kicked.
+      for (const s of sessions.values()) {
+        if (sessionIsServing(s)) maybeProcess(s);
+      }
+    }
     return;
   }
 
