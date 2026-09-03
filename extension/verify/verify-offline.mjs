@@ -112,27 +112,6 @@ async function main() {
     check('base.en offline transcription', false, e && e.message ? e.message : String(e));
   }
 
-  // Every bundled model must load offline, including the multilingual one a
-  // non-English detection switches to. The gate probes with tiny and, on a
-  // confirmed non-English video, transcribes with 'multilingual'
-  // (Xenova/whisper-base) and matches against that language's pack - so the
-  // whole non-English path is offline only if this model is.
-  for (const repo of REPOS) {
-    if (repo === 'Xenova/whisper-base.en') continue; // already loaded and transcribed above
-    try {
-      await pipeline('automatic-speech-recognition', repo, { dtype: 'fp32', device: 'cpu' });
-      check(repo + ' loaded offline', true);
-    } catch (e) {
-      check(repo + ' loaded offline', false, e && e.message ? e.message : String(e));
-    }
-  }
-
-  // The per-language wordlist packs the non-English path matches against
-  // are shipped in shared/packs/ and were already local; confirm a sample
-  // is present so the non-English path is local end to end (model + pack).
-  const koPack = path.join(EXT, 'shared', 'packs', 'ko.json');
-  check('a language pack (ko.json) is bundled for the non-English path', fs.existsSync(koPack));
-
   globalThis.fetch = realFetch;
   console.log('\nverify-offline: ' + (failures === 0 ? 'PASS' : failures + ' FAILURE(S)'));
   process.exit(failures === 0 ? 0 : 1);

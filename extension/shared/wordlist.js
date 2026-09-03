@@ -180,9 +180,6 @@
 //   pm_stats   {totalMuted: number, videosProtected: number}  written by
 //              the audio pipeline; may be absent (popup shows zeros).
 //              Not read or written by this file.
-//   pm_activeLanguage {lang, quality, available}  written by this file's
-//              setLanguage(); read by the popup to show the active
-//              non-English pack.
 //   pm_devlog  {version: 1, videos: Entry[]}  the persistent dev log -
 //              a ring buffer of the last 10 videos watched (analyzed
 //              windows + their matched words, padded mute intervals,
@@ -348,64 +345,19 @@
   var PADDING_MODES = ["tight", "normal", "wide"];
   var DEFAULT_PADDING = "normal";
 
-  var DEFAULT_MULTILINGUAL = true;
-
-  // ---- Language pack architecture (2026-08-30) ----
-  //
-  // A "pack" is: { lang, quality: "curated"|"community", words: { core,
-  // extended }, matchConfig: { stemming: "en-suffix"|"none",
-  // foldDiacritics: bool, substringMode: bool, wildcards: bool } }.
-  //
-  // English is pack "en" - inlined here (CORE_WORDLIST/EXTENDED_WORDLIST
-  // above), matching exactly its pre-pack-architecture behavior via
-  // EN_MATCH_CONFIG. Every OTHER language pack is a plain JSON file under
-  // shared/packs/<lang>.json, loaded on demand via fetch(chrome.runtime.
-  // getURL(...)) the first time PMWordlist.setLanguage(lang) is called
-  // for it (see "Lazy pack loading" below) - packs never bloat every
-  // page load, only the one that actually needs a non-English pack.
-  //
-  // pm_strictness (standard/strict/custom) and the user's custom
-  // pm_wordlist are an ENGLISH-ONLY concept: they only apply while the
-  // active language is "en". Any other active pack always uses its own
-  // full word list (core + extended combined, same idea as English's
-  // "strict") - there is no per-pack strictness split and the custom
-  // list is not consulted at all while a non-English pack is active.
+  // 0.1.46 (English-only): this build filters English speech only. The
+  // matching engine keeps a per-list matchConfig, but English is now the
+  // one and only configuration (EN_MATCH_CONFIG). The 0.1.25 multilingual
+  // pack architecture (on-demand shared/packs/<lang>.json loading and the
+  // language-switch pipeline that drove it) has been removed; that work now
+  // lives in a separate multilingual repo. pm_strictness (standard/strict)
+  // and the user's custom pm_wordlist are the English word-list controls.
   var EN_MATCH_CONFIG = {
     stemming: "en-suffix",
     foldDiacritics: false,
     substringMode: false,
     wildcards: true
   };
-
-  // Registry of loaded packs, keyed by lang code. "en" is always present
-  // (inline, never fetched). Others are populated lazily by setLanguage().
-  var PACKS = {
-    en: {
-      lang: "en",
-      quality: "curated",
-      words: { core: CORE_WORDLIST, extended: EXTENDED_WORDLIST },
-      matchConfig: EN_MATCH_CONFIG
-    }
-  };
-
-  function packFullWordlist(pack) {
-    var core = (pack.words && pack.words.core) || [];
-    var extended = (pack.words && pack.words.extended) || [];
-    return core.concat(extended);
-  }
-
-  function validatePack(pack, expectedLang) {
-    return !!(
-      pack &&
-      typeof pack === "object" &&
-      pack.lang === expectedLang &&
-      (pack.quality === "curated" || pack.quality === "community") &&
-      pack.words &&
-      Array.isArray(pack.words.core) &&
-      pack.matchConfig &&
-      typeof pack.matchConfig === "object"
-    );
-  }
 
   var CAPTION_PLACEHOLDER = "[ __ ]";
 
@@ -868,8 +820,7 @@
     "pm_showStatus",
     "pm_strictness",
     "pm_additionalWords",
-    "pm_padding",
-    "pm_multilingual"
+    "pm_padding"
   ];
 
   var CATCHUP_MODES = ["mute", "pause", "play"];
@@ -996,14 +947,6 @@
   // interaction with anything else - validated and defaulted exactly
   // like pm_catchupMode, just with no migration path (there was no
   // prior padding concept to migrate from).
-  //
-  // pm_multilingual (2026-08-30) is a simple boolean, default true -
-  // "Filter other languages (auto-detect)". This file only stores/
-  // exposes it (PMWordlist.settings.multilingual); the audio pipeline's
-  // Whisper-based language detection reads it to decide whether to call
-  // PMWordlist.setLanguage(lang) at all when it detects non-English
-  // speech. It has no effect on which word list is active by itself -
-  // setLanguage() is what actually switches packs.
   function resolveSettingsFromStorage(items) {
     items = items || {};
 
@@ -1074,7 +1017,6 @@
       showStatus: items.pm_showStatus !== false,
       strictness: strictness,
       padding: padding,
-      multilingual: items.pm_multilingual !== false,
       // The user's OWN words, resolved/migrated and sanitized - what the
       // popup renders in "My additional words". Never contains built-ins.
       additionalWords: additionalWords,
@@ -1110,10 +1052,7 @@
     sanitizeAdditionalWords: sanitizeAdditionalWords,
     PADDING_MODES: PADDING_MODES,
     DEFAULT_PADDING: DEFAULT_PADDING,
-    DEFAULT_MULTILINGUAL: DEFAULT_MULTILINGUAL,
     EN_MATCH_CONFIG: EN_MATCH_CONFIG,
-    validatePack: validatePack,
-    packFullWordlist: packFullWordlist,
     isProfaneSubstring: isProfaneSubstring
   };
 
@@ -1128,15 +1067,7 @@
     showStatus: true,
     strictness: DEFAULT_STRICTNESS,
     padding: DEFAULT_PADDING,
-    multilingual: DEFAULT_MULTILINGUAL,
-    lang: "en",
     matchConfig: EN_MATCH_CONFIG,
-    // Last wordlist resolveSettingsFromStorage computed for "en" (per
-    // pm_strictness/pm_wordlist) - cached here even while a non-English
-    // pack is active, so switching setLanguage("en") back doesn't have
-    // to wait for another refresh() to restore the right strictness/
-    // custom selection. See setLanguage below.
-    enWordlist: DEFAULT_WORDLIST.slice(),
     // The user's own additive words (pm_additionalWords), resolved by
     // resolveSettingsFromStorage. Kept on _state (not on `settings`,
     // which is contractually free of arrays) for the popup to render.
@@ -1149,7 +1080,7 @@
 
   // Minimal, stable-shape settings object handed to other content
   // scripts (the audio pipeline's content.js reads PMWordlist.settings
-  // directly). Deliberately exactly these eleven keys - no internal
+  // directly). Deliberately exactly these ten keys - no internal
   // Set/Map/array fields - so consumers can safely read or even
   // serialize it without pulling in wordlist/stemSet/phrase internals.
   // The SAME object reference is mutated in place on every refresh()
@@ -1164,7 +1095,6 @@
     showStatus: true,
     strictness: DEFAULT_STRICTNESS,
     padding: DEFAULT_PADDING,
-    multilingual: DEFAULT_MULTILINGUAL,
     // 0.1.29: how many words the user added on top of the built-in tier.
     // A COUNT, not the array - `settings` stays free of arrays/Sets so
     // consumers can serialize it (content.js's dev-log settings snapshot
@@ -1179,16 +1109,6 @@
       chrome.storage &&
       chrome.storage.sync &&
       typeof chrome.storage.sync.get === "function"
-    );
-  }
-
-  function hasChromeRuntimeFetch() {
-    return (
-      typeof chrome !== "undefined" &&
-      chrome &&
-      chrome.runtime &&
-      typeof chrome.runtime.getURL === "function" &&
-      typeof fetch === "function"
     );
   }
 
@@ -1233,19 +1153,8 @@
           state.showStatus = resolved.showStatus;
           state.strictness = resolved.strictness;
           state.padding = resolved.padding;
-          state.multilingual = resolved.multilingual;
           state.additionalWords = resolved.additionalWords;
-          // Cache the English-strictness-resolved wordlist regardless of
-          // which language is currently active, so a later
-          // setLanguage("en") can restore it immediately (see below).
-          state.enWordlist = resolved.wordlist;
-          // pm_strictness/pm_wordlist are an "en"-only concept - while a
-          // non-English pack is active, storage changes to them are
-          // cached above but must NOT rebuild the active (non-English)
-          // matching structures.
-          if (state.lang === "en") {
-            rebuildFrom(resolved.wordlist, EN_MATCH_CONFIG);
-          }
+          rebuildFrom(resolved.wordlist, EN_MATCH_CONFIG);
 
           settings.enabled = resolved.enabled;
           settings.safeMode = resolved.safeMode;
@@ -1256,7 +1165,6 @@
           settings.showStatus = resolved.showStatus;
           settings.strictness = resolved.strictness;
           settings.padding = resolved.padding;
-          settings.multilingual = resolved.multilingual;
           settings.additionalWordCount = resolved.additionalWords.length;
 
           resolve(state);
@@ -1265,121 +1173,6 @@
         resolve(state);
       }
     });
-  }
-
-  // PMWordlist.packAvailable - true once the currently-active language
-  // resolved to a real pack (always true for "en"; true for any other
-  // lang whose pack loaded successfully). Set to false by setLanguage()
-  // when asked for an unknown/unfetchable lang - the active matching
-  // state is left completely unchanged in that case (still whatever it
-  // was before the call), this is purely a signal for a consumer (e.g.
-  // an on-player status pill) to show "not supported" rather than
-  // silently claiming coverage it doesn't have.
-  var packAvailable = true;
-
-  function persistActiveLanguage() {
-    if (!hasChromeStorage() || !chrome.storage.local) return;
-    try {
-      var pack = PACKS[state.lang];
-      chrome.storage.local.set({
-        pm_activeLanguage: {
-          lang: state.lang,
-          quality: state.lang === "en" ? "curated" : (pack && pack.quality) || null,
-          available: packAvailable
-        }
-      });
-    } catch (e) {
-      // ignore - non-fatal, this is a display-only convenience for the popup
-    }
-  }
-
-  // PMWordlist.setLanguage(lang) -> Promise<boolean>
-  //
-  // Switches the ACTIVE matching pack. Called by the audio pipeline's
-  // Whisper-based language detection (when pm_multilingual is on) once
-  // it detects the spoken language of a video.
-  //
-  //   - lang === "en" (or falsy/omitted): restores English matching,
-  //     using whatever pm_strictness/pm_wordlist last resolved to
-  //     (state.enWordlist - kept fresh by every refresh(), even while a
-  //     non-English pack was active, so this doesn't need a fresh
-  //     storage round trip).
-  //   - lang already loaded (PACKS[lang] cached from an earlier call):
-  //     applied immediately from cache, no fetch.
-  //   - lang not yet loaded: lazily fetched via
-  //     fetch(chrome.runtime.getURL("shared/packs/" + lang + ".json")) -
-  //     packs are NOT bundled into every page load, only the one that
-  //     actually needs a non-English pack pays for it. On success, the
-  //     pack is validated (validatePack), cached in PACKS, and applied.
-  //   - unknown lang / fetch failure / invalid pack shape / no
-  //     chrome.runtime-fetch available (e.g. under Node tests): resolves
-  //     `false` and sets PMWordlist.packAvailable = false, WITHOUT
-  //     changing whatever pack was already active - a consumer (e.g. the
-  //     pipeline's status pill) can show "not supported for this
-  //     language" while matching continues exactly as before.
-  //
-  // Non-English packs always use their FULL word list (core + extended
-  // combined) - pm_strictness and the user's custom pm_wordlist are an
-  // "en"-only concept and are not consulted at all while another
-  // language is active.
-  function setLanguage(lang) {
-    if (typeof lang !== "string" || !lang) lang = "en";
-
-    if (lang === "en") {
-      state.lang = "en";
-      state.matchConfig = EN_MATCH_CONFIG;
-      rebuildFrom(state.enWordlist, EN_MATCH_CONFIG);
-      packAvailable = true;
-      persistActiveLanguage();
-      return Promise.resolve(true);
-    }
-
-    if (PACKS[lang]) {
-      applyLoadedPack(PACKS[lang]);
-      packAvailable = true;
-      persistActiveLanguage();
-      return Promise.resolve(true);
-    }
-
-    if (!hasChromeRuntimeFetch()) {
-      packAvailable = false;
-      persistActiveLanguage();
-      return Promise.resolve(false);
-    }
-
-    var url;
-    try {
-      url = chrome.runtime.getURL("shared/packs/" + lang + ".json");
-    } catch (e) {
-      packAvailable = false;
-      persistActiveLanguage();
-      return Promise.resolve(false);
-    }
-
-    return fetch(url)
-      .then(function (resp) {
-        if (!resp.ok) throw new Error("pack fetch failed: HTTP " + resp.status);
-        return resp.json();
-      })
-      .then(function (pack) {
-        if (!validatePack(pack, lang)) throw new Error("invalid pack shape for " + lang);
-        PACKS[lang] = pack;
-        applyLoadedPack(pack);
-        packAvailable = true;
-        persistActiveLanguage();
-        return true;
-      })
-      .catch(function () {
-        packAvailable = false;
-        persistActiveLanguage();
-        return false;
-      });
-  }
-
-  function applyLoadedPack(pack) {
-    state.lang = pack.lang;
-    state.matchConfig = pack.matchConfig;
-    rebuildFrom(packFullWordlist(pack), pack.matchConfig);
   }
 
   function isProfane(word) {
@@ -1397,8 +1190,7 @@
   // disabled, no matches are reported). Intended for the audio
   // pipeline: tokens is an array of already-transcribed words in
   // order; each result covers either one profane word or one matched
-  // multi-word phrase from the word list. Matches against whichever
-  // pack is currently active (see setLanguage).
+  // multi-word phrase from the English word list.
   function findMatches(tokens) {
     if (!state.enabled) return [];
     return findMatchesCore(tokens, state.stemSet, state.phraseIndex, state.matchConfig);
@@ -1420,8 +1212,7 @@
           changes.pm_showStatus ||
           changes.pm_strictness ||
           changes.pm_additionalWords ||
-          changes.pm_padding ||
-          changes.pm_multilingual
+          changes.pm_padding
         ) {
           refresh();
         }
@@ -1439,33 +1230,18 @@
     censorText: censorText,
     findMatches: findMatches,
     refresh: refresh,
-    setLanguage: setLanguage,
     // Live settings snapshot for other content scripts (e.g. content.js
     // reading pm_muteAudio) - always in sync with the last refresh().
     // Exactly {enabled, muteAudio, censorCaptions, safeMode,
     // catchupMode, debugOverlay, showStatus, strictness, padding,
-    // multilingual, additionalWordCount}, no internal Set/Map/array
-    // fields. additionalWordCount (0.1.29) is a COUNT, never the words -
-    // the user's own list lives on _state.additionalWords.
+    // additionalWordCount}, no internal Set/Map/array fields.
+    // additionalWordCount (0.1.29) is a COUNT, never the words - the
+    // user's own list lives on _state.additionalWords.
     settings: settings,
     // exposed for the popup and for tests; not part of the "required" contract
     _state: state,
-    _core: PMWordlistCore,
-    _packs: PACKS
+    _core: PMWordlistCore
   };
-
-  // Live getters (not snapshotted values) - a consumer (e.g. an
-  // on-player status pill) reading PMWordlist.activeLanguage /
-  // PMWordlist.packAvailable always sees the current value, not whatever
-  // it was at the moment PMWordlist was first read into a local.
-  Object.defineProperty(root.PMWordlist, "activeLanguage", {
-    enumerable: true,
-    get: function () { return state.lang; }
-  });
-  Object.defineProperty(root.PMWordlist, "packAvailable", {
-    enumerable: true,
-    get: function () { return packAvailable; }
-  });
 
   // Also expose the core for Node-based unit testing via module.exports,
   // without turning this file into an ES module.

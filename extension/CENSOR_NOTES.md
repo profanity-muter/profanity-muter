@@ -1,21 +1,10 @@
 # Censor module notes (wordlist / captions / popup)
 
 Scope owned by this agent: `shared/wordlist.js`, `captions.js`, `popup/`
-(`popup.html`, `popup.js`, `popup.css`), plus (new, 2026-08-30)
-`shared/packs/` (language pack data files) and `tools/`
-(`import-ldnoobw.mjs`, the LDNOOBW pack importer). No `manifest.json`,
-`capture.js`, `content.js`, `background.js`, `offscreen*`/`dist/*`, or
-`verify/` files were created or touched - those belong to the
-audio-pipeline agent working in the same directory. (Confirmed against
-the manifest they wrote: it loads `shared/wordlist.js`, `content.js`,
-`captions.js` as one `document_start` content-script group, `capture.js`
-separately in the page's MAIN world, and `popup/popup.html` as the
-toolbar popup - all consistent with the paths this agent owns.) **One
-exception requiring the audio-pipeline agent's action**: the new
-`shared/packs/*.json` lazy-loading needs a `web_accessible_resources`
-entry in `manifest.json` - see "ACTION NEEDED" under "FEATURE: language
-pack architecture" below; this agent did not edit `manifest.json`
-itself, per scope.
+(`popup.html`, `popup.js`, `popup.css`). The 2026-08-30 `shared/packs/`
+language-pack data and the multilingual machinery were REMOVED in 0.1.46
+(English-only build); that work now lives in a separate multilingual repo.
+See "0.1.46" below.
 
 ## CRITICAL BUG FIX (2026-08-30): storage.get() defaults-object trap
 
@@ -368,381 +357,38 @@ setting. This file only stores/validates/exposes the value - the audio
 pipeline's `content.js` (owned by the other agent) consumes it for the
 actual mute-interval math.
 
-## FEATURE (2026-08-30): language pack architecture, Spanish pack, LDNOOBW tier-2 packs, `pm_multilingual`
+## FEATURE (2026-08-30, REMOVED in 0.1.46): language pack architecture, `pm_multilingual`
 
-### ACTION NEEDED from the audio-pipeline agent: `manifest.json` web_accessible_resources
+The 0.1.25 / 2026-08-30 multilingual work (a `PMWordlist.setLanguage()` pack
+loader, on-demand `shared/packs/<lang>.json` files, and the `pm_multilingual`
+setting) was REMOVED in 0.1.46. This build filters English speech only, and
+the multilingual codebase now lives in a separate repo. See "0.1.46" below.
 
-`shared/wordlist.js`'s `PMWordlist.setLanguage(lang)` lazily loads
-non-English packs via `fetch(chrome.runtime.getURL("shared/packs/" +
-lang + ".json"))` from the isolated-world content-script context.
-Chrome does **not** allow a content script to `fetch()` its own
-extension's packaged files unless they're listed in
-`manifest.json`'s `web_accessible_resources` - this file is owned by
-the audio-pipeline agent, not this one, so it hasn't been added here.
-**Until `shared/packs/*.json` is added to `web_accessible_resources`,
-every `setLanguage()` call for a non-`"en"` language will fail the
-fetch and resolve to `packAvailable = false`** - English matching is
-completely unaffected (this failure path was explicitly designed to
-degrade gracefully, see below), but no other pack will ever actually
-load. Needed manifest addition (same `matches` pattern as the existing
-`dist/*` entry):
+## 0.1.46: English-only (multilingual removed, split to a separate repo)
 
-```json
-{
-  "resources": ["shared/packs/*.json"],
-  "matches": ["chrome-extension://*/*"]
-}
-```
+0.1.44 bundled all three fp32 models (~707MB): base.en plus the 0.1.25
+multilingual pair (a `whisper-tiny` language probe and a `whisper-base`
+transcriber). 0.1.46 ships base.en ONLY (~280MB) and removes the multilingual
+machinery outright rather than gating it:
 
-### Pack shape
+- One model. `scripts/model-manifest.mjs` bundles `Xenova/whisper-base.en`
+  only; the worker and offscreen `MODEL_IDS` carry that single id.
+- The language-detection gate, the model routing, `shared/language.js`, and
+  the non-English `shared/packs/*.json` are deleted. `shared/wordlist.js`
+  keeps its English matcher; the pack loader and `pm_multilingual` setting
+  are gone.
+- The popup "Filter other languages" toggle and the active-language note are
+  removed; onboarding states plainly that the filter is English only.
 
-A "pack" is a plain object:
-
-```js
-{
-  lang: "es",                 // matches the pack's own filename (no .json)
-  quality: "curated" | "community",
-  words: { core: [...], extended: [...] },   // extended may be []
-  matchConfig: {
-    stemming: "en-suffix" | "none",
-    foldDiacritics: boolean,
-    substringMode: boolean,
-    wildcards: boolean
-  }
-}
-```
-
-English is pack `"en"` - inlined in `shared/wordlist.js` (the existing
-`CORE_WORDLIST`/`EXTENDED_WORDLIST`/`DEFAULT_WORDLIST` from the
-`pm_strictness` feature, unchanged), with `matchConfig`
-`{stemming:"en-suffix", foldDiacritics:false, substringMode:false,
-wildcards:true}` - **exactly** the pre-pack-architecture matching
-behavior. Every other language is a JSON file at
-`shared/packs/<lang>.json`, loaded on demand - packs are never bundled
-into every page load; only a page that actually calls
-`setLanguage(lang)` for a given `lang` pays the fetch cost for it, once
-(subsequent calls for the same `lang` reuse the in-memory cache, no
-re-fetch).
-
-**`pm_strictness`/the user's custom `pm_wordlist` are an "en"-only
-concept.** They only apply while the active language is `"en"`; any
-other active pack always uses its own full word list (core + extended
-combined - no per-pack strictness split), and the custom list is not
-consulted at all while a non-English pack is active. This is
-deliberate - strictness tiers and hand-editing are an English-first UX
-feature, not something every language pack needs to replicate.
-
-### `PMWordlist.setLanguage(lang)` - the new API surface for the pipeline agent
-
-```js
-PMWordlist.setLanguage("es").then(function (ok) {
-  // ok === true  -> the "es" pack (or "en") is now active
-  // ok === false -> unknown lang / fetch failed / invalid pack shape;
-  //                 the PREVIOUSLY active pack is left completely
-  //                 unchanged (matching keeps working exactly as
-  //                 before this call) - this is a signal-only failure
-  //                 mode, never a broken/empty matching state.
-});
-```
-
-- `setLanguage("en")` (or `setLanguage()`/falsy) restores English
-  matching using whatever `pm_strictness`/`pm_wordlist` last resolved
-  to - no storage round trip needed, it's cached (`state.enWordlist`,
-  refreshed on every `refresh()` regardless of which language is
-  currently active).
-- `setLanguage(lang)` for an already-loaded pack applies instantly from
-  the in-memory cache.
-- `setLanguage(lang)` for a never-loaded pack fetches
-  `shared/packs/<lang>.json`, validates its shape, caches it, and
-  applies it. See the "ACTION NEEDED" note above for the
-  `web_accessible_resources` dependency this requires.
-- **`PMWordlist.packAvailable`** (live getter property, not a
-  snapshot) - `true` once the currently-active language resolved to a
-  real pack; `false` after a `setLanguage()` call for an unknown/
-  unfetchable language (matching state is left exactly as it was
-  before that call - this is purely a UI signal, e.g. for an on-player
-  status pill to show "not supported for this language yet"). Always
-  `true` for `"en"`.
-- **`PMWordlist.activeLanguage`** (live getter property) - the current
-  pack's `lang` code, `"en"` by default.
-- Both are same-JS-realm live reads - fine for `content.js`/the
-  on-player pill (same isolated-world realm as `shared/wordlist.js`),
-  but **the popup runs in a separate JS realm/page** and can't read
-  them directly. For the popup's benefit, `setLanguage()` also persists
-  `{lang, quality, available}` to `chrome.storage.LOCAL` as
-  `pm_activeLanguage` (not `sync` - this is transient per-tab runtime
-  state, not a user setting) on every call (success or failure); the
-  popup's Word list section reads it the same way the Stats section
-  reads `pm_stats` (own `chrome.storage.onChanged` listener, filtered
-  to `areaName === "local"`).
-- `findMatches`/`isProfane`/`censorText` are all transparently
-  pack-aware - they always match against whatever pack is currently
-  active, rebuilt automatically by `setLanguage()`/`refresh()`. The
-  pipeline doesn't need any other API changes to get multilingual
-  matching once it calls `setLanguage()`.
-
-### `pm_multilingual` (new storage key, `sync`, boolean, default `true`)
-
-"Filter other languages (auto-detect)" toggle in the popup. This file
-only stores/exposes it (`PMWordlist.settings.multilingual`, the 10th
-key on that object now) - it has **no effect on matching by itself**.
-The audio pipeline's Whisper-based language detection is expected to
-read it to decide whether to call `setLanguage()` at all when it
-detects non-English speech; if it's off, the pipeline should simply
-never call `setLanguage()` for anything other than `"en"` (or should
-call `setLanguage("en")` to make sure a previously-detected pack gets
-turned back off). Wired through `STORAGE_KEYS`,
-`resolveSettingsFromStorage`, `state`/`settings`, `refresh()`, and the
-`onChanged` listener, identically to every other boolean setting.
-
-### matchConfig-driven matching engine
-
-Every pure matching function (`stemsOf`, `buildStemSet`,
-`buildPhraseList`/`buildPhraseIndex`, `isProfaneCore`, `censorTextCore`,
-`findMatchesCore`) now takes an optional trailing `matchConfig`
-argument, defaulting to `EN_MATCH_CONFIG`
-(`{stemming:"en-suffix", foldDiacritics:false, substringMode:false,
-wildcards:true}`) when omitted - **every pre-existing call site in this
-codebase (and every existing test) passes 2-3 args with no
-`matchConfig`, so English behavior is provably byte-for-byte unchanged**
-(the full pre-existing 234-test pure suite + 33-test integration suite
-both pass unmodified in outcome, only updated for the new
-`multilingual`/10th-key shape additions - see "Test results" below).
-
-- **`stemming: "none"`** (every community-tier pack, plus the curated
-  Spanish pack): no suffix-stripping at all - a "stem" is just the
-  normalized word itself. These packs are expected to list common
-  inflected forms explicitly in their own data (the curated Spanish
-  pack does this for its core entries).
-- **`foldDiacritics: true`**: `normalizeToken`/`normalizeSpaces`
-  additionally run `String.prototype.normalize("NFD")` and strip
-  combining diacritical marks (`̀-ͯ`) before the existing
-  punctuation-trim step, so e.g. Spanish `"coño"` and an ASR-mishear
-  `"cono"` (accent stripped) both normalize to the same match key, in
-  both directions (list entries and input tokens/text are folded the
-  same way). Applied to phrase-index words too (`buildPhraseList`
-  passes `matchConfig.foldDiacritics` through).
-- **`substringMode: true`** (Chinese/Japanese/Thai/Korean packs - no
-  reliable whitespace word boundaries): `isProfaneCore` checks whether
-  any list entry appears anywhere *inside* the normalized token/text
-  (`isProfaneSubstring`, a plain `stemSet` substring scan) instead of
-  exact-stem `Set` lookup; `censorTextCore` skips the token-regex path
-  entirely and instead does a direct longest-entry-first substring
-  scan-and-replace over the raw text. The phrase-index machinery is
-  skipped for these packs (`buildPhraseList` returns `[]` when
-  `substringMode` is true) since a multi-character list entry already
-  matches as a substring on its own.
-- **`wildcards`**: gates whether the existing `*`-wildcard matcher
-  (aligned + first-letter-shorthand rules, unchanged) is even
-  consulted; every pack ships this `true` (helps recognize
-  partially-censored ASR output the same way English does), but the
-  flag exists per the spec'd `matchConfig` shape.
-- **Unicode-aware tokenizing** (a general correctness fix that
-  incidentally makes non-English packs work at all, not itself a
-  matchConfig field): `normalizeToken`'s punctuation-trim regex and
-  `censorTextCore`'s token-scan/`censorWord` regexes were rewritten
-  from a plain `a-z0-9'*` character class to Unicode property escapes
-  (`\p{L}\p{N}'*`, `u` flag) - "core word character" now means any
-  letter/digit in any language, not just ASCII. This is a strict
-  superset of the old behavior for English (`\p{L}` already covers
-  `a-z` case-insensitively, `\p{N}` covers `0-9`) - confirmed by the
-  full unchanged English test suite - and is what lets e.g. accented
-  Spanish `"coño"` or `"mamón"` get recognized/censored as one token in
-  `censorTextCore` instead of being split apart at the accented
-  character.
-
-### Spanish pack (`shared/packs/es.json`, quality `"curated"`)
-
-111 entries (96 core + 15 extended). LATAM + peninsular strong
-profanity/vulgarity/insults, common inflected forms listed explicitly
-per-entry (no stemmer - `stemming: "none"`), plus an extended group of
-religious-exclamation equivalents and mild euphemisms (Spanish
-equivalents of the English extended list's `"oh my god"`/`"gosh"`/
-`"heck"` family). `matchConfig`: `{stemming:"none",
-foldDiacritics:true, substringMode:false, wildcards:true}`. Word
-content lives only in the JSON file, not reproduced here (filter-safe
-convention, same as the English list).
-
-**Collision scan**: attempted against a real Spanish dictionary
-(`/usr/share/dict/words` is English-only on this machine, and no
-`es_ES`/`es` aspell/hunspell wordlist is installed) - **skipped, no
-Spanish system dictionary was available to scan against.** Every core
-entry was manually reviewed for the same "innocent-word-collision"
-standard applied to the English list; none of the 111 entries are
-common non-profane Spanish words. This should be re-run properly if/
-when a Spanish dictionary becomes available (e.g. `brew install
-hunspell` + an `es_ES` dictionary, or a wordlist package).
-
-### LDNOOBW tier-2 packs (`shared/packs/<lang>.json`, quality `"community"`)
-
-`tools/import-ldnoobw.mjs` fetches every per-language raw word list
-from the `LDNOOBW/List-of-Dirty-Naughty-Obscene-and-Otherwise-Bad-Words`
-GitHub repo and converts each into a `"community"`-quality pack,
-skipping `"en"`/`"es"` (both already have hand-curated packs - importing
-the raw lists for those would be a quality regression, not an
-addition). Cleaning is **programmatic only** (no manual per-entry
-curation, per the coordinator's instruction): trim/dedupe/lowercase,
-drop entries shorter than 2 characters or longer than 40 (implausible/
-corrupted), drop control characters, the Unicode replacement character,
-URLs, and digit-only lines. Per-language `matchConfig` defaults:
-`stemming: "none"` for all (no per-language stemmer built),
-`foldDiacritics: true` for Latin-script languages / `false` for
-non-Latin-script ones (Arabic, Persian, Hindi, Russian, and the four
-substring-mode languages below), `substringMode: true` for Chinese/
-Japanese/Thai/Korean (no reliable word boundaries), `wildcards: true`
-for all. Re-run with `node tools/import-ldnoobw.mjs` (all languages) or
-`node tools/import-ldnoobw.mjs de fr ja` (specific ones) - network
-access to `raw.githubusercontent.com` required; each run overwrites the
-existing community-tier file for that language (never touches
-`es.json`, which is curated and excluded).
-
-Per-language entry counts (core + extended combined; every community
-pack currently has an empty `extended` group - the raw LDNOOBW lists
-aren't split into tiers):
-
-| lang | name | quality | entries |
-|---|---|---|---|
-| ar | Arabic | community | 38 |
-| cs | Czech | community | 41 |
-| da | Danish | community | 20 |
-| de | German | community | 66 |
-| eo | Esperanto | community | 37 |
-| es | Spanish | **curated** | 111 |
-| fa | Persian | community | 45 |
-| fi | Finnish | community | 130 |
-| fil | Filipino | community | 13 |
-| fr | French | community | 91 |
-| fr-CA-u-sd-caqc | Québec French | community | 7 |
-| hi | Hindi | community | 119 |
-| hu | Hungarian | community | 96 |
-| it | Italian | community | 168 |
-| ja | Japanese | community (substring mode) | 176 |
-| kab | Kabyle | community | 21 |
-| ko | Korean | community (substring mode) | 70 |
-| nl | Dutch | community | 190 |
-| no | Norwegian | community | 40 |
-| pl | Polish | community | 54 |
-| pt | Portuguese | community | 76 |
-| ru | Russian | community | 151 |
-| sv | Swedish | community | 43 |
-| th | Thai | community (substring mode) | 31 |
-| tlh | Klingon | community | 3 |
-| tr | Turkish | community | 142 |
-| zh | Chinese | community (substring mode) | 297 |
-
-(`en`, quality curated, ~123 entries - inline in `wordlist.js`, see
-"Default list & known collisions" above - is the 28th language but
-isn't a `shared/packs/` file.)
-
-### Popup: "Filter other languages" toggle + active pack display
-
-- New toggle in the popup body (between "Show status on player" and
-  the "While catching up" radio group): **Filter other languages**
-  (`pm_multilingual`, hint: "Auto-detect the spoken language and filter
-  its own profanity too"), default **on**, saves immediately like every
-  other toggle (`saveTogglesOnly()`).
-- The Word list section gains a new line, `#pm-active-language-note`,
-  hidden by default and only shown when `chrome.storage.LOCAL`'s
-  `pm_activeLanguage` names a non-English, currently-active pack:
-  `"Also filtering: Spanish (curated word list)"` /
-  `"Also filtering: German (community-sourced word list)"`, or, if a
-  `setLanguage()` call failed (`available: false`), `"Detected language
-  not supported yet (<name>) - using your English list only"`. Reads/
-  live-updates exactly like the Stats section (own
-  `chrome.storage.onChanged` listener filtered to `areaName ===
-  "local"`, correct-by-default-before-any-storage-read pattern - hidden
-  until the async read resolves, never a placeholder flash).
-
-### Test results (language pack architecture)
-
-Extended both existing Node test files (session scratchpad, same
-"kept out of the repo" convention as before - see "Re-running the
-tests" below):
-
-- **`wordlist_test.js`: 258/258 passed** (was 234; all 234 original
-  assertions pass completely unmodified in behavior - the only edits to
-  pre-existing assertions were adding the new `multilingual: true` key
-  to 10 full-shape `resolveSettingsFromStorage(...)` equality checks,
-  which is the same kind of mechanical update every prior new setting
-  required). New coverage: `stemming:"none"` (exact + separately-listed
-  inflected forms match, unlisted inflections don't), `foldDiacritics`
-  (accented list entry matches both its own accented form and an
-  accent-stripped input, in both `isProfaneCore` and `censorTextCore`,
-  with a negative control proving the fold - not luck - is what makes
-  it work), `substringMode` (exact match, substring-within-a-larger-
-  token match, negative case, and an actual `censorTextCore` in-place
-  replacement, using arbitrary CJK-shaped test strings that are NOT
-  real profanity - this only tests substring matching mechanics),
-  `PMWordlistCore.EN_MATCH_CONFIG` shape, `validatePack` (valid pack,
-  wrong `lang`, invalid `quality`, `null` input), and `pm_multilingual`
-  defaulting (empty/undefined -> `true`, explicit `true`/`false`
-  respected, a corrupted non-boolean value treated as `true` consistent
-  with every other true-default boolean, `STORAGE_KEYS` includes it).
-- **`wordlist_integration_test.js`: 55/55 passed** (was 33). New
-  coverage, appended after the existing `pm_strictness` end-to-end
-  scenario: `PMWordlist.activeLanguage`/`packAvailable` default to
-  `"en"`/`true`; **`setLanguage("es")`** (via a stubbed `fetch` +
-  `chrome.runtime.getURL` that serves the REAL shipped `es.json` off
-  disk, not a hand-rolled fixture, so this catches any shape drift
-  between the pack file and what `setLanguage()`/`validatePack()`
-  expect) resolves `true`, flips `activeLanguage`/`packAvailable`
-  correctly, makes a real Spanish pack word match while the English
-  custom list stops being consulted, and the active `matchConfig`
-  matches the pack's own; **diacritic folding** end-to-end (an
-  accent-stripped variant of a real accented Spanish core entry matches
-  via both `isProfane` and `findMatches`, with an explicit "these
-  actually differ" setup assertion); **switching back to `"en"`**
-  restores the exact prior English wordlist byte-for-byte with no
-  storage round trip and resumes English-only matching; **`setLanguage`
-  with an unknown/unfetchable lang** (`"xx"`, simulated HTTP 404)
-  resolves `false`, sets `packAvailable` to `false`, and - critically -
-  leaves `activeLanguage` and matching completely unchanged (still
-  `"en"`, still matching the English custom list) rather than breaking
-  anything. Also updated the pre-existing `PMWordlist.settings` key-set
-  assertions (two spots) from 9 to 10 keys (`multilingual` added).
-
-```
-$ node wordlist_test.js
-... (258 lines of PASS) ...
-258 passed, 0 failed
-
-$ node wordlist_integration_test.js
-... (55 lines of PASS) ...
-55 passed, 0 failed
-```
-
-Also ran `node -e "..."` spot checks (not part of either test file)
-confirming: all 27 `shared/packs/*.json` files (26 community + 1
-curated) pass `PMWordlistCore.validatePack`; the Japanese pack's
-substring mode correctly matches a real imported entry both standalone
-and embedded inside a longer string, and correctly censors it in place
-in `censorTextCore`; the French pack's `foldDiacritics` correctly
-matches an accent-stripped variant of a real accented imported entry
-(`"bourré"` -> stripped variant matches). A Playwright smoke test
-(`popup_multilingual_smoke.js`, session scratchpad) confirmed, against
-the real `popup.html`/`popup.js` with a minimal mocked
-`chrome.storage`: the `#pm-multilingual` toggle exists and is checked
-by default, one click flips it to unchecked, and
-`#pm-active-language-note` is hidden by default; a second run
-(`popup_activelang_smoke.js`) pre-seeded a mocked
-`chrome.storage.local` with `pm_activeLanguage: {lang:"es",
-quality:"curated", available:true}` and confirmed the note renders
-exactly `"Also filtering: Spanish (curated word list)"` and un-hides.
-
-### Re-running the tests
-
-Same pattern as the existing suite (see "Re-running the tests" further
-below in this file) - `wordlist_test.js`/`wordlist_integration_test.js`
-in the session scratchpad `require()` `shared/wordlist.js` directly (as
-`{PMWordlistCore, DEFAULT_WORDLIST}` / via `global.PMWordlist` after
-stubbing `chrome.*`). The integration test's `setLanguage("es")`
-scenario additionally needs `global.fetch` and
-`chrome.runtime.getURL` stubbed (see the fake-fetch block near the top
-of that file) - it reads the real `shared/packs/es.json` off disk
-rather than a hand-rolled fixture, so it stays plain about the actual
-shipped pack shape.
+The multilingual feature is not gone from the world, just from this repo: it
+now lives in a separate multilingual repo seeded from main@0.1.44.
 
 ## RELEASE BLOCKER (2026-09-02, 0.1.44): bundle the model weights, no more runtime fetch
+
+> SUPERSEDED by 0.1.46 (see above): this build bundles `base.en` ONLY
+> (~280MB). The three-model bundling and the per-language packs described in
+> this section were removed with the multilingual feature. The "bundled, not
+> fetched, remote hard-off" decision below still stands for `base.en`.
 
 The pre-listing blocker. The Whisper weights were fetched from
 huggingface.co at runtime, which MV3 and the Chrome Web Store reject as
@@ -822,18 +468,14 @@ followed by build), not a bare git checkout.
 fact rather than a config flag: it replaces global `fetch` with one that
 throws on any http URL, sets the worker's exact env (remote off), and then
 loads and transcribes. Result: base.en loads from `models/` and produces a
-real transcript ("Well, darn it, I dropped my coffee again..."), and the
-tiny and multilingual models both load offline, with a sample language pack
-confirmed present so the non-English path (model + pack) is local end to
-end. Every one of these happens with huggingface.co unreachable.
+real transcript ("Well, darn it, I dropped my coffee again..."), with
+huggingface.co unreachable.
 
 ### Future note
 
-Non-English support is a working feature, not dead weight: the gate swaps
-to the detected language's curated pack in `shared/packs/` (27 languages).
-It stays exactly as it was. If the ~707MB fp32 install ever becomes a
-review or install-size problem, the lever is the dtype, evaluated against
-the MatMulNBits bug, in a dedicated round.
+If the ~280MB fp32 install ever becomes a review or install-size problem,
+the lever is the dtype, evaluated against the MatMulNBits bug, in a
+dedicated round.
 
 ## FIX ROUND (2026-09-02, 0.1.43): two numbers that were produced without being computed
 
@@ -2733,7 +2375,6 @@ monitor: the popup asks the active tab directly instead. See "Graceful
 failure (health monitor)" above for why a stored value was rejected.
 | `pm_lock`           | `{salt, hash}` or absent  | absent -> no lock. Optional parental lock over the popup's settings; `hash` = SHA-256(salt + password), hex. Owned by `shared/lock.js` + `popup/popup.js`; NOT in `STORAGE_KEYS`, NOT in the `PMWordlist.settings` contract. A deterrent, not security |
 | `pm_padding`        | `"tight"\|"normal"\|"wide"` | `"normal"` - how much surrounding audio the mute interval pads around a matched word; consumed entirely by the audio pipeline's `content.js` for its interval math |
-| `pm_multilingual`   | `boolean`                 | `true` - "Filter other languages (auto-detect)"; stored/exposed here only - the audio pipeline's language detection reads it to decide whether to call `PMWordlist.setLanguage(lang)`; see "FEATURE: language pack architecture" below |
 | `pm_safeMode`       | `boolean`                 | DEPRECATED, read-only. No longer written by the popup - merged into `pm_catchupMode`. Only consulted, once, to migrate a legacy `false` forward (see "Safe mode + catch-up mode merge" below) |
 | `pm_devlogVerbose`  | `boolean`                 | `false` - when true, the persistent dev log also stores each analyzed window's FULL transcript text. Owned and read directly by `shared/devlog.js`; deliberately NOT in this file's `STORAGE_KEYS` and NOT part of the `PMWordlist.settings` contract - it is a debugging escape hatch with no popup UI (set it from the extension console), not a user-facing setting. See "FEATURE: persistent dev log" above |
 | `pm_wordlist`       | `string[]`                | **DEPRECATED as of 0.1.29, read-only.** Was the user's REPLACEMENT list under the old `"custom"` mode. Now read only to migrate an existing install onto `pm_additionalWords`, and deliberately left untouched in storage afterwards so a rollback finds it intact |
@@ -2757,7 +2398,6 @@ and `[]` counts.)
 | key        | type                                            | default |
 |------------|--------------------------------------------------|---------|
 | `pm_stats` | `{totalMuted: number, videosProtected: number}`  | absent -> popup shows zeros |
-| `pm_activeLanguage` | `{lang: string, quality: string\|null, available: boolean}` | absent -> popup shows nothing (assumed English). Written by `shared/wordlist.js`'s `setLanguage()` on every call (success or failure); read by `popup/popup.js` to display the active non-English pack, if any - see "FEATURE: language pack architecture" below |
 | `pm_devlog` | `{version: 1, videos: Entry[]}` | absent -> popup's "Copy debug log" says "No debug log yet". The persistent dev log: a ring buffer of the last 10 videos (analyzed windows + matched words, padded mute intervals, unanalyzed-playback gaps, caption censor events, errors), capped at ~256KB serialized. Written by `shared/devlog.js` from `content.js`/`captions.js`, batched to at most one write per 5s; read (never modified) by `popup/popup.js`'s "Copy debug log" button. `shared/wordlist.js` does not touch it. Full `Entry` schema lives in `shared/devlog.js`'s header comment - see "FEATURE: persistent dev log" above |
 
 Written by the audio pipeline (`content.js`, owned by the other agent)
@@ -2837,11 +2477,10 @@ the migration check and then to `DEFAULT_CATCHUP_MODE` (`"mute"`).
 ### `PMWordlist.settings`
 
 `PMWordlist.settings` is a dedicated object containing **exactly**
-`{enabled, muteAudio, censorCaptions, safeMode, catchupMode, debugOverlay, showStatus, strictness, padding, multilingual, additionalWordCount}`
-(11 keys, as of the 0.1.29 `additionalWordCount` addition - a COUNT, never
-the words themselves; the user's own list lives on `_state.additionalWords`.
-See also "FEATURE: language
-pack architecture" above) - no `wordlist`, `stemSet`, `phrases`, or
+`{enabled, muteAudio, censorCaptions, safeMode, catchupMode, debugOverlay, showStatus, strictness, padding, additionalWordCount}`
+(10 keys; `additionalWordCount` (0.1.29) is a COUNT, never the words
+themselves - the user's own list lives on `_state.additionalWords`. The
+`multilingual` key was removed in 0.1.46.) - no `wordlist`, `stemSet`, `phrases`, or
 `phraseIndex` leakage (those live on the separate internal `_state`
 object used by `isProfane`/`censorText`/`findMatches`). `safeMode` is
 derived from `catchupMode` as described above. It's the same object
@@ -2850,7 +2489,7 @@ reference on every `refresh()`/`onChanged` cycle, mutated in place -
 `PMWordlist.settings.muteAudio`, `PMWordlist.settings.catchupMode`,
 `PMWordlist.settings.safeMode`, `PMWordlist.settings.debugOverlay`,
 `PMWordlist.settings.showStatus`, `PMWordlist.settings.strictness`,
-`PMWordlist.settings.padding`, or `PMWordlist.settings.multilingual`
+or `PMWordlist.settings.padding`
 directly and each will reflect the latest saved/derived value without
 needing its own storage listener, and without ever seeing internal
 `Set`/`Map` fields. See "CRITICAL BUG FIX" above for why this was

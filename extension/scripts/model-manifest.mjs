@@ -6,25 +6,19 @@
 // (test/model_manifest_test.js). If these ever disagree, a build could
 // pass its check while shipping a model the worker cannot load.
 //
-// The three repos are the only ones the shipped code can reach:
-//   base.en        the English default (DEFAULT_MODEL)
-//   tiny           the language-gate probe (multilingual)
-//   base           the model a confirmed non-English switch uses, paired
-//                  with the per-language wordlist packs in shared/packs/
-// Non-English support is a working feature (the gate swaps to the detected
-// language's curated pack), so all three are bundled for a fully offline
-// package. whisper-tiny.en and whisper-small.en appear in MODEL_IDS but no
-// UI can select them, so they are deliberately excluded.
+// 0.1.46 (English-only): the shipped extension loads exactly one model,
+// base.en, the English transcriber, ~280MB. The 0.1.25 multilingual path (a
+// whisper-tiny language probe plus a whisper-base multilingual transcriber)
+// was removed and now lives in a separate multilingual repo. whisper-tiny.en
+// and whisper-small.en never had a UI to select them, so they are excluded
+// too.
 //
 // The file list is the fp32 variant transformers.js@4.2.0 fetches for a
 // Whisper ASR pipeline with dtype 'fp32' (verified by recording a clean
-// pipeline() load). fp32 weights carry no dtype suffix.
+// pipeline() load). fp32 weights carry no dtype suffix. This is a shipping
+// build, so only the fp32 weights are bundled (no compare-only fp16/q8).
 
-export const MODEL_REPOS = [
-  'Xenova/whisper-base.en',
-  'Xenova/whisper-tiny',
-  'Xenova/whisper-base'
-];
+export const MODEL_REPOS = ['Xenova/whisper-base.en'];
 
 export const MODEL_FILES = [
   'config.json',

@@ -36,10 +36,6 @@
 // header for the full diagnosis (popup paint starvation) and why the split
 // is exactly at the transcribe step.
 import { Input, ReadableStreamSource, AudioBufferSink, WEBM, MP4, ADTS } from 'mediabunny';
-// 0.1.37: the language-switch gate. Plain script attaching globalThis
-// .PMLanguage; imported for its side effect so the bundle carries one
-// implementation of the rule rather than a second copy of it here.
-import '../shared/language.js';
 // 0.1.40: the decode timeout ladder and the iterator disposal contract.
 // Imported for its side effect (it attaches globalThis.PMDecode) so the
 // shipped path is the same code the Node tests exercise.
@@ -52,35 +48,15 @@ import '../shared/runs.js';
 // the others, so the shipped wager is the tested one.
 import '../shared/preempt.js';
 
-// 'small' added 0.1.13 as an opt-in accuracy tier (per the quiet-speech-
-// recall investigation) - Xenova/whisper-small.en is confirmed on the Hub to
-// ship alignment_heads in its generation_config.json (same basis tiny/base
-// were confirmed on), so word timestamps are supported. RTF cost is
-// UNVERIFIED live (no real-Chrome run has selected it yet) - expect roughly
-// ~2x base's cost by parameter-count scaling (base ~74M vs small ~244M
-// params); base's own measured RTF headroom (~0.13-0.29 steady-state per
-// PIPELINE_NOTES) suggests small should still fit comfortably under 1.0,
-// but this is an estimate, not a measurement - re-verify before
-// recommending it broadly.
-// MULTILINGUAL SUPPORT (0.1.25) - 'multilingual' (Xenova/whisper-base,
-// confirmed on the Hub to ship alignment_heads, same basis as the .en
-// models) is used for actual transcription once a video is detected as
-// non-English; 'lang-detect' (Xenova/whisper-tiny, also multilingual) is a
-// separate, smaller model used ONLY for the one-shot language-ID probe (see
-// whisper-worker-src.js's detectLanguage), never for real transcription.
-// Kept in sync with whisper-worker-src.js's own copy of this table.
+// 0.1.46 (English-only): base.en is the ONLY model this build loads. The
+// 0.1.13 opt-in accuracy tiers (tiny/small.en) and the 0.1.25 multilingual
+// path (a whisper-tiny language probe plus a whisper-base multilingual
+// transcriber) were removed and now live in a separate multilingual repo.
+// Kept in sync with whisper-worker-src.js's own copy of this one-entry
+// table; the worker falls back to DEFAULT_MODEL for any unknown id.
 const MODEL_IDS = {
-  tiny: 'Xenova/whisper-tiny.en',
-  base: 'Xenova/whisper-base.en',
-  small: 'Xenova/whisper-small.en',
-  multilingual: 'Xenova/whisper-base',
-  'lang-detect': 'Xenova/whisper-tiny'
+  base: 'Xenova/whisper-base.en'
 };
-// Default changed tiny -> base: live user testing showed severe word-timestamp
-// smear on tiny (CLAMP warnings for 5-15s "words" dozens of times/minute on
-// noisy multi-speaker content); base's alignment heads are materially more
-// reliable and RTF headroom (~3x realtime) easily covers YouTube's 10-35s
-// buffered lookahead. pm_model still lets a session opt into tiny or small.
 const DEFAULT_MODEL = 'base';
 const WINDOW_S = 18;
 const OVERLAP_S = 2;
@@ -218,11 +194,7 @@ function handleWorkerMessage(ev) {
   const pending = pendingWorkerRequests.get(msg.requestId);
   if (!pending) return;
   pendingWorkerRequests.delete(msg.requestId);
-  // 0.1.25: 'lang-result' is the success shape for a detect-language
-  // request, alongside 'result' for a transcribe request - both just
-  // resolve with the whole message; 'lang-error' rejects the same way
-  // 'error' already does.
-  if (msg.type === 'result' || msg.type === 'lang-result') pending.resolve(msg);
+  if (msg.type === 'result') pending.resolve(msg);
   else pending.reject(new Error(msg.error || 'unknown whisper worker error'));
 }
 spawnWhisperWorker();
@@ -239,20 +211,6 @@ function transcribeInWorker(modelId, float16k, options) {
     const requestId = nextWorkerRequestId++;
     pendingWorkerRequests.set(requestId, { resolve, reject });
     whisperWorker.postMessage({ type: 'transcribe', requestId, modelId, float16k, options }, [float16k.buffer]);
-  });
-}
-
-// Language-ID bridge (0.1.25) - NOT transferred: unlike transcribeInWorker
-// above, the caller (transcribeWindow) still needs `float16k` afterward for
-// the window's own real transcribe call, so this must leave the original
-// array usable (a plain postMessage without a transfer list structured-
-// clones it instead of detaching it - a one-time copy cost paid only once
-// per session, on the first window).
-function detectLanguageInWorker(float16k) {
-  return new Promise((resolve, reject) => {
-    const requestId = nextWorkerRequestId++;
-    pendingWorkerRequests.set(requestId, { resolve, reject });
-    whisperWorker.postMessage({ type: 'detect-language', requestId, float16k });
   });
 }
 
@@ -531,25 +489,7 @@ function getOrCreateSession(tabId, videoId) {
       unanalyzable: false, // set true once DRM/undecodable content is detected - maybeProcess stops entirely, content.js releases safe-mode muting for this session
       processing: false,
       pendingRerun: false,
-      modelId: DEFAULT_MODEL, // the user's configured ENGLISH model (tiny/base/small/multilingual) - unaffected by auto language-switching below; the model actually used for a given window is resolved fresh each time (see transcribeWindow's effectiveModelId)
-      // MULTILINGUAL SUPPORT (0.1.25) - see PIPELINE_NOTES "0.1.25".
-      // `multilingualEnabled` mirrors pm_multilingual (default true, set via
-      // pm-config); when false, this session behaves exactly as before -
-      // always `modelId`, detection never runs. `languageState` starts
-      // 'pending' (detection not yet attempted); the FIRST window of a
-      // session (before any real coverage exists) triggers a cheap,
-      // separate-model language-ID probe (never delaying that window's own
-      // transcription, which still runs on `modelId` as normal) and moves
-      // to 'detecting', then 'resolved' once the probe's result lands.
-      // Detection is pinned for the WHOLE video once resolved - a mid-video
-      // language switch is a known, accepted limitation (see PIPELINE_NOTES).
-      multilingualEnabled: true,
-      languageState: 'pending',
-      detectedLanguage: null, // e.g. 'en', 'es' - null until languageState becomes 'resolved'
-      // 0.1.37: the gate's accumulating state (confidence + consecutive
-      // agreement). See shared/language.js for why a single confident-
-      // looking probe is not enough to leave English.
-      languageGate: globalThis.PMLanguage ? globalThis.PMLanguage.newState() : null,
+      modelId: DEFAULT_MODEL, // 0.1.46 English-only: always resolves to base.en; the worker falls back to DEFAULT_MODEL for any unknown id
       // 0.1.42 preemption inputs.
       wallRtf: null, // EWMA of wall ms per second of audio
       windowsDone: 0, // completed windows, for the cold-window estimate
@@ -1521,114 +1461,10 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     notifyTab(s, '[PM-MODEL] using model="' + resolvedId + '" (' + MODEL_IDS[resolvedId] + '), default="' + DEFAULT_MODEL + '"' + (resolvedId !== DEFAULT_MODEL ? ' [overridden via pm_model]' : ''));
   }
 
-  // MULTILINGUAL DETECTION (0.1.25) - see PIPELINE_NOTES "0.1.25" for the
-  // full design/tradeoff writeup. Kicked off (fire-and-forget, never
-  // awaited here) exactly once per session, on the FIRST window only -
-  // `s.languageState` flips 'pending' -> 'detecting' right away so a
-  // fast-following second window (or a second tab's session) can never
-  // double-fire it. Deliberately does NOT block or change THIS window's own
-  // transcription, which still runs on `s.modelId` (base.en by default,
-  // already eagerly warm - see the boot preload) exactly as before 0.1.25:
-  // this is the "no English regression" requirement - the common (English)
-  // case pays ZERO added latency or model download on window 1. Detection
-  // uses a SEPARATE, smaller 'lang-detect' model (never `s.modelId`, never
-  // 'multilingual') via a single cheap decoder step (see
-  // whisper-worker-src.js's handleDetectLanguage) - not a full
-  // transcription - so its cost is small even though it's an extra model
-  // load. Skipped entirely if multilingual support is off (pm_multilingual)
-  // or the user already explicitly forced `modelId` to 'multilingual'
-  // themselves (nothing to detect toward in that case - they're already
-  // covering every language). Routed through the SAME `runSerialized`
-  // worker mutex as every transcribe call (see below) since it shares the
-  // same single-threaded worker.
-  const langApi = globalThis.PMLanguage;
-  const wantsProbe =
-    s.multilingualEnabled &&
-    s.modelId !== 'multilingual' &&
-    s.languageState !== 'detecting' &&
-    (!langApi || langApi.shouldProbe(s.languageGate));
-  if (wantsProbe) {
-    s.languageState = 'detecting';
-    runSerialized(() => detectLanguageInWorker(float16k))
-      .then((res) => {
-        const observed = res && res.language ? res.language : null;
-        const score = res && res.score != null ? res.score : null;
-        // 0.1.37: a probe is now an OBSERVATION, not a verdict. The gate
-        // decides whether it is enough to act on. See shared/language.js:
-        // the field log switched this session to Korean on one probe at
-        // score 13.18, which swapped the word list to a 66-entry Korean
-        // pack and stopped every English profanity from matching.
-        const verdict = langApi
-          ? langApi.decide(s.languageGate, { language: observed, score: score })
-          : { state: null, action: observed && observed !== 'en' ? 'switch' : 'hold', language: observed || 'en', reason: 'no-gate' };
-        if (verdict.state) s.languageGate = verdict.state;
-        s.languageState = 'resolved';
-
-        const acted = verdict.action === 'switch' || verdict.action === 'revert';
-        if (acted) s.detectedLanguage = verdict.language;
-        const lang = s.detectedLanguage || 'en';
-        const usingModel = lang === 'en' ? s.modelId : 'multilingual';
-        notifyTab(
-          s,
-          '[PM-LANG] observed=' + (observed || 'none') +
-            (score != null ? ' score=' + score.toFixed(2) : '') +
-            ' action=' + verdict.action + ' (' + verdict.reason + ')' +
-            ' active=' + lang + ' model=' + usingModel
-        );
-        // Every decision reaches the devlog, including the holds: the whole
-        // problem with the field case was one line saying what happened and
-        // nothing saying why.
-        chrome.runtime.sendMessage({
-          type: 'pm-language-decision',
-          tabId: s.tabId,
-          videoId: s.videoId,
-          observed: observed,
-          score: score,
-          action: verdict.action,
-          reason: verdict.reason,
-          active: lang,
-          model: usingModel
-        }).catch(() => {});
-        if (acted && lang !== 'en') {
-          // Lazy load (per spec): only pull in the FULL multilingual model
-          // once we actually know we need it - fired here so window 2
-          // doesn't have to pay the load cost fully inline (may still
-          // partially overlap if window 2 arrives before this finishes;
-          // getTranscriber's own promise cache makes that safe/free either
-          // way, it just awaits the same in-flight load).
-          whisperWorker.postMessage({ type: 'preload', modelId: 'multilingual' });
-        }
-        // Only a real switch or revert is pushed to the tab: a hold means
-        // nothing changed, and telling content.js otherwise would swap its
-        // word list on a decision this module declined to make.
-        if (acted) {
-          chrome.runtime.sendMessage({ type: 'pm-language', tabId: s.tabId, videoId: s.videoId, language: lang }).catch(() => {});
-        }
-      })
-      .catch((e) => {
-        // Detection failing must never block or break transcription itself
-        // - fall back to the English default, exactly as if detection had
-        // never run, and say so loudly (this is a real, if rare, failure
-        // mode worth knowing about, not something to silently swallow).
-        notifyTab(s, '[PM-LANG] detection failed, staying on English default: ' + String(e && e.message ? e.message : e));
-        s.languageState = 'resolved';
-        // Deliberately does NOT pin detectedLanguage to 'en': leaving it
-        // null keeps the English default active while allowing a later
-        // probe to still find a genuinely non-English video.
-        if (s.languageGate) s.languageGate.observations = (s.languageGate.observations || 0) + 1;
-      });
-  }
-  // Resolve which model THIS window actually transcribes with. Window 1
-  // (languageState still 'pending'/'detecting' at this point, since the
-  // above never awaits) always uses `s.modelId` - the detection result
-  // literally cannot exist yet. From languageState 'resolved' onward, a
-  // non-English detection switches every subsequent window to the full
-  // multilingual model; English (or multilingual disabled, or the user's
-  // own explicit 'multilingual' override) stays on `s.modelId` throughout.
-  const effectiveModelId =
-    s.multilingualEnabled && s.languageState === 'resolved' && s.detectedLanguage && s.detectedLanguage !== 'en'
-      ? 'multilingual'
-      : s.modelId;
+  // 0.1.46 (English-only): every window transcribes as English with base.en.
+  // The 0.1.25 language-detection probe and non-English model routing were
+  // removed and now live in a separate multilingual repo.
+  const effectiveModelId = s.modelId;
 
   // Serialized across ALL sessions/tabs (0.1.15): the worker is a single
   // dedicated thread, so a simple promise-chain mutex guarantees at most
@@ -1960,14 +1796,8 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       queueMs,
       computeMs,
       lagMs,
-      // 0.1.25: current detected language (null until resolved, 'en' or a
-      // real code thereafter - pinned per video, see languageState above)
-      // and the model THIS window actually ran on, so content.js/the pill
-      // always has the latest without needing a separate message to have
-      // landed first (the dedicated 'pm-language' push, sent once right
-      // when detection resolves, is a snappier-UI nice-to-have on top of
-      // this, not the only source of truth).
-      language: s.detectedLanguage,
+      // The model THIS window actually ran on (always base.en in this
+      // English-only build), for content.js/the pill.
       model: effectiveModelId
     });
   } catch (e) {
@@ -2306,11 +2136,6 @@ chrome.runtime.onMessage.addListener((msg) => {
       // but only bother when it actually changed.
       if (changed) whisperWorker.postMessage({ type: 'preload', modelId: msg.model });
     }
-    // 0.1.25 - pm_multilingual (default true), re-sent alongside pm_model on
-    // every video reset per background.js's sendModelConfig. Only read as a
-    // boolean (never re-triggers detection mid-video if toggled - detection
-    // is pinned once resolved for the video regardless).
-    if (typeof msg.multilingual === 'boolean') s.multilingualEnabled = msg.multilingual;
     return;
   }
 
@@ -2422,7 +2247,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     if (s) {
       log('[PM-RESYNC] resending', s.allWords.length, 'words and', s.covered.length, 'covered intervals for', key);
       chrome.runtime
-        .sendMessage({ type: 'pm-resync-result', tabId: msg.tabId, videoId: msg.videoId, words: s.allWords, coveredIntervals: s.covered, language: s.detectedLanguage })
+        .sendMessage({ type: 'pm-resync-result', tabId: msg.tabId, videoId: msg.videoId, words: s.allWords, coveredIntervals: s.covered })
         .catch(() => {});
     }
     return;
