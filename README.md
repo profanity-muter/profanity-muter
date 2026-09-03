@@ -36,7 +36,12 @@ https://chromewebstore.google.com/detail/oejickocjjdcckcjiabjeakcjkjpabgk
 
 ## Build it yourself
 
-Everything runs locally. You need Node.js and Google Chrome.
+Most people should just install from the Chrome Web Store link above. Building
+from source is for developers and tinkerers.
+
+You need Node.js and Google Chrome. This works on macOS, Windows, and Linux.
+On a Chromebook you first have to turn on the Linux development environment,
+then follow the same steps.
 
 ```sh
 git clone https://github.com/profanity-muter/profanity-muter.git
@@ -50,11 +55,21 @@ and builds `extension/dist/`. It downloads about 280MB the first time, and
 `models/` is gitignored, so this step is required before loading the extension
 (a bare `npm run build` only warns when `models/` is absent).
 
+The clone lands in whatever folder your terminal was pointing at (often your
+home folder), so it helps to note where `extension/` ended up. From inside it,
+print its full path to hand to Chrome:
+
+- macOS / Linux: `pwd` prints the path; `open .` (macOS) or `xdg-open .`
+  (Linux) opens the folder in your file browser.
+- Windows: the path shows in your prompt; `cd` (Command Prompt) or `pwd`
+  (PowerShell) prints it, and `explorer .` opens the folder.
+
 Then load the unpacked extension:
 
 1. Open `chrome://extensions`.
 2. Enable **Developer mode** (top right).
-3. Click **Load unpacked** and select the `extension/` directory.
+3. Click **Load unpacked** and select the `extension/` folder (the path you
+   printed above).
 
 Open a YouTube video and the extension starts transcribing and muting.
 
