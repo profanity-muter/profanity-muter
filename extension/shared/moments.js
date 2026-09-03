@@ -68,7 +68,7 @@
   //
   // The review URL shape is the canonical CWS one:
   //   https://chromewebstore.google.com/detail/<id>/reviews
-  var STORE_ITEM_ID = "TODO_CHROME_WEB_STORE_ITEM_ID";
+  var STORE_ITEM_ID = "oejickocjjdcckcjiabjeakcjkjpabgk";
   var STORE_URL = "https://chromewebstore.google.com/detail/" + STORE_ITEM_ID;
   var REVIEW_URL = STORE_URL + "/reviews";
 

@@ -1905,11 +1905,10 @@ copies:
 
 No tracking, no referral code, no query string at all (asserted in the
 tests). The store URL and the review URL both derive from a single
-`STORE_ITEM_ID` constant in `shared/moments.js`, currently the placeholder
-`TODO_CHROME_WEB_STORE_ITEM_ID` since the extension isn't listed yet - and
-a test asserts it is *still* the placeholder, so that when the listing
-goes live the test fails and forces the id to be replaced rather than a
-placeholder shipping silently in a share link.
+`STORE_ITEM_ID` constant in `shared/moments.js`, now the live listing id
+`oejickocjjdcckcjiabjeakcjkjpabgk`. A test pins it to that exact value, so
+any future change to the id is deliberate rather than a silent break in
+the share links that old builds keep using for years.
 
 ### Tests
 

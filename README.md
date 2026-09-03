@@ -11,10 +11,7 @@ This build filters **English** speech only.
 
 Install it here:
 
-<!-- STORE_ITEM_ID is the placeholder used across the repo (see
-     shared/moments.js). It is filled in with the real item id once the Chrome
-     Web Store listing draft is saved (the id is assigned at first draft-save). -->
-https://chromewebstore.google.com/detail/STORE_ITEM_ID
+https://chromewebstore.google.com/detail/oejickocjjdcckcjiabjeakcjkjpabgk
 
 ## Build it yourself
 

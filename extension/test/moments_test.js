@@ -210,11 +210,10 @@ test("there is exactly ONE store item id, and both URLs derive from it", () => {
   assert.strictEqual(M.REVIEW_URL, M.STORE_URL + "/reviews");
 });
 
-test("the store id is still the TODO placeholder (fails once the listing is live)", () => {
-  // Deliberately asserted: when the extension is actually listed, this
-  // test fails and forces the id to be replaced in shared/moments.js
-  // rather than a placeholder shipping silently in a share link.
-  assert.strictEqual(M.STORE_ITEM_ID, "TODO_CHROME_WEB_STORE_ITEM_ID");
+test("the store id is pinned to the live listing id", () => {
+  // Pinned so any change is deliberate: this id ships in every in-extension
+  // share and review link, so old builds keep sending users to it for years.
+  assert.strictEqual(M.STORE_ITEM_ID, "oejickocjjdcckcjiabjeakcjkjpabgk");
 });
 
 test("the support address is the real mailbox, pinned so a change is deliberate", () => {
