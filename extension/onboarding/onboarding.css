@@ -756,3 +756,31 @@ input:focus-visible {
     font-size: 34px;
   }
 }
+
+/* ---- Report page: keep inputs light and readable ---------------------
+   These full pages are designed light, but popup.css control tokens flip
+   to navy under prefers-color-scheme:dark, which left the report form with
+   dark-navy inputs on a paper page (bad contrast). Pin the report page's
+   form fields to a light-blue fill with a navy outline and dark text. The
+   consent box also drops the onboarding "highlight card" navy fill here.
+   Scoped to .rp-page so the onboarding acknowledgment card is untouched. */
+.rp-page .pm-input,
+.rp-page .pm-textarea {
+  background: #eef2fb;
+  color: var(--ink);
+  border: 1.5px solid var(--ink);
+  border-radius: 8px;
+}
+.rp-page .pm-input::placeholder,
+.rp-page .pm-textarea::placeholder { color: #6b7690; }
+.rp-page .pm-input:focus,
+.rp-page .pm-textarea:focus {
+  outline: 2px solid var(--ink);
+  outline-offset: 1px;
+}
+
+.rp-page .ob-ack {
+  background: #eef2fb;
+  color: var(--ink);
+  border: 1.5px solid var(--ink);
+}
