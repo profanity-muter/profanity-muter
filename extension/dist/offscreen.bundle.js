@@ -37,7 +37,7 @@
     mod
   ));
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/misc.js
+  // node_modules/mediabunny/dist/modules/src/misc.js
   function assert(x) {
     if (!x) {
       throw new Error("Assertion failed.");
@@ -45,7 +45,7 @@
   }
   var normalizeRotation, last, readExpGolomb, readSignedExpGolomb, toUint8Array, toDataView, textDecoder, invertObject, COLOR_PRIMARIES_MAP, COLOR_PRIMARIES_MAP_INVERSE, TRANSFER_CHARACTERISTICS_MAP, TRANSFER_CHARACTERISTICS_MAP_INVERSE, MATRIX_COEFFICIENTS_MAP, MATRIX_COEFFICIENTS_MAP_INVERSE, isAllowSharedBufferSource, AsyncMutex, HEX_STRING_REGEX, bytesToHexString, hexStringToBytes, reverseBitsU32, binarySearchExact, binarySearchLessOrEqual, promiseWithResolvers, removeItem, findLastIndex, toAsyncIterator, validateAnyIterable, assertNever, getUint24, getInt24, mapAsyncGenerator, clamp, UNDETERMINED_LANGUAGE, roundIfAlmostInteger, roundToMultiple, roundToDivisor, popcount, ISO_639_2_REGEX, isIso639Dash2LanguageCode, SECOND_TO_MICROSECOND_FACTOR, CallSerializer, isWebKitCache, isWebKit, isChromiumCache, isChromium, chromiumVersionCache, getChromiumVersion, missingWebCodecsClassMessage, NativePromiseConstructor, isThenable, coalesceIndex, uint8ArraysAreEqual, polyfillSymbolDispose, isNumber, arrayCount, arrayArgmin, simplifyRational, EventEmitter;
   var init_misc = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/misc.js"() {
+    "node_modules/mediabunny/dist/modules/src/misc.js"() {
       normalizeRotation = (rotation) => {
         const mappedRotation = (rotation % 360 + 360) % 360;
         if (mappedRotation === 0 || mappedRotation === 90 || mappedRotation === 180 || mappedRotation === 270) {
@@ -466,10 +466,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/logging.js
+  // node_modules/mediabunny/dist/modules/src/logging.js
   var LogLevel, Logging;
   var init_logging = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/logging.js"() {
+    "node_modules/mediabunny/dist/modules/src/logging.js"() {
       init_misc();
       (function(LogLevel2) {
         LogLevel2[LogLevel2["Silent"] = 0] = "Silent";
@@ -525,10 +525,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/metadata.js
+  // node_modules/mediabunny/dist/modules/src/metadata.js
   var RichImageData, AttachedFile, DEFAULT_TRACK_DISPOSITION;
   var init_metadata = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/metadata.js"() {
+    "node_modules/mediabunny/dist/modules/src/metadata.js"() {
       RichImageData = class {
         /** Creates a new {@link RichImageData}. */
         constructor(data, mimeType) {
@@ -575,10 +575,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/bitstream.js
+  // node_modules/mediabunny/dist/modules/shared/bitstream.js
   var Bitstream;
   var init_bitstream = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/bitstream.js"() {
+    "node_modules/mediabunny/dist/modules/shared/bitstream.js"() {
       Bitstream = class _Bitstream {
         constructor(bytes) {
           this.bytes = bytes;
@@ -642,10 +642,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/aac-misc.js
+  // node_modules/mediabunny/dist/modules/shared/aac-misc.js
   var aacFrequencyTable, aacChannelMap, parseAacAudioSpecificConfig, readAacObjectType, readAacSamplingFrequency;
   var init_aac_misc = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/aac-misc.js"() {
+    "node_modules/mediabunny/dist/modules/shared/aac-misc.js"() {
       init_bitstream();
       aacFrequencyTable = [
         96e3,
@@ -733,10 +733,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/codec.js
+  // node_modules/mediabunny/dist/modules/src/codec.js
   var PCM_AUDIO_CODECS, NON_PCM_AUDIO_CODECS, AUDIO_CODECS, AVC_LEVEL_TABLE, VP9_LEVEL_TABLE, VP9_DEFAULT_SUFFIX, AV1_DEFAULT_SUFFIX, PRORES_FOURCCS, DTS_FOURCCS, extractVideoCodecString, extractAudioCodecString, OPUS_SAMPLE_RATE, PCM_CODEC_REGEX, parsePcmCodec, VALID_VIDEO_CODEC_STRING_PREFIXES;
   var init_codec = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/codec.js"() {
+    "node_modules/mediabunny/dist/modules/src/codec.js"() {
       init_aac_misc();
       init_misc();
       PCM_AUDIO_CODECS = [
@@ -1059,10 +1059,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/mp3-misc.js
+  // node_modules/mediabunny/dist/modules/shared/mp3-misc.js
   var decodeSynchsafe, XingFlags;
   var init_mp3_misc = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/mp3-misc.js"() {
+    "node_modules/mediabunny/dist/modules/shared/mp3-misc.js"() {
       decodeSynchsafe = (synchsafed) => {
         let mask = 2130706432;
         let unsynchsafed = 0;
@@ -1081,19 +1081,19 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/ac3-misc.js
+  // node_modules/mediabunny/dist/modules/shared/ac3-misc.js
   var AC3_SAMPLE_RATES, EAC3_REDUCED_SAMPLE_RATES;
   var init_ac3_misc = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/ac3-misc.js"() {
+    "node_modules/mediabunny/dist/modules/shared/ac3-misc.js"() {
       AC3_SAMPLE_RATES = [48e3, 44100, 32e3];
       EAC3_REDUCED_SAMPLE_RATES = [24e3, 22050, 16e3];
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/codec-data.js
+  // node_modules/mediabunny/dist/modules/src/codec-data.js
   var AvcNalUnitType, HevcNalUnitType, iterateNalUnitsInAnnexB, iterateNalUnitsInLengthPrefixed, iterateAvcNalUnits, extractNalUnitTypeForAvc, removeEmulationPreventionBytes, ANNEX_B_START_CODE, extractAvcDecoderConfigurationRecord, AVC_HEVC_ASPECT_RATIO_IDC_TABLE, parseAvcSps, skipAvcHrdParameters, iterateHevcNalUnits, extractNalUnitTypeForHevc, parseHevcSps, extractHevcDecoderConfigurationRecord, parseProfileTierLevel, skipScalingListData, skipAllStRefPicSets, skipStRefPicSet, parseHevcVui, skipHevcHrdParameters, skipSubLayerHrdParameters, HevcNaluOrderState, extractVp9CodecInfoFromPacket, iterateAv1PacketObus, extractAv1CodecInfoFromPacket, determineVideoPacketType, FlacBlockType, AC3_ACMOD_CHANNEL_COUNTS, AC3_FRAME_SIZES, AC3_REGISTRATION_DESCRIPTOR, EAC3_REGISTRATION_DESCRIPTOR, parseEac3Config, getEac3SampleRate, getEac3ChannelCount, DTS_EXSS_SYNC_WORD, DTS_CORE_FRAME_HEADER_SIZE, DTS_EXSS_HEADER_PREFIX_SIZE, DTS_PCM_BLOCK_SAMPLES, DTS_SPECIFIC_BOX_SIZE, DTS_SUBBAND_SAMPLES, DTS_CORE_SAMPLE_RATES, DTS_CORE_BIT_RATES, DTS_PCM_RESOLUTIONS, DTS_AMODE_CHANNEL_COUNTS, DTS_AMODE_CHANNEL_LAYOUTS, DTS_CHANNEL_LAYOUT_LFE1, DTS_CHANNEL_LAYOUT_PAIR_MASK, DTS_EXSS_REF_CLOCKS, DTS_EXSS_SAMPLE_RATES, DTS_SPECIFIC_BOX_FRAME_DURATIONS, parseDtsFrame, extractDtsFourCcFromPacket, parseDtsCoreFrameHeader, parseDtsExssHeader, parseDtsSpecificBox, getDtsChannelCount;
   var init_codec_data = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/codec-data.js"() {
+    "node_modules/mediabunny/dist/modules/src/codec-data.js"() {
       init_codec();
       init_misc();
       init_logging();
@@ -2921,10 +2921,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/demuxer.js
+  // node_modules/mediabunny/dist/modules/src/demuxer.js
   var Demuxer;
   var init_demuxer = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/demuxer.js"() {
+    "node_modules/mediabunny/dist/modules/src/demuxer.js"() {
       Demuxer = class {
         constructor(input) {
           this.input = input;
@@ -2935,10 +2935,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/packet.js
+  // node_modules/mediabunny/dist/modules/src/packet.js
   var PLACEHOLDER_DATA, EncodedPacket;
   var init_packet = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/packet.js"() {
+    "node_modules/mediabunny/dist/modules/src/packet.js"() {
       init_misc();
       PLACEHOLDER_DATA = /* @__PURE__ */ new Uint8Array(0);
       EncodedPacket = class _EncodedPacket {
@@ -3102,10 +3102,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-misc.js
+  // node_modules/mediabunny/dist/modules/src/isobmff/isobmff-misc.js
   var buildIsobmffMimeType, parsePsshBoxContents, psshBoxesAreEqual;
   var init_isobmff_misc = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-misc.js"() {
+    "node_modules/mediabunny/dist/modules/src/isobmff/isobmff-misc.js"() {
       init_misc();
       buildIsobmffMimeType = (info) => {
         const base = info.hasVideo ? "video/" : info.hasAudio ? "audio/" : "application/";
@@ -3148,10 +3148,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-reader.js
+  // node_modules/mediabunny/dist/modules/src/isobmff/isobmff-reader.js
   var MIN_BOX_HEADER_SIZE, MAX_BOX_HEADER_SIZE, readBoxHeader, readFixed_16_16, readFixed_2_30, readIsomVariableInteger, readMetadataStringShort, readDataBox;
   var init_isobmff_reader = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-reader.js"() {
+    "node_modules/mediabunny/dist/modules/src/isobmff/isobmff-reader.js"() {
       init_metadata();
       init_misc();
       init_reader();
@@ -3227,10 +3227,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/aes.js
+  // node_modules/mediabunny/dist/modules/src/aes.js
   var AES_128_BLOCK_SIZE, Te4, Td0, Td1, Td2, Td3, Td4, rcon, tablesGenerated, generateAesTables, Aes128CbcContext;
   var init_aes = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/aes.js"() {
+    "node_modules/mediabunny/dist/modules/src/aes.js"() {
       init_misc();
       AES_128_BLOCK_SIZE = 16;
       Te4 = new Uint32Array(256);
@@ -3364,10 +3364,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-demuxer.js
+  // node_modules/mediabunny/dist/modules/src/isobmff/isobmff-demuxer.js
   var IsobmffDemuxer, IsobmffTrackBacking, IsobmffVideoTrackBacking, IsobmffAudioTrackBacking, getSampleIndexForTimestamp, getKeyframeSampleIndexForTimestamp, getSampleInfo, getNextKeyframeIndexForSample, offsetFragmentTrackDataByTimestamp, extractRotationFromMatrix, sampleTableIsEmpty, getOrCreateEncryptionAuxInfo, resolveEncryptionAuxInfo, getDefaultSampleEncryption, decryptSample, decryptCtr, decryptCbcs, collectCryptRanges;
   var init_isobmff_demuxer = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-demuxer.js"() {
+    "node_modules/mediabunny/dist/modules/src/isobmff/isobmff-demuxer.js"() {
       init_aac_misc();
       init_codec();
       init_codec_data();
@@ -6368,7 +6368,7 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/ebml.js
+  // node_modules/mediabunny/dist/modules/src/matroska/ebml.js
   function assertDefinedSize(size) {
     if (size === void 0) {
       throw new Error("Undefined element size is used in a place where it is not supported.");
@@ -6376,7 +6376,7 @@
   }
   var EBMLId, LEVEL_0_EBML_IDS, LEVEL_1_EBML_IDS, LEVEL_0_AND_1_EBML_IDS, MAX_VAR_INT_SIZE, MIN_HEADER_SIZE, MAX_HEADER_SIZE, readVarIntSize, readVarInt, readUnsignedInt, readUnsignedBigInt, readElementId, readElementSize, readElementHeader, readAsciiString, readUnicodeString, readFloat, searchForNextElementId, resync, CODEC_STRING_MAP;
   var init_ebml = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/ebml.js"() {
+    "node_modules/mediabunny/dist/modules/src/matroska/ebml.js"() {
       init_misc();
       init_reader();
       (function(EBMLId2) {
@@ -6713,10 +6713,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/matroska-misc.js
+  // node_modules/mediabunny/dist/modules/src/matroska/matroska-misc.js
   var buildMatroskaMimeType;
   var init_matroska_misc = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/matroska-misc.js"() {
+    "node_modules/mediabunny/dist/modules/src/matroska/matroska-misc.js"() {
       buildMatroskaMimeType = (info) => {
         const base = info.hasVideo ? "video/" : info.hasAudio ? "audio/" : "application/";
         let string = base + (info.isWebM ? "webm" : "x-matroska");
@@ -6729,10 +6729,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/matroska-demuxer.js
+  // node_modules/mediabunny/dist/modules/src/matroska/matroska-demuxer.js
   var BlockLacing, ContentEncodingScope, ContentCompAlgo, METADATA_ELEMENTS, MAX_RESYNC_LENGTH, MatroskaDemuxer, MatroskaTrackBacking, MatroskaVideoTrackBacking, MatroskaAudioTrackBacking;
   var init_matroska_demuxer = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/matroska-demuxer.js"() {
+    "node_modules/mediabunny/dist/modules/src/matroska/matroska-demuxer.js"() {
       init_codec_data();
       init_codec();
       init_demuxer();
@@ -8794,10 +8794,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/adts/adts-reader.js
+  // node_modules/mediabunny/dist/modules/src/adts/adts-reader.js
   var MIN_ADTS_FRAME_HEADER_SIZE, MAX_ADTS_FRAME_HEADER_SIZE, readAdtsFrameHeader;
   var init_adts_reader = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/adts/adts-reader.js"() {
+    "node_modules/mediabunny/dist/modules/src/adts/adts-reader.js"() {
       init_bitstream();
       init_reader();
       MIN_ADTS_FRAME_HEADER_SIZE = 7;
@@ -8855,10 +8855,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/adts/adts-demuxer.js
+  // node_modules/mediabunny/dist/modules/src/adts/adts-demuxer.js
   var SAMPLES_PER_AAC_FRAME, AdtsDemuxer, AdtsAudioTrackBacking;
   var init_adts_demuxer = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/adts/adts-demuxer.js"() {
+    "node_modules/mediabunny/dist/modules/src/adts/adts-demuxer.js"() {
       init_aac_misc();
       init_demuxer();
       init_id3();
@@ -9127,10 +9127,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/source.js
+  // node_modules/mediabunny/dist/modules/src/source.js
   var DEFAULT_MIN_READ_POSITION, DEFAULT_MAX_READ_POSITION, sourceFinalizationRegistry, Source, SourceRef, PathedSource, sourceRequestsAreEqual, URL_SOURCE_MIN_LOAD_AMOUNT, ReadableStreamSource, RangedSource;
   var init_source = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/source.js"() {
+    "node_modules/mediabunny/dist/modules/src/source.js"() {
       init_misc();
       init_input();
       polyfillSymbolDispose();
@@ -9535,10 +9535,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input-format.js
+  // node_modules/mediabunny/dist/modules/src/input-format.js
   var InputFormat, IsobmffInputFormat, Mp4InputFormat, MatroskaInputFormat, WebMInputFormat, AdtsInputFormat, MP4, WEBM, ADTS, validateInputFormatOptions;
   var init_input_format = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input-format.js"() {
+    "node_modules/mediabunny/dist/modules/src/input-format.js"() {
       init_isobmff_demuxer();
       init_ebml();
       init_matroska_demuxer();
@@ -9803,10 +9803,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/sample.js
+  // node_modules/mediabunny/dist/modules/src/sample.js
   var lastVideoGcErrorLog, lastAudioGcErrorLog, finalizationRegistry, VIDEO_SAMPLE_PIXEL_FORMATS, VIDEO_SAMPLE_PIXEL_FORMATS_SET, AUDIO_SAMPLE_FORMATS, AudioSampleResource, AudioSample, getBytesPerSample, formatIsPlanar, getReadFunction, getWriteFunction, isAudioData, doAudioDataCopyToWebKitWorkaround;
   var init_sample = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/sample.js"() {
+    "node_modules/mediabunny/dist/modules/src/sample.js"() {
       init_misc();
       init_logging();
       polyfillSymbolDispose();
@@ -10536,19 +10536,19 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/custom-coder.js
+  // node_modules/mediabunny/dist/modules/src/custom-coder.js
   var customVideoDecoders, customAudioDecoders;
   var init_custom_coder = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/custom-coder.js"() {
+    "node_modules/mediabunny/dist/modules/src/custom-coder.js"() {
       customVideoDecoders = [];
       customAudioDecoders = [];
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/pcm.js
+  // node_modules/mediabunny/dist/modules/src/pcm.js
   var fromUlaw, fromAlaw;
   var init_pcm = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/pcm.js"() {
+    "node_modules/mediabunny/dist/modules/src/pcm.js"() {
       fromUlaw = (u8) => {
         const MULAW_BIAS = 33;
         let sign = 0;
@@ -10582,10 +10582,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/media-sink.js
+  // node_modules/mediabunny/dist/modules/src/media-sink.js
   var validatePacketRetrievalOptions, validateTimestamp, maybeFixPacketType, EncodedPacketSink, DecoderWrapper, BaseMediaSampleSink, computeMaxQueueSize, AudioDecoderWrapper, PcmAudioDecoderWrapper, AudioSampleSink, AudioBufferSink;
   var init_media_sink = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/media-sink.js"() {
+    "node_modules/mediabunny/dist/modules/src/media-sink.js"() {
       init_codec();
       init_custom_coder();
       init_input();
@@ -11575,10 +11575,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input-track.js
+  // node_modules/mediabunny/dist/modules/src/input-track.js
   var InputTrack, requireSync, toValidatedPredicate, InputVideoTrack, InputAudioTrack, desc, prefer, toValidatedInputTrackQuery, mergeInputTrackQueries, queryInputTracks, findUnderlyingFrameRate, simplestFractionBetween, getBestGuessFrameRate;
   var init_input_track = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input-track.js"() {
+    "node_modules/mediabunny/dist/modules/src/input-track.js"() {
       init_codec_data();
       init_custom_coder();
       init_logging();
@@ -12607,10 +12607,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input.js
+  // node_modules/mediabunny/dist/modules/src/input.js
   var DEFAULT_SOURCE_CACHE_GROUP, Input, UnsupportedInputFormatError, InputDisposedError;
   var init_input = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input.js"() {
+    "node_modules/mediabunny/dist/modules/src/input.js"() {
       init_input_format();
       init_input_track();
       init_misc();
@@ -12970,10 +12970,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/reader.js
+  // node_modules/mediabunny/dist/modules/src/reader.js
   var Reader, FileSlice, checkIsInRange, readBytes, readU8, readU16Be, readU24Be, readI16Be, readU32Be, readI32Be, readU64Be, readI64Be, readF32Be, readF64Be, readAscii;
   var init_reader = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/reader.js"() {
+    "node_modules/mediabunny/dist/modules/src/reader.js"() {
       init_input();
       init_misc();
       init_source();
@@ -13192,10 +13192,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/id3.js
+  // node_modules/mediabunny/dist/modules/src/id3.js
   var Id3V2HeaderFlags, Id3V2TextEncoding, ID3_V2_HEADER_SIZE, ID3_V1_GENRES, readId3V2Header, parseId3V2Tag, Id3V2Reader;
   var init_id3 = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/id3.js"() {
+    "node_modules/mediabunny/dist/modules/src/id3.js"() {
       init_mp3_misc();
       init_logging();
       init_misc();
@@ -13843,10 +13843,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/index.js
+  // node_modules/mediabunny/dist/modules/src/index.js
   var MEDIABUNNY_LOADED_SYMBOL;
   var init_src = __esm({
-    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/index.js"() {
+    "node_modules/mediabunny/dist/modules/src/index.js"() {
       init_logging();
       init_source();
       init_input_format();
