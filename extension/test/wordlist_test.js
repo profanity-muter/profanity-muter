@@ -310,6 +310,152 @@ test("unrelated settings still resolve alongside the new keys", () => {
   assert.deepStrictEqual(r.wordlist, ["alpha"]);
 });
 
+// ---- category tagging (0.1.51) -------------------------------------------
+
+const {
+  categoryOfWord,
+  CATEGORIES,
+  SLUR_WORDS,
+  RELIGIOUS_WORDS,
+  EUPHEMISM_WORDS,
+  buildPhraseIndex,
+  buildStemCategory,
+  buildPhraseCategory,
+  findMatchesCore,
+  subtractWords
+} = PMWordlistCore;
+
+test("five categories, custom included", () => {
+  assert.deepStrictEqual(CATEGORIES, ["profanity", "slur", "religious", "euphemism", "custom"]);
+});
+
+test("every built-in word has exactly one valid non-custom category", () => {
+  const valid = ["profanity", "slur", "religious", "euphemism"];
+  DEFAULT_WORDLIST.forEach((w) => {
+    const c = categoryOfWord(w);
+    assert.notStrictEqual(valid.indexOf(c), -1, w + " -> " + c);
+  });
+});
+
+test("category buckets partition the default list (no overlap, all covered)", () => {
+  const counts = { profanity: 0, slur: 0, religious: 0, euphemism: 0 };
+  DEFAULT_WORDLIST.forEach((w) => { counts[categoryOfWord(w)]++; });
+  // Every explicit slur/religious/euphemism entry must actually be tagged so.
+  SLUR_WORDS.forEach((w) => assert.strictEqual(categoryOfWord(w), "slur", w));
+  RELIGIOUS_WORDS.forEach((w) => assert.strictEqual(categoryOfWord(w), "religious", w));
+  EUPHEMISM_WORDS.forEach((w) => assert.strictEqual(categoryOfWord(w), "euphemism", w));
+  // Buckets sum to the whole list.
+  assert.strictEqual(
+    counts.profanity + counts.slur + counts.religious + counts.euphemism,
+    DEFAULT_WORDLIST.length
+  );
+  // Sanity on a few judgment calls named in the source.
+  assert.strictEqual(categoryOfWord("retard"), "slur");
+  assert.strictEqual(categoryOfWord("hell"), "religious");
+  assert.strictEqual(categoryOfWord("bloody"), "euphemism");
+  assert.strictEqual(categoryOfWord("fuck"), "profanity");
+});
+
+test("user-added (unknown) words are category custom", () => {
+  assert.strictEqual(categoryOfWord("zzzmadeup"), "custom");
+  assert.strictEqual(categoryOfWord(""), "custom");
+  assert.strictEqual(categoryOfWord(null), "custom");
+});
+
+// ---- match attribution ---------------------------------------------------
+
+function matchWith(list, tokens) {
+  const stemSet = buildStemSet(list, EN_MATCH_CONFIG);
+  const phraseIndex = buildPhraseIndex(list, EN_MATCH_CONFIG);
+  const catMaps = {
+    stem: buildStemCategory(list, EN_MATCH_CONFIG, categoryOfWord),
+    phrase: buildPhraseCategory(list, EN_MATCH_CONFIG, categoryOfWord)
+  };
+  return findMatchesCore(tokens, stemSet, phraseIndex, EN_MATCH_CONFIG, catMaps);
+}
+
+test("single-word match carries category + canonical", () => {
+  const m = matchWith(DEFAULT_WORDLIST, ["this", "is", "hell"]);
+  assert.strictEqual(m.length, 1);
+  assert.strictEqual(m[0].category, "religious");
+  assert.strictEqual(m[0].word, "hell");
+});
+
+test("inflection attributes to the canonical root's category", () => {
+  // "damns" stems to "damn" -> religious, canonical "damn".
+  const m = matchWith(DEFAULT_WORDLIST, ["he", "damns", "it"]);
+  const hit = m.find((x) => x.index === 1);
+  assert.ok(hit, "damns should match");
+  assert.strictEqual(hit.category, "religious");
+  assert.strictEqual(hit.word, "damn");
+});
+
+test("phrase match carries category + canonical", () => {
+  const m = matchWith(DEFAULT_WORDLIST, ["oh", "my", "god", "no"]);
+  const phrase = m.find((x) => x.length === 3);
+  assert.ok(phrase, "phrase should match");
+  assert.strictEqual(phrase.category, "religious");
+  assert.strictEqual(phrase.word, "oh my god");
+});
+
+test("custom added word attributes to custom", () => {
+  const list = mergeWordlists([], ["fnord"]);
+  const m = matchWith(list, ["a", "fnord", "b"]);
+  assert.strictEqual(m.length, 1);
+  assert.strictEqual(m[0].category, "custom");
+  assert.strictEqual(m[0].word, "fnord");
+});
+
+test("findMatchesCore stays backward-compatible without catMaps", () => {
+  const stemSet = buildStemSet(DEFAULT_WORDLIST, EN_MATCH_CONFIG);
+  const phraseIndex = buildPhraseIndex(DEFAULT_WORDLIST, EN_MATCH_CONFIG);
+  const m = findMatchesCore(["hell"], stemSet, phraseIndex, EN_MATCH_CONFIG);
+  assert.strictEqual(m.length, 1);
+  assert.strictEqual(m[0].index, 0);
+  assert.strictEqual(m[0].length, 1);
+  assert.strictEqual(m[0].category, undefined);
+});
+
+// ---- whitelist ("Always allow") precedence (0.1.51) ----------------------
+
+test("subtractWords removes allowed entries (case-insensitive)", () => {
+  const out = subtractWords(["Damn", "hell", "fuck"], ["damn", "HELL"]);
+  assert.deepStrictEqual(out, ["fuck"]);
+});
+
+test("allowed built-in word does not mute", () => {
+  const r = resolveSettingsFromStorage({ pm_strictness: "strict", pm_allowWords: ["hell"] });
+  assert.strictEqual(r.wordlist.indexOf("hell"), -1, "hell must be subtracted");
+  const m = matchWith(r.wordlist, ["go", "to", "hell"]);
+  assert.strictEqual(m.length, 0, "allowed word must not match");
+});
+
+test("allow beats block: a word both added and allowed plays", () => {
+  const r = resolveSettingsFromStorage({
+    pm_strictness: "none",
+    pm_additionalWords: ["broccoli"],
+    pm_allowWords: ["broccoli"]
+  });
+  assert.strictEqual(r.wordlist.indexOf("broccoli"), -1);
+  const m = matchWith(r.wordlist, ["eat", "broccoli"]);
+  assert.strictEqual(m.length, 0, "allow must win over block");
+});
+
+test("allow covers inflections of the allowed word", () => {
+  const r = resolveSettingsFromStorage({ pm_strictness: "strict", pm_allowWords: ["damn"] });
+  const m = matchWith(r.wordlist, ["he", "damns", "loudly"]);
+  assert.strictEqual(m.length, 0, "damns should also pass once damn is allowed");
+});
+
+test("resolve returns allowWords for the popup", () => {
+  const r = resolveSettingsFromStorage({ pm_allowWords: ["hell", "God", "hell"] });
+  assert.deepStrictEqual(r.allowWords, ["hell", "God"]);
+});
+
+test("STORAGE_KEYS covers pm_allowWords", () => {
+  assert.notStrictEqual(PMWordlistCore.STORAGE_KEYS.indexOf("pm_allowWords"), -1);
+});
+
 // ---- summary -------------------------------------------------------------
 
 console.log("wordlist_test.js: " + passed + "/" + (passed + failed) + " passed");

@@ -6,6 +6,11 @@
   --pm-border: #e2e2e2;
   --pm-accent: #4f7cff;
   --pm-track-off: #cfcfcf;
+  --pm-soft: #f4f6fb;
+  --pm-bar-track: #e9edf7;
+  --pm-good: #2f7d5b;
+  --pm-good-bg: #eef7f1;
+  --pm-good-border: #cfe6d8;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -16,12 +21,15 @@
     --pm-border: #35363a;
     --pm-accent: #6d93ff;
     --pm-track-off: #4a4b4f;
+    --pm-soft: #26272b;
+    --pm-bar-track: #2c2e35;
+    --pm-good: #6bcf9f;
+    --pm-good-bg: #1c2b23;
+    --pm-good-border: #2c4636;
   }
 }
 
-* {
-  box-sizing: border-box;
-}
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
@@ -32,325 +40,74 @@ body {
   font-size: 13px;
 }
 
+.pm-hidden { display: none !important; }
+
+/* ---- Header (shared across views) --------------------------------------- */
 .pm-header {
-  padding: 14px 16px 10px;
+  padding: 12px 14px;
   border-bottom: 1px solid var(--pm-border);
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
 }
 
 .pm-title {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 650;
+  flex: 1;
 }
 
-.pm-row {
-  padding: 12px 16px;
-  border-bottom: 1px solid var(--pm-border);
+.pm-back {
+  appearance: none;
+  border: none;
+  background: none;
+  color: var(--pm-muted);
+  font-size: 20px;
+  line-height: 1;
+  padding: 0 4px 0 0;
+  cursor: pointer;
 }
 
-.pm-row--actions {
-  border-bottom: none;
+.pm-header-right {
   display: flex;
   align-items: center;
   gap: 10px;
 }
 
-/* Open-source footer: a quiet trust signal, set apart from the action row
-   above by a hairline and centered so it reads as a colophon rather than a
-   control. */
-.pm-footer {
-  padding: 10px 16px 14px;
-  border-top: 1px solid var(--pm-border);
-  text-align: center;
-}
-
-.pm-switch-label {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  cursor: pointer;
-}
-
-.pm-switch-text {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.pm-switch-title {
-  font-weight: 500;
-}
-
-.pm-switch-sub {
-  color: var(--pm-muted);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.pm-switch {
-  position: relative;
-  flex: 0 0 auto;
-}
-
-.pm-switch input {
-  position: absolute;
-  opacity: 0;
-  width: 1px;
-  height: 1px;
-}
-
-.pm-switch-track {
-  /* flex + align-items:center vertically centers the thumb using real
-     layout math ((trackH - thumbH) / 2), immune to the margin-collapse
-     trap a block-level thumb with only `margin` would fall into (a
-     block child's top margin can collapse through a border/padding-less
-     parent, which is what previously nudged the knob a couple of
-     pixels toward the top of the track instead of centering it). */
-  display: flex;
-  align-items: center;
-  width: 36px;
-  height: 20px;
-  border-radius: 999px;
-  background: var(--pm-track-off);
-  transition: background 0.14s ease;
-}
-
-.pm-switch-thumb {
-  /* margin-left only (no margin-top/bottom): flex centers vertically,
-     so there's nothing left to collapse. Horizontal resting position
-     is 2px from the left edge; the checked state below translates it
-     the remaining distance to sit 2px from the right edge. */
-  flex: 0 0 auto;
-  width: 16px;
-  height: 16px;
-  margin-left: 2px;
-  border-radius: 50%;
-  background: #fff;
-  transition: transform 0.14s ease;
-}
-
-.pm-switch input:checked + .pm-switch-track {
-  background: var(--pm-accent);
-}
-
-.pm-switch input:checked + .pm-switch-track .pm-switch-thumb {
-  transform: translateX(16px);
-}
-
-.pm-switch input:focus-visible + .pm-switch-track {
-  outline: 2px solid var(--pm-accent);
-  outline-offset: 2px;
-}
-
-.pm-row--radio .pm-label {
-  margin-bottom: 8px;
-}
-
-.pm-radio-group {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-  margin-bottom: 6px;
-}
-
-.pm-radio-label {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  cursor: pointer;
-  font-size: 12px;
-}
-
-/* Custom-drawn radio dot, same principle as the toggle switch: native
-   input[type=radio] widgets (especially with accent-color, on macOS
-   Chrome's "Chrome Refresh" form controls) carry their own built-in
-   fill animation that CSS transitions can't fully suppress or tune -
-   that hidden native animation is what made the "While catching up"
-   radio feel laggy even though the underlying DOM `checked` state
-   flips in under 1ms. Using `appearance: none` and drawing the dot
-   ourselves, purely from the `:checked` pseudo-class with NO
-   `transition` property anywhere, guarantees the paint is exactly as
-   instant as the logical state change - there's nothing left to
-   animate, native or otherwise. */
-.pm-radio-label input {
-  appearance: none;
-  -webkit-appearance: none;
-  flex: 0 0 auto;
-  width: 14px;
-  height: 14px;
-  margin: 0;
-  border: 1.5px solid var(--pm-border);
-  border-radius: 50%;
-  background: var(--pm-bg);
-  cursor: pointer;
-  position: relative;
-}
-
-.pm-radio-label input:checked {
-  border-color: var(--pm-accent);
-}
-
-.pm-radio-label input:checked::after {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  transform: translate(-50%, -50%);
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--pm-accent);
-}
-
-.pm-radio-label input:focus-visible {
-  outline: 2px solid var(--pm-accent);
-  outline-offset: 2px;
-}
-
-/* Strictness radios: one per line, each with a title + one-line
-   description, instead of the compact inline layout the other radio
-   groups (catch-up mode, padding) use. */
-.pm-radio-group--stacked {
-  flex-direction: column;
-  flex-wrap: nowrap;
-  gap: 8px;
-}
-
-.pm-radio-label--stacked {
-  align-items: flex-start;
-}
-
-.pm-radio-label--stacked input {
-  margin-top: 2px;
-}
-
-.pm-radio-title {
-  display: block;
-  font-weight: 500;
-  color: var(--pm-fg);
-}
-
-.pm-radio-desc {
-  display: block;
-  color: var(--pm-muted);
-  font-size: 11px;
-  line-height: 1.4;
-}
-
-.pm-wordlist-mode-note {
-  font-style: italic;
-}
-
-.pm-row--radio .pm-hint {
-  margin: 0;
-}
-
-.pm-list-heading {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
-
-.pm-label {
-  display: block;
-  font-weight: 500;
-  margin-bottom: 4px;
-}
-
-.pm-label--muted {
-  color: var(--pm-muted);
-  font-size: 11px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-.pm-row--debug .pm-switch-label {
-  margin-top: 8px;
-}
-
-/* "Copy debug log" and "Report a problem" sit under the overlay switch in
-   the Debugging row, side by side. .pm-switch-label is a flex row, so this
-   group falls onto its own line below it and only needs the vertical
-   rhythm restored - the same link-button treatment "Reset stats" gets in
-   the Stats row. */
-.pm-debug-actions {
-  display: flex;
-  align-items: baseline;
-  gap: 14px;
-  margin-top: 10px;
-  flex-wrap: wrap;
-}
-
-.pm-row--stats {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 4px 10px;
-}
-
-.pm-row--stats .pm-label--muted {
-  flex: 0 0 100%;
-  margin-bottom: 2px;
-}
-
-.pm-stats-line {
-  margin: 0;
-  font-size: 12px;
-  color: var(--pm-fg);
-}
-
-.pm-link-button {
+.pm-lock-icon {
   appearance: none;
   border: none;
   background: none;
+  font-size: 15px;
+  line-height: 1;
   padding: 0;
-  color: var(--pm-accent);
-  font-size: 11px;
-  font-weight: 500;
   cursor: pointer;
-  text-decoration: underline;
-  white-space: nowrap;
 }
 
-.pm-link-button:hover {
-  opacity: 0.85;
+/* ---- Rows / section headings -------------------------------------------- */
+.pm-row {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--pm-border);
 }
+.pm-view > .pm-row:last-child,
+.pm-gate-body > .pm-row:last-child { border-bottom: none; }
 
-/* The "Link copied" confirmation state on the share control: a clear,
-   momentary change of the control itself so the copy is unmissable. */
-.pm-link-button.pm-share--copied {
-  color: var(--pm-fg);
-  text-decoration: none;
-  font-weight: 600;
-}
-
-.pm-masked-list {
-  max-height: 220px;
-  overflow-y: auto;
-  border: 1px solid var(--pm-border);
-  border-radius: 6px;
-  padding: 8px;
-  font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  letter-spacing: 1px;
+.pm-sh {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--pm-muted);
+  margin-bottom: 10px;
 }
 
-.pm-masked-list .pm-masked-empty {
-  color: var(--pm-muted);
-  letter-spacing: normal;
-  font-style: italic;
+.pm-sh-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
 }
-
-.pm-hidden {
-  display: none !important;
-}
+.pm-sh-row .pm-sh { margin-bottom: 10px; }
 
 .pm-hint {
   margin: 0 0 8px;
@@ -359,70 +116,320 @@ body {
   line-height: 1.4;
 }
 
-.pm-textarea {
+/* ---- Activity summary + bars -------------------------------------------- */
+.pm-summary-tap {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  margin: 0;
   width: 100%;
-  resize: vertical;
-  background: var(--pm-bg);
-  color: var(--pm-fg);
-  border: 1px solid var(--pm-border);
-  border-radius: 6px;
-  padding: 8px;
-  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  text-align: left;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
 }
 
-.pm-textarea:focus {
-  outline: 2px solid var(--pm-accent);
-  outline-offset: -1px;
+.pm-bigstat { display: flex; gap: 12px; margin-bottom: 11px; }
+.pm-bigstat-b {
+  flex: 1;
+  background: var(--pm-soft);
+  border: 1px solid var(--pm-border);
+  border-radius: 8px;
+  padding: 9px 10px;
+  text-align: center;
 }
+.pm-bigstat-v { font-size: 21px; font-weight: 700; }
+.pm-bigstat-k {
+  font-size: 10px; color: var(--pm-muted);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+
+.pm-cats { display: block; }
+.pm-stat {
+  display: grid;
+  grid-template-columns: 74px 1fr 34px;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  font-size: 12px;
+}
+.pm-stat-bar { height: 8px; border-radius: 4px; background: var(--pm-bar-track); overflow: hidden; }
+.pm-stat-bar > i { display: block; height: 100%; background: var(--pm-accent); }
+.pm-stat-n { text-align: right; font-variant-numeric: tabular-nums; color: var(--pm-muted); }
+.pm-cats-empty { font-size: 11px; color: var(--pm-muted); font-style: italic; }
+
+/* ---- Built-in list level rows ------------------------------------------- */
+.pm-levels { display: flex; flex-direction: column; gap: 4px; }
+.pm-level {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 7px 0;
+  cursor: pointer;
+}
+.pm-level input {
+  position: absolute;
+  opacity: 0;
+  width: 1px; height: 1px;
+}
+.pm-level-rd {
+  width: 16px; height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--pm-track-off);
+  flex: 0 0 auto;
+  margin-top: 1px;
+}
+.pm-level input:checked + .pm-level-rd {
+  border-color: var(--pm-accent);
+  background: radial-gradient(var(--pm-accent) 42%, transparent 46%);
+}
+.pm-level input:focus-visible + .pm-level-rd {
+  outline: 2px solid var(--pm-accent);
+  outline-offset: 2px;
+}
+.pm-level-text { display: flex; flex-direction: column; }
+.pm-level-lab { font-weight: 600; }
+.pm-level-desc { font-size: 11.5px; color: var(--pm-muted); margin-top: 1px; }
+
+/* ---- Drill-in rows ------------------------------------------------------- */
+.pm-drills { display: flex; flex-direction: column; }
+.pm-drill {
+  appearance: none;
+  border: none;
+  background: none;
+  color: inherit;
+  font: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 11px 0;
+  cursor: pointer;
+  font-weight: 500;
+  text-align: left;
+  width: 100%;
+}
+.pm-drill + .pm-drill { border-top: 1px solid var(--pm-border); }
+.pm-drill-sub { font-size: 11px; color: var(--pm-muted); font-weight: 400; }
+.pm-chev { color: var(--pm-track-off); font-size: 16px; }
+
+/* ---- Chips (Manage words) ------------------------------------------------ */
+.pm-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.pm-chips:empty { margin-bottom: 0; }
+.pm-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  background: var(--pm-soft);
+  border: 1px solid var(--pm-border);
+  border-radius: 999px;
+  padding: 4px 9px;
+}
+.pm-chip--allow { border-color: var(--pm-good-border); background: var(--pm-good-bg); }
+.pm-chip-x {
+  appearance: none; border: none; background: none;
+  color: var(--pm-muted); cursor: pointer; font-weight: 700;
+  font-size: 13px; line-height: 1; padding: 0;
+}
+.pm-chips-empty { font-size: 11px; color: var(--pm-muted); font-style: italic; }
+
+.pm-addbox { display: flex; gap: 6px; }
+.pm-addinput {
+  flex: 1;
+  background: var(--pm-bg);
+  color: var(--pm-fg);
+  border: 1px dashed var(--pm-border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-family: inherit;
+}
+.pm-addinput:focus { outline: 2px solid var(--pm-accent); outline-offset: -1px; border-style: solid; }
+.pm-add-btn {
+  appearance: none;
+  border: 1px solid var(--pm-border);
+  background: transparent;
+  color: var(--pm-fg);
+  border-radius: 8px;
+  padding: 0 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* ---- Segmented controls (catch-up, padding, range) ---------------------- */
+.pm-seg {
+  display: flex;
+  border: 1px solid var(--pm-border);
+  border-radius: 8px;
+  overflow: hidden;
+  font-size: 12px;
+}
+.pm-seg-opt {
+  flex: 1;
+  text-align: center;
+  cursor: pointer;
+  border-right: 1px solid var(--pm-border);
+}
+.pm-seg-opt:last-child { border-right: none; }
+.pm-seg-opt input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.pm-seg-opt span { display: block; padding: 7px 4px; }
+.pm-seg-opt input:checked + span { background: var(--pm-accent); color: #fff; font-weight: 600; }
+.pm-seg-opt input:focus-visible + span { outline: 2px solid var(--pm-accent); outline-offset: -2px; }
+
+/* Range toggle: three buttons, each flex:1 to fill the full width (no dead
+   space on the right). */
+.pm-seg--range { width: 100%; }
+.pm-range-opt {
+  flex: 1;
+  appearance: none;
+  border: none;
+  border-right: 1px solid var(--pm-border);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  padding: 7px 4px;
+  cursor: pointer;
+}
+.pm-range-opt:last-child { border-right: none; }
+.pm-range-opt.pm-range-on { background: var(--pm-accent); color: #fff; font-weight: 600; }
+
+/* ---- Most muted list ----------------------------------------------------- */
+.pm-mostmuted { max-height: 172px; overflow-y: auto; }
+.pm-mm {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 2px;
+  font-size: 12px;
+  border-bottom: 1px solid var(--pm-border);
+}
+.pm-mm:last-child { border-bottom: none; }
+.pm-mm-rk { color: var(--pm-track-off); width: 22px; display: inline-block; }
+.pm-mm-n { color: var(--pm-muted); font-variant-numeric: tabular-nums; }
+.pm-mostmuted-empty { font-size: 11px; color: var(--pm-muted); font-style: italic; }
+
+/* ---- Lock gate + overlay ------------------------------------------------- */
+.pm-gate { position: relative; }
+.pm-gate--locked .pm-gate-body { filter: blur(3.5px); opacity: 0.5; pointer-events: none; user-select: none; }
+.pm-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  background: color-mix(in srgb, var(--pm-bg) 60%, transparent);
+  padding: 20px;
+}
+.pm-overlay-icon {
+  width: 34px; height: 34px;
+  border-radius: 9px;
+  background: var(--pm-soft);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+}
+.pm-overlay-title { font-weight: 600; font-size: 13.5px; }
+.pm-overlay .pm-input { width: 100%; }
+.pm-overlay .pm-button { width: 100%; }
+.pm-overlay-hint { font-size: 10.5px; color: var(--pm-muted); text-align: center; margin: 0; line-height: 1.4; }
+.pm-overlay-hint:empty { display: none; }
+
+/* ---- Relock bar ---------------------------------------------------------- */
+.pm-relock-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 9px 14px;
+  background: var(--pm-good-bg);
+  border-bottom: 1px solid var(--pm-good-border);
+  font-size: 11.5px;
+  color: var(--pm-good);
+}
+.pm-relock-now {
+  appearance: none; border: none; background: none;
+  color: var(--pm-fg); text-decoration: underline; cursor: pointer;
+  font: inherit; padding: 0;
+}
+
+/* ---- Footer -------------------------------------------------------------- */
+.pm-footer {
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--pm-border);
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+}
+
+/* ---- Switch (shared, reused verbatim from the prior design) -------------- */
+.pm-switch-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+}
+.pm-switch-text { display: flex; flex-direction: column; gap: 2px; }
+.pm-switch-title { font-weight: 500; }
+.pm-switch-sub { color: var(--pm-muted); font-size: 11px; line-height: 1.4; }
+.pm-switch { position: relative; flex: 0 0 auto; display: inline-flex; }
+.pm-switch input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.pm-switch-track {
+  display: flex;
+  align-items: center;
+  width: 36px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--pm-track-off);
+  transition: background 0.14s ease;
+}
+.pm-switch-thumb {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-left: 2px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.14s ease;
+}
+.pm-switch input:checked + .pm-switch-track { background: var(--pm-accent); }
+.pm-switch input:checked + .pm-switch-track .pm-switch-thumb { transform: translateX(16px); }
+.pm-switch input:focus-visible + .pm-switch-track { outline: 2px solid var(--pm-accent); outline-offset: 2px; }
+
+/* ---- Buttons / inputs / links -------------------------------------------- */
+.pm-link-button {
+  appearance: none;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--pm-accent);
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.pm-link-button:hover { text-decoration: underline; }
+.pm-link-button.pm-share--copied { color: var(--pm-fg); font-weight: 600; }
 
 .pm-button {
   appearance: none;
   border: none;
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--pm-accent);
   color: #fff;
   font-size: 13px;
-  font-weight: 500;
-  padding: 7px 14px;
+  font-weight: 600;
+  padding: 8px 14px;
   cursor: pointer;
 }
-
-.pm-button:hover {
-  filter: brightness(1.05);
-}
-
-.pm-button:active {
-  filter: brightness(0.95);
-}
-
+.pm-button:hover { filter: brightness(1.05); }
+.pm-button:active { filter: brightness(0.95); }
 .pm-button--secondary {
   background: transparent;
   color: var(--pm-fg);
   border: 1px solid var(--pm-border);
-}
-
-.pm-status {
-  color: var(--pm-muted);
-  font-size: 11px;
-}
-
-/* ---- Parental lock ------------------------------------------------------
-   Three mutually-exclusive panels (setup / locked / unlocked) share this
-   row; popup.js shows exactly one by toggling .pm-hidden. */
-.pm-lock-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 8px;
-}
-
-.pm-lock-panel .pm-hint {
-  margin: 0;
-}
-
-.pm-lock-panel .pm-button,
-.pm-lock-panel .pm-link-button {
-  align-self: flex-start;
+  font-weight: 500;
 }
 
 .pm-input {
@@ -430,58 +437,35 @@ body {
   background: var(--pm-bg);
   color: var(--pm-fg);
   border: 1px solid var(--pm-border);
-  border-radius: 6px;
-  padding: 7px 8px;
+  border-radius: 8px;
+  padding: 8px 10px;
   font-size: 13px;
   font-family: inherit;
 }
+.pm-input:focus { outline: 2px solid var(--pm-accent); outline-offset: -1px; }
 
-.pm-input:focus {
-  outline: 2px solid var(--pm-accent);
-  outline-offset: -1px;
+.pm-status {
+  display: block;
+  padding: 0 14px 8px;
+  color: var(--pm-muted);
+  font-size: 11px;
+  min-height: 14px;
 }
+.pm-status:empty { display: none; }
 
-/* Lock errors ("Passwords don't match", "Wrong password") belong next to
-   the fields, not in the action row's status line at the bottom of a
-   scrolled popup where they would go unseen. */
-.pm-lock-status:empty {
-  display: none;
-}
+.pm-lock-status { margin: 0 0 8px; color: var(--pm-accent); font-size: 11.5px; }
+.pm-lock-status:empty { display: none; }
+.pm-lock-caption { margin: 0; }
 
-.pm-lock-status {
-  margin-top: 8px;
-  color: var(--pm-accent);
-}
-
-.pm-lock-caption {
+.pm-debug-actions {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
   margin-top: 10px;
+  flex-wrap: wrap;
 }
 
-/* Locked state: every settings control is genuinely `disabled` (set by
-   popup.js, not merely styled), so this only has to make that visible.
-   Native `:disabled` already greys form controls; the custom switch
-   tracks and link-buttons need saying out loud. */
-.pm-row--locked {
-  opacity: 0.55;
-}
-
-.pm-row--locked .pm-switch-label,
-.pm-row--locked .pm-radio-label {
-  cursor: not-allowed;
-}
-
-.pm-link-button:disabled,
-.pm-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  text-decoration: none;
-}
-
-/* ---- Onboarding banner, review prompt, share (0.1.30) -------------------- */
-
-/* "Finish setup" - a full-width strip under the header, shown until the
-   user has acknowledged. Styled as a quiet accent bar rather than a
-   warning: it is an unfinished task, not an error. */
+/* ---- Finish-setup banner + review card + health (reused) ---------------- */
 .pm-banner {
   display: block;
   width: 100%;
@@ -494,48 +478,20 @@ body {
   font-size: 12px;
   font-weight: 600;
   text-align: left;
-  padding: 9px 16px;
+  padding: 9px 14px;
   cursor: pointer;
 }
+.pm-banner:hover { background: color-mix(in srgb, var(--pm-accent) 18%, transparent); }
 
-.pm-banner:hover {
-  background: color-mix(in srgb, var(--pm-accent) 18%, transparent);
-}
+.pm-row--review { display: flex; flex-direction: column; gap: 10px; }
+.pm-review-text { margin: 0; font-size: 13px; line-height: 1.45; }
+.pm-review-actions { display: flex; align-items: center; gap: 12px; }
 
-.pm-row--review {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.pm-review-text {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.45;
-}
-
-.pm-review-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.pm-row--share .pm-hint {
-  margin-top: 6px;
-}
-
-/* ---- Health warning (0.1.32) --------------------------------------------
-   Deliberately louder than .pm-banner: that one is an unfinished task,
-   this one says the filter is not working right now. Uses a dedicated
-   warning color rather than the accent, so it cannot be mistaken for a
-   routine notice, and states the consequence in the title with the cause
-   underneath. */
 :root {
   --pm-warn-fg: #8a1f11;
   --pm-warn-bg: #fdeceb;
   --pm-warn-border: #f0c2bd;
 }
-
 @media (prefers-color-scheme: dark) {
   :root {
     --pm-warn-fg: #ff9c8f;
@@ -543,30 +499,58 @@ body {
     --pm-warn-border: #5c2a25;
   }
 }
-
 .pm-health {
-  padding: 11px 16px;
+  padding: 11px 14px;
   background: var(--pm-warn-bg);
   border-bottom: 1px solid var(--pm-warn-border);
 }
+.pm-health-title { margin: 0; font-size: 12.5px; font-weight: 650; line-height: 1.4; color: var(--pm-warn-fg); }
+.pm-health-detail { margin: 4px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--pm-warn-fg); opacity: 0.85; }
+.pm-health .pm-link-button { margin-top: 7px; color: var(--pm-warn-fg); }
 
-.pm-health-title {
+/* ---- Shared controls used by the onboarding page (onboarding.html reuses
+   popup.css wholesale). Kept here so both surfaces stay in one stylesheet. */
+.pm-label { display: block; font-weight: 500; margin-bottom: 4px; }
+
+.pm-radio-group { display: flex; flex-wrap: wrap; gap: 8px 14px; margin-bottom: 6px; }
+.pm-radio-label { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 12px; }
+.pm-radio-label input {
+  appearance: none;
+  -webkit-appearance: none;
+  flex: 0 0 auto;
+  width: 14px; height: 14px;
   margin: 0;
-  font-size: 12.5px;
-  font-weight: 650;
-  line-height: 1.4;
-  color: var(--pm-warn-fg);
+  border: 1.5px solid var(--pm-border);
+  border-radius: 50%;
+  background: var(--pm-bg);
+  cursor: pointer;
+  position: relative;
 }
+.pm-radio-label input:checked { border-color: var(--pm-accent); }
+.pm-radio-label input:checked::after {
+  content: "";
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--pm-accent);
+}
+.pm-radio-label input:focus-visible { outline: 2px solid var(--pm-accent); outline-offset: 2px; }
+.pm-radio-group--stacked { flex-direction: column; flex-wrap: nowrap; gap: 8px; }
+.pm-radio-label--stacked { align-items: flex-start; }
+.pm-radio-label--stacked input { margin-top: 2px; }
+.pm-radio-title { display: block; font-weight: 500; color: var(--pm-fg); }
+.pm-radio-desc { display: block; color: var(--pm-muted); font-size: 11px; line-height: 1.4; }
 
-.pm-health-detail {
-  margin: 4px 0 0;
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--pm-warn-fg);
-  opacity: 0.85;
+.pm-textarea {
+  width: 100%;
+  resize: vertical;
+  background: var(--pm-bg);
+  color: var(--pm-fg);
+  border: 1px solid var(--pm-border);
+  border-radius: 6px;
+  padding: 8px;
+  font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
-
-.pm-health .pm-link-button {
-  margin-top: 7px;
-  color: var(--pm-warn-fg);
-}
+.pm-textarea:focus { outline: 2px solid var(--pm-accent); outline-offset: -1px; }

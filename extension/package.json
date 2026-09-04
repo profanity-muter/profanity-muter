@@ -1,6 +1,6 @@
 {
   "name": "profanity-muter-extension",
-  "version": "0.1.50",
+  "version": "0.1.51",
   "private": true,
   "type": "commonjs",
   "scripts": {
@@ -8,7 +8,7 @@
     "package": "node scripts/fetch-models.mjs && node build.js",
     "fetch-models": "node scripts/fetch-models.mjs",
     "check-models": "node verify/check-models.mjs",
-    "test": "node test/wordlist_test.js && node test/lock_test.js && node test/moments_test.js && node test/report_test.js && node test/health_test.js && node test/session_binding_test.js && node test/active_tab_test.js && node test/pill_test.js && node test/catchup_test.js && node test/decode_test.js && node test/runs_test.js && node test/preempt_test.js && node test/model_manifest_test.js && node test/devlog_test.js && node test/devlog_integration_test.js && node test/no_emdash_test.js",
+    "test": "node test/wordlist_test.js && node test/stats_test.js && node test/lock_test.js && node test/moments_test.js && node test/report_test.js && node test/health_test.js && node test/session_binding_test.js && node test/active_tab_test.js && node test/pill_test.js && node test/catchup_test.js && node test/decode_test.js && node test/runs_test.js && node test/preempt_test.js && node test/model_manifest_test.js && node test/devlog_test.js && node test/devlog_integration_test.js && node test/no_emdash_test.js",
     "verify": "node verify/run_playwright.mjs",
     "verify:popup": "node verify/popup_check.mjs",
     "verify:offline": "node verify/verify-offline.mjs"

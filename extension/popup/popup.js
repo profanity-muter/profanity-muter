@@ -1,583 +1,380 @@
 // popup/popup.js
-// Popup UI logic. Reads/writes chrome.storage.sync directly (pm_enabled,
-// pm_muteAudio, pm_censorCaptions, pm_catchupMode, pm_debugOverlay,
-// pm_showStatus, pm_strictness, pm_additionalWords, pm_padding) plus the
-// optional parental lock (pm_lock), per the shared schema used by
-// shared/wordlist.js and captions.js. pm_wordlist is DEPRECATED as of
-// 0.1.29: read for migration, never written.
+// Design C popup (0.1.51). A home dashboard with drill-in sub-screens, all
+// in one popup page (views toggled by .pm-hidden). Reads/writes
+// chrome.storage.sync directly for settings (pm_enabled, pm_muteAudio,
+// pm_censorCaptions, pm_catchupMode, pm_debugOverlay, pm_showStatus,
+// pm_strictness, pm_additionalWords, pm_allowWords, pm_padding) plus the
+// optional parental lock (pm_lock), and reads chrome.storage.LOCAL for the
+// Activity dashboard (pm_activity via shared/stats.js, pm_stats legacy).
 //
-// 0.1.46 (English-only): this build filters English speech only. The 0.1.25
-// multilingual "Filter other languages" toggle and the active-language pack
-// display were removed; that work now lives in a separate multilingual repo.
+// EVERY setting from the prior popup is preserved with the same storage key
+// and semantics, reorganized under the new screens:
+//   * Home: master on/off (header), Activity summary, Built-in list
+//     (pm_strictness), and drill-ins.
+//   * Manage words: pm_additionalWords ("Also block") + pm_allowWords
+//     ("Always allow", new whitelist, 0.1.51).
+//   * Playback & display: pm_muteAudio, pm_censorCaptions, pm_showStatus,
+//     pm_catchupMode, pm_padding, pm_debugOverlay, plus Copy debug log /
+//     Report a problem (never lock-gated).
+//   * Activity: 24h / 7d / all-time breakdown + most-muted.
 //
-// WORD LIST MODEL (0.1.29 redesign)
-// ---------------------------------
-// pm_strictness is now a LEVEL - "none" | "standard" | "strict", default
-// "strict" - selecting how much of the BUILT-IN list is switched on, and
-// the user's own words are a separate, ADDITIVE list in
-// pm_additionalWords. The effective list is always tier + additions; see
-// shared/wordlist.js's resolveSettingsFromStorage for the resolution and
-// the full migration table off the old schema.
-//
-// The single hard rule this popup enforces: **the built-in lists'
-// CONTENTS are never displayed here.** Not in the textarea, not in the
-// masked view, not in a count breakdown. The textarea holds the user's
-// additional words and nothing else, at all times.
-//
-// That is why the old "Custom" mode is gone. It meant "use my list
-// INSTEAD of the built-ins", so the only way to add a single word was to
-// switch to Custom - which seeded the textarea with the entire built-in
-// list to edit down, i.e. adding "poop" to the filter required showing a
-// child's parent a screenful of slurs first. It also silently froze the
-// user's copy of the built-ins at whatever shipped that day. Additive
-// words fix both.
-//
-// Consequences for the code below, all of which USED to exist and are
-// deliberately gone: no seeding the textarea from DEFAULT_WORDLIST, no
-// "switch to custom for editing" auto-mode-change on unmask/save, no
-// hasSavedCustomWordlist bookkeeping, and no reading of pm_wordlist for
-// display. This popup never writes pm_wordlist again either - the
-// deprecated key is left exactly as it was found, for rollback.
-//
-// PARENTAL LOCK (0.1.29)
-// ----------------------
-// When chrome.storage.sync's pm_lock is set, the popup opens LOCKED:
-// every settings control is `disabled` and a password field is shown.
-// Unlocking applies to this popup session only (no persisted unlocked
-// flag - closing the popup re-locks). Enforcement is one rule in one
-// place: persistSettings() is the ONLY function in this file that writes
-// to storage, and it asks PMLock.mayWriteSettings() before doing so, so
-// there are no per-handler checks to keep in sync and a future options
-// surface inherits the rule by using the same funnel. The disabled
-// controls are the visible half of this; persistSettings is the half
-// that actually matters.
-//
-// "Copy debug log" is deliberately EXEMPT from the lock (and from the
-// debug-overlay toggle): a kid who hits a problem must still be able to
-// export a log and send it to whoever can read it. It only reads
-// storage, and it exposes nothing a settings change could.
-//
-// The lock is a deterrent, not security - see shared/lock.js's header,
-// and the caption shown under the control says so to the user in as many
-// words.
-//
-// Separately, the STATS section reads/writes chrome.storage.LOCAL (not
-// sync) key pm_stats ({totalMuted, videosProtected}), written by the
-// audio pipeline. This is a different storage AREA on purpose - stats
-// are per-install telemetry, not something that should sync across a
-// user's devices - so it's handled independently of the settings
-// load()/save() flow above, with its own chrome.storage.onChanged
-// listener filtered to areaName === "local".
-//
-// pm_safeMode has been merged into pm_catchupMode ("mute" | "pause" |
-// "play") and is NEVER written by this popup anymore - there is no
-// separate Safe mode toggle. It is still read once, by
-// shared/wordlist.js's resolveSettingsFromStorage, purely to migrate a
-// legacy `pm_safeMode === false` (old "safe mode off") forward into
-// `pm_catchupMode: "play"` the first time settings are resolved after
-// an update, if the user never explicitly picks a catch-up mode.
-//
-// Word list handling:
-//   - The textarea is always the source of truth for the user's
-//     ADDITIONAL words - it holds them whether or not it's visible.
-//   - A masked, read-only view is shown by default (each entry
-//     rendered as asterisks matching its shape) so opening the popup
-//     never flashes explicit text. "Show words to edit" swaps to the
-//     real textarea. Masking still applies even though these are the
-//     user's own words: the popup may well be opened in front of the
-//     child the filter is for.
-//   - Save writes exactly what's in the textarea to pm_additionalWords,
-//     including an intentionally-emptied list.
-//
-// BUG FIX (2026-08-30) - "clicking the icon doesn't load the settings
-// UI properly": chrome.storage.sync.get() is a real async round trip,
-// not an instant local read (it can hit sync's own rate limits/quota
-// errors, or just take a moment) - but every control's HTML started in
-// its "off"/empty state, only becoming correct once that callback
-// resolved. Two consequences: (1) on ANY storage error
-// (chrome.runtime.lastError - quota exceeded, sync disabled, a
-// transient failure), load()'s callback bailed out immediately,
-// permanently leaving every toggle looking off and the word list
-// area completely empty, with only a small, easy-to-miss "Failed to
-// load settings" status line - this reproduced 100% with a simulated
-// storage error and looked exactly like "the settings UI doesn't load
-// very well". (2) Even without an error, there was a real window
-// (however brief) after the popup opens but before storage.get()
-// resolves where the same broken-looking all-off/empty state was
-// visible, and popups are dismissed on blur - a user who clicks away
-// during that window never sees it "load" at all. Fix: the HTML now
-// ships with its real defaults already `checked`, and popup.js
-// synchronously pre-renders the default word list and default
-// catch-up mode BEFORE ever calling chrome.storage.sync.get() - so the
-// popup is fully correct and usable the instant it paints, with zero
-// dependency on storage latency. The async load() call then only ever
-// needs to *reconcile* to the user's actual saved settings if they
-// differ from defaults; on a storage error, it now leaves the
-// already-correct UI alone instead of blanking it, and only surfaces
-// the status message.
+// LOCK ENFORCEMENT is unchanged in principle: persistSettings() is the ONE
+// funnel every write goes through, and it asks PMLock.mayWriteSettings()
+// before writing, so a forced DOM change still writes nothing. The 0.1.51
+// additions are UI around that: the settings are gated behind a blur +
+// password overlay while locked (the Activity summary stays public), the
+// header on/off switch prompts for the password when clicked locked, and an
+// unlocked session auto-relocks after 5 minutes of no interaction (the pure
+// timer predicate is PMLock.shouldRelock).
 
 (function () {
   "use strict";
 
-  var enabledEl = document.getElementById("pm-enabled");
-  var muteAudioEl = document.getElementById("pm-mute-audio");
-  var censorCaptionsEl = document.getElementById("pm-censor-captions");
+  var $ = function (id) { return document.getElementById(id); };
+
+  // ---- settings controls (same IDs/semantics as before) ----
+  var enabledEl = $("pm-enabled");
+  var muteAudioEl = $("pm-mute-audio");
+  var censorCaptionsEl = $("pm-censor-captions");
   var catchupModeEls = document.getElementsByName("pm-catchup-mode");
-  var debugOverlayEl = document.getElementById("pm-debug-overlay");
-  var showStatusEl = document.getElementById("pm-show-status");
+  var debugOverlayEl = $("pm-debug-overlay");
+  var showStatusEl = $("pm-show-status");
   var paddingEls = document.getElementsByName("pm-padding");
   var strictnessEls = document.getElementsByName("pm-strictness");
-  var wordlistEl = document.getElementById("pm-wordlist");
-  var wordlistModeNoteEl = document.getElementById("pm-wordlist-mode-note");
-  var wordlistHintEl = document.getElementById("pm-wordlist-hint");
-  var maskedListEl = document.getElementById("pm-masked-list");
-  var toggleMaskEl = document.getElementById("pm-toggle-mask");
-  var restoreEl = document.getElementById("pm-restore");
-  var saveEl = document.getElementById("pm-save");
-  var statusEl = document.getElementById("pm-status");
-  var statsLineEl = document.getElementById("pm-stats-line");
-  var resetStatsEl = document.getElementById("pm-reset-stats");
-  var copyDevlogEl = document.getElementById("pm-copy-devlog");
-  var lockSetupEl = document.getElementById("pm-lock-setup");
-  var lockLockedEl = document.getElementById("pm-lock-locked");
-  var lockUnlockedEl = document.getElementById("pm-lock-unlocked");
-  var lockNewEl = document.getElementById("pm-lock-new");
-  var lockConfirmEl = document.getElementById("pm-lock-confirm");
-  var lockPasswordEl = document.getElementById("pm-lock-password");
-  var lockSetEl = document.getElementById("pm-lock-set");
-  var lockUnlockEl = document.getElementById("pm-lock-unlock");
-  var lockRemoveEl = document.getElementById("pm-lock-remove");
-  var lockStatusEl = document.getElementById("pm-lock-status");
-  var openOnboardingEl = document.getElementById("pm-open-onboarding");
-  var finishSetupEl = document.getElementById("pm-finish-setup");
-  var reviewCardEl = document.getElementById("pm-review-card");
-  var reviewYesEl = document.getElementById("pm-review-yes");
-  var reviewNoEl = document.getElementById("pm-review-no");
-  var shareRowEl = document.getElementById("pm-share-row");
-  var shareEl = document.getElementById("pm-share");
-  var reportProblemEl = document.getElementById("pm-report-problem");
-  var viewSourceEl = document.getElementById("pm-view-source");
-  var healthEl = document.getElementById("pm-health");
-  var healthMessageEl = document.getElementById("pm-health-message");
-  var healthDetailEl = document.getElementById("pm-health-detail");
-  var healthReportEl = document.getElementById("pm-health-report");
+  var restoreEl = $("pm-restore");
+  var statusEl = $("pm-status");
+  var copyDevlogEl = $("pm-copy-devlog");
+
+  // ---- navigation ----
+  var backEl = $("pm-back");
+  var titleEl = $("pm-title");
+  var enabledWrapEl = $("pm-enabled-wrap");
+  var lockIconEl = $("pm-lock-icon");
+  var views = {
+    home: $("pm-view-home"),
+    manage: $("pm-view-manage"),
+    playback: $("pm-view-playback"),
+    activity: $("pm-view-activity"),
+    lock: $("pm-view-lock")
+  };
+  var VIEW_TITLES = {
+    home: "Profanity Muter",
+    manage: "Manage words",
+    playback: "Playback & display",
+    activity: "Activity",
+    lock: "Parental lock"
+  };
+  var currentView = "home";
+
+  // ---- manage words ----
+  var blockChipsEl = $("pm-block-chips");
+  var allowChipsEl = $("pm-allow-chips");
+  var blockFormEl = $("pm-block-form");
+  var allowFormEl = $("pm-allow-form");
+  var blockInputEl = $("pm-block-input");
+  var allowInputEl = $("pm-allow-input");
+  var manageSubEl = $("pm-manage-sub");
+
+  // ---- activity ----
+  var homeMutedEl = $("pm-home-muted");
+  var homeVideosEl = $("pm-home-videos");
+  var homeCatsEl = $("pm-home-cats");
+  var actMutedEl = $("pm-act-muted");
+  var actVideosEl = $("pm-act-videos");
+  var actCatsEl = $("pm-act-cats");
+  var actTopEl = $("pm-act-top");
+  var rangeOptEls = document.querySelectorAll(".pm-range-opt");
+
+  // ---- lock ----
+  var lockSetupEl = $("pm-lock-setup");
+  var lockManageEl = $("pm-lock-manage");
+  var lockNewEl = $("pm-lock-new");
+  var lockConfirmEl = $("pm-lock-confirm");
+  var lockSetEl = $("pm-lock-set");
+  var lockRemoveEl = $("pm-lock-remove");
+  var lockStatusEl = $("pm-lock-status");
+  var homeGateEl = $("pm-home-gated") && $("pm-home-gated").parentNode;
+  var actGateEl = $("pm-act-gated") && $("pm-act-gated").parentNode;
+  var homeOverlayEl = $("pm-home-overlay");
+  var actOverlayEl = $("pm-act-overlay");
+  var homePassEl = $("pm-home-pass");
+  var actPassEl = $("pm-act-pass");
+  var homeUnlockEl = $("pm-home-unlock");
+  var actUnlockEl = $("pm-act-unlock");
+  var homeLockMsgEl = $("pm-home-lockmsg");
+  var actLockMsgEl = $("pm-act-lockmsg");
+  var relockBarEl = $("pm-relock-bar");
+  var lockNowEl = $("pm-lock-now");
+  var lockDrillLabelEl = $("pm-lock-drill-label");
+
+  // ---- other surfaces ----
+  var openOnboardingEl = $("pm-open-onboarding");
+  var finishSetupEl = $("pm-finish-setup");
+  var reviewCardEl = $("pm-review-card");
+  var reviewYesEl = $("pm-review-yes");
+  var reviewNoEl = $("pm-review-no");
+  var shareEl = $("pm-share");
+  var reportProblemEl = $("pm-report-problem");
+  var viewSourceEl = $("pm-view-source");
+  var healthEl = $("pm-health");
+  var healthMessageEl = $("pm-health-message");
+  var healthDetailEl = $("pm-health-detail");
+  var healthReportEl = $("pm-health-report");
 
   var hasStorage =
-    typeof chrome !== "undefined" &&
-    chrome &&
-    chrome.storage &&
-    chrome.storage.sync;
-
+    typeof chrome !== "undefined" && chrome && chrome.storage && chrome.storage.sync;
   var hasLocalStorage =
-    typeof chrome !== "undefined" &&
-    chrome &&
-    chrome.storage &&
-    chrome.storage.local;
+    typeof chrome !== "undefined" && chrome && chrome.storage && chrome.storage.local;
 
-  // NOTE (0.1.29): the defaultWordlist() and coreWordlist() accessors
-  // that used to live here are deleted, not merely unused. They existed
-  // solely to put the built-in lists' CONTENTS on screen, which is the
-  // one thing this popup must never do - leaving them around as
-  // convenient helpers is how that comes back.
+  function statsApi() { return (typeof window !== "undefined" && window.PMStats) || null; }
+  function wordlistCore() {
+    return (typeof window !== "undefined" && window.PMWordlist && window.PMWordlist._core) || null;
+  }
 
+  // ---- generic setting accessors (unchanged resolution rules) ----
+  function core() { return wordlistCore(); }
   function catchupModes() {
-    if (
-      typeof window !== "undefined" &&
-      window.PMWordlist &&
-      window.PMWordlist._core &&
-      Array.isArray(window.PMWordlist._core.CATCHUP_MODES)
-    ) {
-      return window.PMWordlist._core.CATCHUP_MODES;
-    }
-    return ["mute", "pause", "play"];
+    var c = core();
+    return (c && Array.isArray(c.CATCHUP_MODES)) ? c.CATCHUP_MODES : ["mute", "pause", "play"];
   }
-
-  function defaultCatchupMode() {
-    if (
-      typeof window !== "undefined" &&
-      window.PMWordlist &&
-      window.PMWordlist._core &&
-      window.PMWordlist._core.DEFAULT_CATCHUP_MODE
-    ) {
-      return window.PMWordlist._core.DEFAULT_CATCHUP_MODE;
-    }
-    return "mute";
-  }
-
-  function setCatchupMode(value) {
-    var mode = catchupModes().indexOf(value) !== -1 ? value : defaultCatchupMode();
-    for (var i = 0; i < catchupModeEls.length; i++) {
-      catchupModeEls[i].checked = catchupModeEls[i].value === mode;
-    }
-  }
-
-  function getCatchupMode() {
-    for (var i = 0; i < catchupModeEls.length; i++) {
-      if (catchupModeEls[i].checked) return catchupModeEls[i].value;
-    }
-    return defaultCatchupMode();
-  }
-
-  function paddingModes() {
-    if (
-      typeof window !== "undefined" &&
-      window.PMWordlist &&
-      window.PMWordlist._core &&
-      Array.isArray(window.PMWordlist._core.PADDING_MODES)
-    ) {
-      return window.PMWordlist._core.PADDING_MODES;
-    }
-    return ["tight", "normal", "wide"];
-  }
-
-  function defaultPadding() {
-    if (
-      typeof window !== "undefined" &&
-      window.PMWordlist &&
-      window.PMWordlist._core &&
-      window.PMWordlist._core.DEFAULT_PADDING
-    ) {
-      return window.PMWordlist._core.DEFAULT_PADDING;
-    }
-    return "normal";
-  }
-
-  function setPadding(value) {
-    var mode = paddingModes().indexOf(value) !== -1 ? value : defaultPadding();
-    for (var i = 0; i < paddingEls.length; i++) {
-      paddingEls[i].checked = paddingEls[i].value === mode;
-    }
-  }
-
-  function getPadding() {
-    for (var i = 0; i < paddingEls.length; i++) {
-      if (paddingEls[i].checked) return paddingEls[i].value;
-    }
-    return defaultPadding();
-  }
-
-  function strictnessModes() {
-    if (
-      typeof window !== "undefined" &&
-      window.PMWordlist &&
-      window.PMWordlist._core &&
-      Array.isArray(window.PMWordlist._core.STRICTNESS_MODES)
-    ) {
-      return window.PMWordlist._core.STRICTNESS_MODES;
-    }
-    return ["none", "standard", "strict"];
-  }
-
-  // The shared resolver (shared/wordlist.js). Using it here rather than
-  // re-deriving the level/additional-words migration is deliberate: the
-  // popup used to carry its own duplicate copy of the strictness
-  // migration rules, and the 0.1.29 migration table is far too
-  // consequential to have two implementations that can drift. Falls back
-  // to null when wordlist.js somehow isn't loaded, in which case load()
-  // simply leaves the already-correct default render alone.
+  function defaultCatchupMode() { var c = core(); return (c && c.DEFAULT_CATCHUP_MODE) || "mute"; }
+  function paddingModes() { var c = core(); return (c && Array.isArray(c.PADDING_MODES)) ? c.PADDING_MODES : ["tight", "normal", "wide"]; }
+  function defaultPadding() { var c = core(); return (c && c.DEFAULT_PADDING) || "normal"; }
+  function strictnessModes() { var c = core(); return (c && Array.isArray(c.STRICTNESS_MODES)) ? c.STRICTNESS_MODES : ["none", "standard", "strict"]; }
+  function defaultStrictness() { var c = core(); return (c && c.DEFAULT_STRICTNESS) || "strict"; }
   function resolveFromStorage(items) {
-    if (
-      typeof window !== "undefined" &&
-      window.PMWordlist &&
-      window.PMWordlist._core &&
-      typeof window.PMWordlist._core.resolveSettingsFromStorage === "function"
-    ) {
-      return window.PMWordlist._core.resolveSettingsFromStorage(items);
-    }
-    return null;
+    var c = core();
+    return (c && typeof c.resolveSettingsFromStorage === "function") ? c.resolveSettingsFromStorage(items) : null;
   }
 
-  function defaultStrictness() {
-    if (
-      typeof window !== "undefined" &&
-      window.PMWordlist &&
-      window.PMWordlist._core &&
-      window.PMWordlist._core.DEFAULT_STRICTNESS
-    ) {
-      return window.PMWordlist._core.DEFAULT_STRICTNESS;
-    }
-    return "strict";
+  function setRadio(els, value, allowed, fallback) {
+    var mode = allowed.indexOf(value) !== -1 ? value : fallback;
+    for (var i = 0; i < els.length; i++) els[i].checked = els[i].value === mode;
   }
-
-  function setStrictness(value) {
-    var mode = strictnessModes().indexOf(value) !== -1 ? value : defaultStrictness();
-    for (var i = 0; i < strictnessEls.length; i++) {
-      strictnessEls[i].checked = strictnessEls[i].value === mode;
-    }
+  function getRadio(els, fallback) {
+    for (var i = 0; i < els.length; i++) if (els[i].checked) return els[i].value;
+    return fallback;
   }
-
-  function getStrictness() {
-    for (var i = 0; i < strictnessEls.length; i++) {
-      if (strictnessEls[i].checked) return strictnessEls[i].value;
-    }
-    return defaultStrictness();
-  }
-
-  // The user's OWN additional words, as currently held in the textarea.
-  // This is the only list this popup ever renders. There is deliberately
-  // no function here that returns the built-in tier's contents for
-  // display - see the header.
-  function additionalWordsForDisplay() {
-    return parseWordlist(wordlistEl.value);
-  }
+  function setCatchupMode(v) { setRadio(catchupModeEls, v, catchupModes(), defaultCatchupMode()); }
+  function getCatchupMode() { return getRadio(catchupModeEls, defaultCatchupMode()); }
+  function setPadding(v) { setRadio(paddingEls, v, paddingModes(), defaultPadding()); }
+  function getPadding() { return getRadio(paddingEls, defaultPadding()); }
+  function setStrictness(v) { setRadio(strictnessEls, v, strictnessModes(), defaultStrictness()); }
+  function getStrictness() { return getRadio(strictnessEls, defaultStrictness()); }
 
   function setStatus(text) {
-    statusEl.textContent = text;
+    statusEl.textContent = text || "";
     if (text) {
       window.clearTimeout(setStatus._t);
-      setStatus._t = window.setTimeout(function () {
-        statusEl.textContent = "";
-      }, 2000);
+      setStatus._t = window.setTimeout(function () { statusEl.textContent = ""; }, 2200);
     }
   }
 
-  function parseWordlist(raw) {
-    return raw
-      .split("\n")
-      .map(function (line) { return line.trim(); })
-      .filter(function (line) { return line.length > 0; });
+  // ---- navigation ------------------------------------------------------
+  function showView(name) {
+    if (!views[name]) name = "home";
+    currentView = name;
+    Object.keys(views).forEach(function (k) {
+      var v = views[k];
+      var on = k === name;
+      v.classList.toggle("pm-hidden", !on);
+      v.setAttribute("aria-hidden", on ? "false" : "true");
+    });
+    var isHome = name === "home";
+    backEl.classList.toggle("pm-hidden", isHome);
+    titleEl.textContent = VIEW_TITLES[name] || VIEW_TITLES.home;
+    // The master switch belongs to the home header only.
+    enabledWrapEl.classList.toggle("pm-hidden", !isHome);
+    applyLockUI();
+    if (name === "activity") renderActivity();
+    if (name === "manage") renderManage();
+    if (name === "lock") renderLockView();
   }
 
-  // Mask a single entry, preserving spaces (so a masked phrase still
-  // reads as multiple words) but turning every other character into
-  // an asterisk - no letters, shape only.
-  function maskEntry(entry) {
-    return entry.replace(/\S/g, "*");
+  // ==== Parental lock state machine =====================================
+  var lockRecord = null;
+  var unlockedThisSession = false;
+  var lockStateLoaded = false;
+  var idleTimer = null;
+  var currentEnabled = true; // last known pm_enabled, for revert-on-locked
+
+  function lockApi() { return (typeof window !== "undefined" && window.PMLock) || null; }
+  function hasLock() {
+    var api = lockApi();
+    return !!(api && api.isLockRecord && api.isLockRecord(lockRecord));
+  }
+  function isLocked() { return hasLock() && !unlockedThisSession; }
+
+  // null when a write may proceed; "loading" until pm_lock is read; "locked"
+  // otherwise. This is the single point the popup decides write-permission.
+  function settingsWriteBlockedReason() {
+    var api = lockApi();
+    if (!api || typeof api.mayWriteSettings !== "function") return null;
+    if (!lockStateLoaded) return "loading";
+    return api.mayWriteSettings(lockRecord, unlockedThisSession) ? null : "locked";
+  }
+  function maySaveSettings() { return settingsWriteBlockedReason() === null; }
+
+  // Reflect lock state across the whole UI: overlays, blur, padlock, the
+  // relock bar, the lock drill label, and the idle timer.
+  function applyLockUI() {
+    var locked = isLocked();
+    var lockSet = hasLock();
+
+    if (homeGateEl) homeGateEl.classList.toggle("pm-gate--locked", locked);
+    if (actGateEl) actGateEl.classList.toggle("pm-gate--locked", locked);
+    show(homeOverlayEl, locked);
+    show(actOverlayEl, locked);
+
+    // Padlock in header: only when a lock exists.
+    lockIconEl.classList.toggle("pm-hidden", !lockSet);
+    lockIconEl.textContent = locked ? "🔒" : "🔓"; // closed / open
+
+    // Relock bar: only while unlocked with a lock set, and only on home.
+    show(relockBarEl, lockSet && !locked && currentView === "home");
+
+    lockDrillLabelEl.textContent = lockSet ? "Parental lock" : "Set a parental lock";
+
+    if (lockSet && !locked) armIdle();
+    else disarmIdle();
   }
 
-  // The summary line above the list. States the LEVEL and how many words
-  // the user has added - never a built-in count, and never built-in
-  // contents. "Strict list, plus 3 of your own" tells a parent everything
-  // they need without putting the built-ins on screen; a built-in count
-  // would only invite "which 123 words?".
-  var LEVEL_PHRASES = {
-    none: "No built-in list",
-    standard: "Standard list",
-    strict: "Strict list"
-  };
-
-  function updateWordlistModeNote(words) {
-    var phrase = LEVEL_PHRASES[getStrictness()] || LEVEL_PHRASES.strict;
-    var n = words.length;
-    var own = n === 1 ? "1 of your own" : n + " of your own";
-    wordlistModeNoteEl.textContent = phrase + ", plus " + own;
+  function show(el, visible) {
+    if (!el) return;
+    el.classList.toggle("pm-hidden", !visible);
+    el.setAttribute("aria-hidden", visible ? "false" : "true");
   }
 
-  function updateWordlistHint() {
-    if (getStrictness() === "none") {
-      wordlistHintEl.textContent =
-        'No built-in list is on - only the words below are filtered. One word or phrase per line; click "Show words to edit" to change them.';
-    } else {
-      wordlistHintEl.textContent =
-        'Words you add here are filtered on top of the built-in list, one word or phrase per line. They\'re masked until you click "Show words to edit".';
-    }
+  function setLockMsg(text) {
+    if (homeLockMsgEl) homeLockMsgEl.textContent = text || "";
+    if (actLockMsgEl) actLockMsgEl.textContent = text || "";
   }
 
-  function renderMasked() {
-    var words = additionalWordsForDisplay();
-    updateWordlistModeNote(words);
-    updateWordlistHint();
-    maskedListEl.innerHTML = "";
-    if (!words.length) {
-      var empty = document.createElement("div");
-      empty.className = "pm-masked-empty";
-      empty.textContent =
-        getStrictness() === "none"
-          ? "(nothing to filter - no built-in list and no words of your own)"
-          : "(no words of your own yet - the built-in list is still on)";
-      maskedListEl.appendChild(empty);
-      return;
-    }
-    words.forEach(function (word) {
-      var line = document.createElement("div");
-      line.textContent = maskEntry(word);
-      maskedListEl.appendChild(line);
+  // Auto-relock after 5 minutes of no interaction (PMLock.shouldRelock is
+  // the pure predicate). resetIdle() runs on every interaction so it never
+  // relocks mid-use; the timer itself is a plain setTimeout re-armed on each
+  // interaction.
+  function idleMs() {
+    var api = lockApi();
+    return (api && api.IDLE_RELOCK_MS) || 5 * 60 * 1000;
+  }
+  function armIdle() {
+    disarmIdle();
+    idleTimer = window.setTimeout(relock, idleMs());
+  }
+  function disarmIdle() {
+    if (idleTimer) { window.clearTimeout(idleTimer); idleTimer = null; }
+  }
+  function resetIdle() {
+    if (hasLock() && !isLocked()) armIdle();
+  }
+  function relock() {
+    if (!hasLock()) return;
+    unlockedThisSession = false;
+    disarmIdle();
+    if (currentView !== "home" && currentView !== "activity") showView("home");
+    else applyLockUI();
+    setStatus("Locked");
+  }
+
+  function attemptUnlock(passEl, msgSetter) {
+    var api = lockApi();
+    if (!api) return;
+    var attempt = passEl.value;
+    api.verify(lockRecord, attempt).then(function (ok) {
+      passEl.value = "";
+      if (!ok) { msgSetter("Wrong password"); return; }
+      unlockedThisSession = true;
+      msgSetter("");
+      resetIdle();
+      applyLockUI();
+      setStatus("Settings unlocked");
     });
   }
 
-  var masked = true;
-
-  function showMasked() {
-    renderMasked();
-    maskedListEl.classList.remove("pm-hidden");
-    maskedListEl.setAttribute("aria-hidden", "false");
-    wordlistEl.classList.add("pm-hidden");
-    wordlistEl.setAttribute("aria-hidden", "true");
-    toggleMaskEl.textContent = "Show words to edit";
-    masked = true;
+  function promptUnlock() {
+    // Bring the parent to the home overlay and focus the field.
+    if (currentView !== "home") showView("home");
+    else applyLockUI();
+    setStatus("Locked - enter the password to change settings");
+    if (homePassEl) { try { homePassEl.focus(); } catch (e) {} }
   }
 
-  function showUnmasked() {
-    maskedListEl.classList.add("pm-hidden");
-    maskedListEl.setAttribute("aria-hidden", "true");
-    wordlistEl.classList.remove("pm-hidden");
-    wordlistEl.setAttribute("aria-hidden", "false");
-    toggleMaskEl.textContent = "Hide words";
-    masked = false;
-    wordlistEl.focus();
+  function loadLock() {
+    if (!hasStorage) { lockStateLoaded = true; applyLockUI(); return; }
+    chrome.storage.sync.get(["pm_lock"], function (items) {
+      if (chrome.runtime && chrome.runtime.lastError) {
+        // Fail OPEN: a transient sync error must not brick a parent's own
+        // settings, and the lock is a deterrent anyway.
+        lockRecord = null;
+        lockStateLoaded = true;
+        applyLockUI();
+        return;
+      }
+      lockRecord = (items && items.pm_lock) || null;
+      lockStateLoaded = true;
+      applyLockUI();
+    });
   }
 
-  // The textarea is now ALWAYS the user's own editable list, in every
-  // level - so unmasking is just unmasking. The old
-  // switchToCustomForEditing() path (which flipped strictness to
-  // "custom" and seeded the textarea with the built-ins before revealing
-  // it) is gone with the mode it served.
-  function toggleMask() {
-    if (masked) showUnmasked();
-    else showMasked();
-  }
-
-  // Fires on every Built-in list radio click. The level no longer has any
-  // effect on what the textarea holds - only on the summary line and the
-  // hint - so this just re-renders and saves.
-  function onStrictnessChange() {
-    renderMasked();
-    saveTogglesOnly();
-  }
-
-  // Synchronous, correct-by-default render - runs immediately, before
-  // any chrome.storage.sync call, so the popup is fully usable and
-  // visually correct (real default word list shown, defaults selected)
-  // the instant it paints, independent of storage latency or errors.
-  // The static HTML already ships `checked` on the default-true
-  // toggles and the default "mute"/"normal"/"strict" radios, so this
-  // only needs to handle what plain HTML can't: populating the word
-  // list textarea and rendering the masked view.
-  function renderDefaultsSynchronously() {
-    // Empty, not seeded: a fresh install has no additional words, and the
-    // built-ins must never appear here. (This line used to be
-    // `defaultWordlist().join("\n")` - the single biggest source of
-    // built-in contents leaking onto the screen, since it ran on EVERY
-    // popup open before storage had even been read.)
-    wordlistEl.value = "";
-    setCatchupMode(defaultCatchupMode());
-    setPadding(defaultPadding());
-    setStrictness(defaultStrictness());
-    showMasked();
-  }
-
-  function load() {
-    renderDefaultsSynchronously();
-
-    if (!hasStorage) {
-      setStatus("Storage unavailable");
+  // ---- lock view (set / remove) ----
+  function renderLockView() {
+    var api = lockApi();
+    var lockSet = hasLock();
+    if (api && typeof api.available === "function" && !api.available() && !lockSet) {
+      show(lockSetupEl, false);
+      show(lockManageEl, false);
+      lockStatusEl.textContent = "Password locking isn't available in this browser.";
       return;
     }
-    // Array form, NOT the "defaults object" form - a defaults object
-    // with an `undefined`-valued key (e.g. { pm_wordlist: undefined })
-    // silently drops that key from the request, so it ALWAYS comes
-    // back undefined even when a real value was saved. That was the
-    // bug: the popup would always show the built-in defaults and, on
-    // Save, silently overwrite a real saved custom word list. Default
-    // manually, in code, on the raw result instead.
-    chrome.storage.sync.get(
-      [
-        "pm_enabled",
-        "pm_muteAudio",
-        "pm_censorCaptions",
-        "pm_catchupMode",
-        "pm_debugOverlay",
-        "pm_showStatus",
-        "pm_strictness",
-        "pm_additionalWords",
-        "pm_padding",
-        "pm_safeMode", // read-only, for the legacy-migration display below
-        "pm_wordlist" // read-only, for the 0.1.29 migration (never written)
-      ],
-      function (items) {
-        // BUG FIX: this used to `return` here, leaving the popup
-        // however it happened to look at that instant (which, before
-        // the synchronous pre-render above existed, meant permanently
-        // blank/all-off). Now the popup was already fully correct via
-        // renderDefaultsSynchronously() before this callback ever ran,
-        // so on error we simply leave it as-is (showing built-in
-        // defaults, exactly what shared/wordlist.js itself falls back
-        // to at runtime when it can't read storage either) and only
-        // add the status message - never blank a working UI.
-        if (chrome.runtime && chrome.runtime.lastError) {
-          setStatus("Couldn't load saved settings - showing defaults");
-          return;
-        }
-        items = items || {};
-        enabledEl.checked = items.pm_enabled !== false;
-        muteAudioEl.checked = items.pm_muteAudio !== false;
-        censorCaptionsEl.checked = items.pm_censorCaptions !== false;
-        debugOverlayEl.checked = items.pm_debugOverlay === true;
-        showStatusEl.checked = items.pm_showStatus !== false;
-        // Invalid/unset pm_catchupMode falls back to the default
-        // ("mute") UNLESS the legacy pm_safeMode was explicitly saved
-        // as false, in which case the radio group should reflect the
-        // migrated "play" choice - same rule as
-        // resolveSettingsFromStorage in shared/wordlist.js, duplicated
-        // here just for what the popup *displays* (the popup never
-        // writes pm_safeMode itself; once the user picks any option
-        // here and it saves, pm_catchupMode becomes explicitly set and
-        // this legacy fallback no longer applies).
-        var displayedCatchupMode =
-          catchupModes().indexOf(items.pm_catchupMode) !== -1
-            ? items.pm_catchupMode
-            : items.pm_safeMode === false
-              ? "play"
-              : defaultCatchupMode();
-        setCatchupMode(displayedCatchupMode);
-
-        var displayedPadding =
-          paddingModes().indexOf(items.pm_padding) !== -1
-            ? items.pm_padding
-            : defaultPadding();
-        setPadding(displayedPadding);
-
-        // Level + additional words come straight from the shared
-        // resolver, so the 0.1.29 migration table has exactly ONE
-        // implementation (see resolveFromStorage's comment). A user
-        // upgrading from the old "custom" schema therefore sees their
-        // existing list appear in "My additional words" with the
-        // built-in level set to None - the same effective filtering they
-        // had before, now expressed in the new model.
-        var resolved = resolveFromStorage(items);
-        if (resolved) {
-          setStrictness(resolved.strictness);
-          wordlistEl.value = resolved.additionalWords.join("\n");
-        }
-        // Always refresh (not just `if (masked)`) - the mode note/hint
-        // are visible regardless of masked/unmasked state.
-        renderMasked();
-      }
-    );
+    show(lockSetupEl, !lockSet);
+    show(lockManageEl, lockSet);
   }
 
-  // ---- the single storage-write funnel (and the lock's enforcement point) ----
-  //
-  // EVERY write this popup makes goes through here - settings, the word
-  // list, and the stats reset (which targets the `local` area instead;
-  // hence the `area` argument). That is the whole point: the parental
-  // lock is checked in exactly one place, so it cannot be forgotten on a
-  // new handler, and a future options page inherits it by calling this.
-  // The disabled controls are the visible half of the lock; this is the
-  // half that actually enforces it.
-  //
-  // Returns false (and leaves storage untouched) when the write was
-  // refused, so callers can skip their optimistic UI updates.
+  function setLockPassword() {
+    var api = lockApi();
+    if (!api || !hasStorage) { lockStatusEl.textContent = "Password locking isn't available."; return; }
+    var check = api.validateNewPassword(lockNewEl.value, lockConfirmEl.value);
+    if (!check.ok) { lockStatusEl.textContent = check.error; return; }
+    lockStatusEl.textContent = "";
+    api.create(lockNewEl.value).then(function (record) {
+      chrome.storage.sync.set({ pm_lock: record }, function () {
+        if (chrome.runtime && chrome.runtime.lastError) { lockStatusEl.textContent = "Couldn't save the password"; return; }
+        lockRecord = record;
+        // Setting a lock does not lock the parent out of the popup they are
+        // in - they stay unlocked this session; the next open is locked.
+        unlockedThisSession = true;
+        lockNewEl.value = ""; lockConfirmEl.value = "";
+        renderLockView();
+        applyLockUI();
+        lockStatusEl.textContent = "Password set. Settings lock next time this popup opens.";
+      });
+    }, function () {
+      lockStatusEl.textContent = "Couldn't set a password on this browser";
+    });
+  }
+
+  function removeLockPassword() {
+    if (!hasStorage) return;
+    if (!maySaveSettings()) { lockStatusEl.textContent = "Unlock first"; return; }
+    chrome.storage.sync.remove("pm_lock", function () {
+      if (chrome.runtime && chrome.runtime.lastError) { lockStatusEl.textContent = "Couldn't remove the password"; return; }
+      lockRecord = null;
+      unlockedThisSession = false;
+      renderLockView();
+      applyLockUI();
+      lockStatusEl.textContent = "Password removed";
+    });
+  }
+
+  // ==== storage write funnel (the lock's enforcement point) =============
   function persistSettings(values, cb, area) {
-    if (!hasStorage) {
-      setStatus("Storage unavailable");
-      return false;
-    }
+    if (!hasStorage) { setStatus("Storage unavailable"); return false; }
     var blocked = settingsWriteBlockedReason();
-    if (blocked === "loading") {
-      setStatus("One moment…");
-      return false;
-    }
-    if (blocked) {
-      setStatus("Locked - enter the password to change settings");
-      return false;
-    }
-    var target =
-      area === "local" ? chrome.storage.local : chrome.storage.sync;
-    if (!target) {
-      setStatus("Storage unavailable");
-      return false;
-    }
+    if (blocked === "loading") { setStatus("One moment..."); return false; }
+    if (blocked) { setStatus("Locked - enter the password to change settings"); return false; }
+    var target = area === "local" ? chrome.storage.local : chrome.storage.sync;
+    if (!target) { setStatus("Storage unavailable"); return false; }
     target.set(values, function () {
       var failed = !!(chrome.runtime && chrome.runtime.lastError);
       if (cb) cb(failed);
@@ -585,15 +382,9 @@
     return true;
   }
 
-  // The settings every save path writes. Collected in one place so save()
-  // and saveTogglesOnly() cannot drift apart in which keys they cover.
-  //
-  // pm_safeMode is intentionally NOT written - it's been merged into
-  // pm_catchupMode; once pm_catchupMode is explicitly saved,
-  // resolveSettingsFromStorage always prefers it and never looks at
-  // pm_safeMode again. pm_wordlist is intentionally NOT written either
-  // (0.1.29): it is deprecated and read-only, left exactly as found so a
-  // rollback finds the user's old list intact.
+  // The toggle/radio settings, collected so every save path covers the same
+  // keys. Arrays (pm_additionalWords/pm_allowWords) are written separately
+  // by the Manage screen. pm_safeMode/pm_wordlist are never written.
   function currentSettingsValues() {
     return {
       pm_enabled: !!enabledEl.checked,
@@ -607,425 +398,315 @@
     };
   }
 
-  function save() {
-    var values = currentSettingsValues();
-    // Written exactly as typed, including an intentionally emptied list.
-    // Saving no longer changes the level in any way - adding words is
-    // orthogonal to which built-in tier is on.
-    values.pm_additionalWords = parseWordlist(wordlistEl.value);
-    persistSettings(values, function (failed) {
-      if (failed) {
-        setStatus("Save failed");
-        return;
-      }
-      // Always refresh (not just `if (masked)`) - the summary line's
-      // "plus N of your own" count is visible regardless of masked or
-      // unmasked state.
-      renderMasked();
-      setStatus("Saved");
-    });
-  }
-
-  // Toggles save immediately for snappy feel; the word list needs the
-  // explicit Save button since it's free-form text.
-  //
-  // IMPORTANT for perceived responsiveness: the checkbox/radio's own
-  // visual flip is pure CSS driven off `:checked` (see popup.css) and
-  // already happened, natively, before this "change" handler even
-  // runs - this function must stay fire-and-forget. Never make the
-  // toggle's visual state (or re-check/re-render any input here) wait
-  // on the chrome.storage.sync.set() callback; the callback below is
-  // ONLY allowed to touch the status text, never re-read storage or
-  // re-set .checked on any control (that would double-flip / lag the
-  // toggle behind a round trip that doesn't need to block anything).
-  // The fire-and-forget settings-only path shared by every toggle and
-  // radio EXCEPT the free-form additional-words textarea, which only
-  // saves via the explicit Save button (save() above), since it needs
-  // an explicit "I'm done typing" signal.
   function saveTogglesOnly() {
     persistSettings(currentSettingsValues(), function (failed) {
       setStatus(failed ? "Save failed" : "Saved");
     });
   }
 
-  // "Restore defaults" (0.1.29 semantics): back to the shipped starting
-  // point - the Strict built-in level, and none of your own words. It no
-  // longer loads the built-in list into the textarea, because the
-  // built-in list is not the user's list any more and its contents are
-  // never shown. Unlike the old version this writes immediately rather
-  // than staging an edit for Save: there is nothing left to review, and
-  // "click Save to keep" on an already-cleared textarea read as though
-  // the clear hadn't happened yet.
+  // The master switch lives in the header, outside the gated region, so its
+  // click must be intercepted directly: when locked, revert the visual flip
+  // and send the parent to the unlock prompt instead of writing.
+  function onEnabledChange() {
+    if (settingsWriteBlockedReason() === "locked") {
+      enabledEl.checked = currentEnabled;
+      promptUnlock();
+      return;
+    }
+    currentEnabled = enabledEl.checked;
+    saveTogglesOnly();
+  }
+
+  // ==== word lists (Manage words) =======================================
+  var blockWords = [];
+  var allowWords = [];
+
+  function normalizeWord(raw) {
+    return String(raw || "").trim().replace(/\s+/g, " ");
+  }
+  function dedupePush(list, word) {
+    var key = word.toLowerCase();
+    for (var i = 0; i < list.length; i++) if (list[i].toLowerCase() === key) return false;
+    list.push(word);
+    return true;
+  }
+
+  function renderChips(container, list, cls, onRemove) {
+    container.innerHTML = "";
+    if (!list.length) {
+      var empty = document.createElement("span");
+      empty.className = "pm-chips-empty";
+      empty.textContent = "(none yet)";
+      container.appendChild(empty);
+      return;
+    }
+    list.forEach(function (word, idx) {
+      var chip = document.createElement("span");
+      chip.className = "pm-chip" + (cls ? " " + cls : "");
+      var label = document.createElement("span");
+      label.textContent = word;
+      var x = document.createElement("button");
+      x.type = "button";
+      x.className = "pm-chip-x";
+      x.setAttribute("aria-label", "Remove " + word);
+      x.textContent = "×";
+      x.addEventListener("click", function () { onRemove(idx); });
+      chip.appendChild(label);
+      chip.appendChild(x);
+      container.appendChild(chip);
+    });
+  }
+
+  function renderManage() {
+    renderChips(blockChipsEl, blockWords, "", removeBlockWord);
+    renderChips(allowChipsEl, allowWords, "pm-chip--allow", removeAllowWord);
+    updateManageSub();
+  }
+
+  function updateManageSub() {
+    if (!manageSubEl) return;
+    var parts = [];
+    parts.push(blockWords.length + " added");
+    parts.push(allowWords.length + " allowed");
+    manageSubEl.textContent = "· " + parts.join(", ");
+  }
+
+  function saveBlockWords() {
+    persistSettings({ pm_additionalWords: blockWords.slice() }, function (failed) {
+      setStatus(failed ? "Save failed" : "Saved");
+      if (failed) loadSettings();
+    });
+  }
+  function saveAllowWords() {
+    persistSettings({ pm_allowWords: allowWords.slice() }, function (failed) {
+      setStatus(failed ? "Save failed" : "Saved");
+      if (failed) loadSettings();
+    });
+  }
+
+  function addBlockWord() {
+    var w = normalizeWord(blockInputEl.value);
+    if (!w) return;
+    blockInputEl.value = "";
+    if (!dedupePush(blockWords, w)) { renderManage(); return; }
+    renderManage();
+    saveBlockWords();
+  }
+  function removeBlockWord(idx) {
+    blockWords.splice(idx, 1);
+    renderManage();
+    saveBlockWords();
+  }
+  function addAllowWord() {
+    var w = normalizeWord(allowInputEl.value);
+    if (!w) return;
+    allowInputEl.value = "";
+    if (!dedupePush(allowWords, w)) { renderManage(); return; }
+    renderManage();
+    saveAllowWords();
+  }
+  function removeAllowWord(idx) {
+    allowWords.splice(idx, 1);
+    renderManage();
+    saveAllowWords();
+  }
+
+  // ==== settings load ===================================================
+  function setControlsToDefaults() {
+    setCatchupMode(defaultCatchupMode());
+    setPadding(defaultPadding());
+    setStrictness(defaultStrictness());
+  }
+
+  function loadSettings() {
+    setControlsToDefaults();
+    if (!hasStorage) { setStatus("Storage unavailable"); return; }
+    chrome.storage.sync.get(
+      [
+        "pm_enabled", "pm_muteAudio", "pm_censorCaptions", "pm_catchupMode",
+        "pm_debugOverlay", "pm_showStatus", "pm_strictness",
+        "pm_additionalWords", "pm_allowWords", "pm_padding", "pm_safeMode", "pm_wordlist"
+      ],
+      function (items) {
+        if (chrome.runtime && chrome.runtime.lastError) {
+          setStatus("Couldn't load saved settings - showing defaults");
+          return;
+        }
+        items = items || {};
+        enabledEl.checked = items.pm_enabled !== false;
+        currentEnabled = enabledEl.checked;
+        muteAudioEl.checked = items.pm_muteAudio !== false;
+        censorCaptionsEl.checked = items.pm_censorCaptions !== false;
+        debugOverlayEl.checked = items.pm_debugOverlay === true;
+        showStatusEl.checked = items.pm_showStatus !== false;
+
+        var displayedCatchup =
+          catchupModes().indexOf(items.pm_catchupMode) !== -1 ? items.pm_catchupMode
+            : items.pm_safeMode === false ? "play" : defaultCatchupMode();
+        setCatchupMode(displayedCatchup);
+        setPadding(paddingModes().indexOf(items.pm_padding) !== -1 ? items.pm_padding : defaultPadding());
+
+        var resolved = resolveFromStorage(items);
+        if (resolved) {
+          setStrictness(resolved.strictness);
+          blockWords = resolved.additionalWords.slice();
+          allowWords = (resolved.allowWords || []).slice();
+        }
+        renderManage();
+      }
+    );
+  }
+
   function restoreDefaults() {
     setStrictness(defaultStrictness());
-    wordlistEl.value = "";
+    blockWords = [];
     var values = currentSettingsValues();
     values.pm_additionalWords = [];
     var attempted = persistSettings(values, function (failed) {
-      if (failed) {
-        setStatus("Save failed");
-        return;
-      }
-      renderMasked();
+      if (failed) { setStatus("Save failed"); return; }
+      renderManage();
       setStatus("Defaults restored");
     });
-    // Refused (locked / no storage): re-render from what is actually
-    // stored rather than leaving the optimistic cleared view on screen.
-    if (!attempted) load();
+    if (!attempted) loadSettings();
   }
 
-  // ---- Stats section (chrome.storage.LOCAL, not sync) ----
-  //
-  // pm_stats = {totalMuted, videosProtected}, written by the audio
-  // pipeline as it runs. May be entirely absent (fresh install, or the
-  // pipeline hasn't muted anything yet) - render zeros in that case
-  // rather than leaving the line blank or erroring. Numbers are
-  // sanitized (Number(...) with a NaN->0 fallback) so a malformed
-  // stored value can't break the display.
-  function renderStats(stats) {
-    stats = stats || {};
-    var totalMuted = Number(stats.totalMuted);
-    var videosProtected = Number(stats.videosProtected);
-    if (!Number.isFinite(totalMuted)) totalMuted = 0;
-    if (!Number.isFinite(videosProtected)) videosProtected = 0;
-    statsLineEl.textContent =
-      "words muted all-time: " + totalMuted + " · videos protected: " + videosProtected;
-  }
+  // ==== Activity dashboard ==============================================
+  var activityStore = null;
+  var activeRange = "all";
+  var CAT_LABELS = {
+    profanity: "Profanity",
+    slur: "Slurs",
+    religious: "Religious",
+    euphemism: "Euphemisms",
+    custom: "Your words"
+  };
 
-  function loadStats() {
-    if (!hasLocalStorage) {
-      renderStats(null);
+  function renderCats(container, cats) {
+    container.innerHTML = "";
+    var order = statsApi() ? statsApi().CATEGORIES : ["profanity", "slur", "religious", "euphemism", "custom"];
+    var rows = [];
+    for (var i = 0; i < order.length; i++) {
+      var k = order[i];
+      var n = (cats && cats[k]) || 0;
+      if (n > 0) rows.push({ key: k, n: n });
+    }
+    rows.sort(function (a, b) { return b.n - a.n; });
+    if (!rows.length) {
+      var empty = document.createElement("div");
+      empty.className = "pm-cats-empty";
+      empty.textContent = "No activity yet.";
+      container.appendChild(empty);
       return;
     }
-    chrome.storage.local.get(["pm_stats"], function (items) {
-      if (chrome.runtime && chrome.runtime.lastError) {
-        renderStats(null);
-        return;
-      }
-      renderStats(items && items.pm_stats);
+    var max = rows[0].n;
+    rows.forEach(function (r) {
+      var row = document.createElement("div");
+      row.className = "pm-stat";
+      var lab = document.createElement("span");
+      lab.textContent = CAT_LABELS[r.key] || r.key;
+      var bar = document.createElement("span");
+      bar.className = "pm-stat-bar";
+      var fill = document.createElement("i");
+      fill.style.width = (max > 0 ? Math.round((r.n / max) * 100) : 0) + "%";
+      bar.appendChild(fill);
+      var num = document.createElement("span");
+      num.className = "pm-stat-n";
+      num.textContent = String(r.n);
+      row.appendChild(lab); row.appendChild(bar); row.appendChild(num);
+      container.appendChild(row);
     });
   }
 
-  function resetStats() {
-    if (!hasLocalStorage) {
-      renderStats(null);
-      setStatus("Storage unavailable");
+  function summarize(range) {
+    var api = statsApi();
+    if (!api) return { muted: 0, videos: 0, cats: {}, top: [] };
+    return api.summarize(activityStore, range, Date.now());
+  }
+
+  function renderHomeSummary() {
+    // Home summary always all-time (public even when locked).
+    var s = summarize("all");
+    homeMutedEl.textContent = String(s.muted);
+    homeVideosEl.textContent = String(s.videos);
+    renderCats(homeCatsEl, s.cats);
+  }
+
+  function renderActivity() {
+    var s = summarize(activeRange);
+    actMutedEl.textContent = String(s.muted);
+    actVideosEl.textContent = String(s.videos);
+    renderCats(actCatsEl, s.cats);
+    renderMostMuted(s.top);
+    for (var i = 0; i < rangeOptEls.length; i++) {
+      rangeOptEls[i].classList.toggle("pm-range-on", rangeOptEls[i].getAttribute("data-range") === activeRange);
+    }
+  }
+
+  function renderMostMuted(top) {
+    actTopEl.innerHTML = "";
+    if (!top || !top.length) {
+      var empty = document.createElement("div");
+      empty.className = "pm-mostmuted-empty";
+      empty.textContent = "Nothing muted yet.";
+      actTopEl.appendChild(empty);
       return;
     }
-    var zeroed = { totalMuted: 0, videosProtected: 0 };
-    // Routed through the same funnel as every other write (with
-    // area: "local", since stats are per-install and not synced) so the
-    // parental lock covers it too - wiping the "words muted all-time"
-    // counter is exactly the kind of evidence-destroying change the lock
-    // exists to prevent.
-    var attempted = persistSettings(
-      { pm_stats: zeroed },
-      function (failed) {
-        setStatus(failed ? "Reset failed" : "Stats reset");
-        if (failed) loadStats();
-      },
-      "local"
-    );
-    // Render zeros immediately (fire-and-forget, same rule as the
-    // toggles) - but only once the write was actually accepted.
-    if (attempted) renderStats(zeroed);
-  }
-
-  // ---- Parental lock ------------------------------------------------------
-  //
-  // State lives in exactly two variables: `lockRecord` (the stored
-  // {salt, hash}, or null) and `unlockedThisSession`. The decision that
-  // depends on them is not made here - it is PMLock.mayWriteSettings(),
-  // called from persistSettings(), so there is one rule in one place.
-  // Everything in this section is UI around that one rule.
-  //
-  // There is deliberately no persisted "unlocked" flag: unlocking lasts
-  // as long as the popup is open and not one moment longer. A parent who
-  // unlocks, changes a setting and walks away has re-locked by the time
-  // the popup loses focus, which is the behaviour they would assume.
-  var lockRecord = null;
-  var unlockedThisSession = false;
-  // Whether pm_lock has actually been read yet. Until it has, we do NOT
-  // know there is no lock - `lockRecord === null` at that point means
-  // "unknown", not "unlocked". Without this, the milliseconds between
-  // the popup painting and loadLock()'s callback are a real bypass: a
-  // fast click on a toggle would sail through maySaveSettings() and
-  // write. The controls stay live and correct-looking during that window
-  // (the popup's standing rule), but a write inside it is deferred to
-  // the plain answer rather than assumed.
-  var lockStateLoaded = false;
-
-  function lockApi() {
-    return (typeof window !== "undefined" && window.PMLock) || null;
-  }
-
-  // null when a write may proceed; otherwise the reason it may not.
-  // This is the ONLY place the popup decides whether a settings change is
-  // allowed, and the decision itself lives in PMLock.mayWriteSettings.
-  function settingsWriteBlockedReason() {
-    var api = lockApi();
-    // No lock module loaded at all -> nothing can be locked, so allow.
-    // (Same posture as everywhere else here: a missing optional module
-    // degrades the feature, it does not brick the popup.)
-    if (!api || typeof api.mayWriteSettings !== "function") return null;
-    if (!lockStateLoaded) return "loading";
-    return api.mayWriteSettings(lockRecord, unlockedThisSession) ? null : "locked";
-  }
-
-  function maySaveSettings() {
-    return settingsWriteBlockedReason() === null;
-  }
-
-  function setLockStatus(text) {
-    lockStatusEl.textContent = text || "";
-  }
-
-  // Every control that changes a setting. Deliberately EXCLUDES
-  // copyDevlogEl (see the header: a kid must still be able to export a
-  // log while locked) and every control inside the lock row itself
-  // (which is how you get unlocked in the first place).
-  function lockableControls() {
-    var list = [
-      enabledEl, muteAudioEl, censorCaptionsEl,
-      showStatusEl, debugOverlayEl, wordlistEl, toggleMaskEl,
-      restoreEl, saveEl, resetStatsEl
-    ];
-    var i;
-    for (i = 0; i < catchupModeEls.length; i++) list.push(catchupModeEls[i]);
-    for (i = 0; i < paddingEls.length; i++) list.push(paddingEls[i]);
-    for (i = 0; i < strictnessEls.length; i++) list.push(strictnessEls[i]);
-    return list;
-  }
-
-  function setControlsLocked(locked) {
-    var controls = lockableControls();
-    for (var i = 0; i < controls.length; i++) {
-      if (controls[i]) controls[i].disabled = locked;
-    }
-    // Rows carry the class purely for the greyed-out look; `disabled`
-    // above is what actually prevents interaction, and persistSettings
-    // is what prevents the write regardless of either.
-    var rows = document.querySelectorAll(".pm-row");
-    for (var r = 0; r < rows.length; r++) {
-      if (rows[r].classList.contains("pm-row--lock")) continue;
-      rows[r].classList.toggle("pm-row--locked", locked);
-    }
-    // The masked list must stay masked while locked - revealing the
-    // user's own word list is itself something the lock should cover.
-    if (locked && !masked) showMasked();
-  }
-
-  function renderLockUI() {
-    var api = lockApi();
-    var hasLock = !!(api && api.isLockRecord && api.isLockRecord(lockRecord));
-    var locked = hasLock && !unlockedThisSession;
-
-    function show(el, visible) {
-      el.classList.toggle("pm-hidden", !visible);
-      el.setAttribute("aria-hidden", visible ? "false" : "true");
-    }
-
-    // WebCrypto missing (shouldn't happen on an extension page, which is
-    // a secure context - guarded anyway): offer nothing rather than a
-    // button that can't work, and say why.
-    if (api && typeof api.available === "function" && !api.available() && !hasLock) {
-      show(lockSetupEl, false);
-      show(lockLockedEl, false);
-      show(lockUnlockedEl, false);
-      setLockStatus("Password locking isn't available in this browser.");
-      setControlsLocked(false);
-      return;
-    }
-
-    show(lockSetupEl, !hasLock);
-    show(lockLockedEl, locked);
-    show(lockUnlockedEl, hasLock && !locked);
-    setControlsLocked(locked);
-  }
-
-  function loadLock() {
-    if (!hasStorage) {
-      // No storage at all: nothing can be locked and nothing can be
-      // saved either, so this is "known, and there is no lock".
-      lockStateLoaded = true;
-      renderLockUI();
-      return;
-    }
-    chrome.storage.sync.get(["pm_lock"], function (items) {
-      if (chrome.runtime && chrome.runtime.lastError) {
-        // Can't tell whether a lock exists. Fail OPEN, not closed: a
-        // transient sync error must not leave a parent unable to unlock
-        // their own settings, and the lock is a deterrent anyway - the
-        // alternative (treat an unreadable record as locked) turns a
-        // flaky sync quota into "your settings are bricked".
-        lockRecord = null;
-        lockStateLoaded = true;
-        renderLockUI();
-        return;
-      }
-      lockRecord = (items && items.pm_lock) || null;
-      lockStateLoaded = true;
-      renderLockUI();
+    top.forEach(function (item, i) {
+      var row = document.createElement("div");
+      row.className = "pm-mm";
+      var left = document.createElement("span");
+      var rk = document.createElement("span");
+      rk.className = "pm-mm-rk";
+      rk.textContent = String(i + 1);
+      left.appendChild(rk);
+      left.appendChild(document.createTextNode(item.word));
+      var n = document.createElement("span");
+      n.className = "pm-mm-n";
+      n.textContent = String(item.count);
+      row.appendChild(left); row.appendChild(n);
+      actTopEl.appendChild(row);
     });
   }
 
-  function setLockPassword() {
-    var api = lockApi();
-    if (!api || !hasStorage) {
-      setLockStatus("Password locking isn't available.");
-      return;
-    }
-    var check = api.validateNewPassword(lockNewEl.value, lockConfirmEl.value);
-    if (!check.ok) {
-      setLockStatus(check.error);
-      return;
-    }
-    setLockStatus("");
-    api.create(lockNewEl.value).then(
-      function (record) {
-        chrome.storage.sync.set({ pm_lock: record }, function () {
-          if (chrome.runtime && chrome.runtime.lastError) {
-            setLockStatus("Couldn't save the password");
-            return;
-          }
-          lockRecord = record;
-          // Setting a password does NOT immediately lock the parent out
-          // of the popup they're standing in front of - they stay
-          // unlocked for this session; the next open is locked.
-          unlockedThisSession = true;
-          lockNewEl.value = "";
-          lockConfirmEl.value = "";
-          renderLockUI();
-          setLockStatus("Password set. Settings lock next time this popup opens.");
-        });
-      },
-      function () {
-        setLockStatus("Couldn't set a password on this browser");
-      }
-    );
-  }
-
-  function unlock() {
-    var api = lockApi();
-    if (!api) return;
-    var attempt = lockPasswordEl.value;
-    api.verify(lockRecord, attempt).then(function (ok) {
-      lockPasswordEl.value = "";
-      if (!ok) {
-        setLockStatus("Wrong password");
-        return;
-      }
-      unlockedThisSession = true;
-      setLockStatus("");
-      renderLockUI();
-      setStatus("Settings unlocked");
+  function loadActivity() {
+    var api = statsApi();
+    if (!hasLocalStorage || !api) { activityStore = api ? api.emptyStore() : null; renderHomeSummary(); return; }
+    chrome.storage.local.get(["pm_activity"], function (items) {
+      if (chrome.runtime && chrome.runtime.lastError) { activityStore = api.emptyStore(); renderHomeSummary(); return; }
+      activityStore = api.normalizeStore(items && items.pm_activity);
+      renderHomeSummary();
+      if (currentView === "activity") renderActivity();
     });
   }
 
-  function removeLockPassword() {
-    if (!hasStorage) return;
-    // Only reachable while unlocked (the button lives in the unlocked
-    // panel), but check the same central rule anyway rather than trusting
-    // the DOM state - removing the lock is itself a settings change.
-    if (!maySaveSettings()) {
-      setLockStatus("Unlock first");
-      return;
-    }
-    chrome.storage.sync.remove("pm_lock", function () {
-      if (chrome.runtime && chrome.runtime.lastError) {
-        setLockStatus("Couldn't remove the password");
-        return;
-      }
-      lockRecord = null;
-      unlockedThisSession = false;
-      renderLockUI();
-      setLockStatus("Password removed");
-    });
-  }
-
-  // ---- Onboarding, review prompt, share (0.1.30) --------------------------
-  //
-  // Three surfaces, one storage read. All three decisions are made by the
-  // pure predicates in shared/moments.js - this section only renders what
-  // it is told, and every gate lives in one unit-tested place rather than
-  // as conditionals grown into the UI.
-  function momentsApi() {
-    return (typeof window !== "undefined" && window.PMMoments) || null;
-  }
+  // ==== moments / health / devlog (carried over) ========================
+  function momentsApi() { return (typeof window !== "undefined" && window.PMMoments) || null; }
 
   function openExtensionPage(relativePath) {
     var url;
-    try {
-      url = chrome.runtime.getURL(relativePath);
-    } catch (e) {
-      return;
-    }
-    try {
-      chrome.tabs.create({ url: url });
-      // A popup stays open behind the new tab it just spawned, which reads
-      // as nothing having happened. Close it.
-      window.close();
-    } catch (e) {
-      // No chrome.tabs (shouldn't happen in a popup): fall back to a plain
-      // navigation rather than silently doing nothing.
-      window.open(url, "_blank");
-    }
+    try { url = chrome.runtime.getURL(relativePath); } catch (e) { return; }
+    try { chrome.tabs.create({ url: url }); window.close(); }
+    catch (e) { window.open(url, "_blank"); }
   }
-
-  function openOnboarding() {
-    openExtensionPage("onboarding/onboarding.html");
-  }
-
-  // Always available, and deliberately not lock-gated - same rule as
-  // "Copy debug log", which it sits beside: reporting a problem changes
-  // no setting, and a child who hits a problem must still be able to send
-  // the details to whoever can act on them.
-  function openReportProblem() {
-    openExtensionPage("report/report.html");
-  }
-
-  // "View source on GitHub" - opens the repository in a new tab. Unlike
-  // openExtensionPage (which resolves an extension-relative path), this is an
-  // external URL, opened the same way onReviewYes opens the store link. The
-  // URL is the single REPO_URL constant in shared/moments.js.
+  function openOnboarding() { openExtensionPage("onboarding/onboarding.html"); }
+  function openReportProblem() { openExtensionPage("report/report.html"); }
   function openRepo() {
-    var m = momentsApi();
-    if (!m) return;
-    try {
-      chrome.tabs.create({ url: m.REPO_URL });
-      window.close();
-    } catch (e) {
-      window.open(m.REPO_URL, "_blank");
-    }
+    var m = momentsApi(); if (!m) return;
+    try { chrome.tabs.create({ url: m.REPO_URL }); window.close(); }
+    catch (e) { window.open(m.REPO_URL, "_blank"); }
   }
 
-  // The "Finish setup" banner and the share row are both driven off the
-  // acknowledgment record, in opposite directions: the banner shows until
-  // it exists, the share row shows only once it does. Nobody should be
-  // recommending this extension to a friend before being told its limits.
   function renderAckSurfaces(ackRecord) {
     var m = momentsApi();
     var acknowledged = !!(m && m.isAcknowledged(ackRecord));
     finishSetupEl.classList.toggle("pm-hidden", acknowledged);
     finishSetupEl.setAttribute("aria-hidden", acknowledged ? "true" : "false");
-    shareRowEl.classList.toggle("pm-hidden", !acknowledged);
-    shareRowEl.setAttribute("aria-hidden", acknowledged ? "false" : "true");
+    // Share stays available always in the footer, but only meaningful after
+    // acknowledgment; keep it visible (footer link) and not gated.
   }
 
-  // CHROME WEB STORE POLICY lives with the predicate, in
-  // shared/moments.js - read it there before touching any of this. The
-  // short version, restated at the point of use because it constrains
-  // this code specifically:
-  //   * at most once, ever - showing the card WRITES pm_reviewPrompt, so
-  //     it can never be shown again even if the user neither clicks nor
-  //     dismisses (closing the popup counts as having been asked);
-  //   * dismissal is permanent, and "No thanks" is a real dismissal;
-  //   * no incentive is offered, and no rating is solicited first - both
-  //     buttons are equally available and nothing is gated on either;
-  //   * it is a card inside the popup, never a tab or a notification.
   function renderReviewPrompt(items) {
-    var m = momentsApi();
-    if (!m) return;
+    var m = momentsApi(); if (!m) return;
     var verdict = m.reviewPromptEligibility({
       stats: (items && items.pm_stats) || {},
       installedAt: items && items.pm_installedAt,
@@ -1034,125 +715,66 @@
       now: Date.now()
     });
     if (!verdict.eligible) return;
-
     reviewCardEl.classList.remove("pm-hidden");
     reviewCardEl.setAttribute("aria-hidden", "false");
-
-    // Clear the global review badge (0.1.33). Opening the popup while the
-    // nudge is up IS the badge doing its whole job, and markReviewPromptShown
-    // below makes the nudge permanently ineligible anyway; clearing here
-    // means the toolbar stops nagging in the same instant the card appears
-    // rather than on the next storage event.
-    try {
-      chrome.action.setBadgeText({ text: "" });
-    } catch (e) {
-      // chrome.action is unavailable in the harness and in any non-popup
-      // context; the storage stamp still ends the nudge.
-    }
-
-    // Record it as shown IMMEDIATELY, not on click. If this waited for a
-    // button, a user who simply closed the popup would be asked again on
-    // every open - which is exactly the repeated nagging the "at most
-    // once" rule exists to prevent. Being asked once and walking away IS
-    // an answer.
+    try { chrome.action.setBadgeText({ text: "" }); } catch (e) {}
     markReviewPromptShown(false);
   }
 
-  // Local-only conversion counters (chrome.storage.local, pm_growth), the
-  // same record the completion page writes, so the two review surfaces can
-  // be compared later from a devlog or a problem report. No network.
-  function bumpGrowth(key) {
-    var m = momentsApi();
-    if (!m || !hasLocalStorage) return;
-    try {
-      chrome.storage.local.get(["pm_growth"], function (items) {
-        if (chrome.runtime && chrome.runtime.lastError) return;
-        chrome.storage.local.set({
-          pm_growth: m.bumpGrowthCounter(items && items.pm_growth, key)
-        });
-      });
-    } catch (e) {
-      /* a counter is never worth breaking the popup for */
-    }
-  }
-
   function markReviewPromptShown(dismissed) {
-    var m = momentsApi();
-    if (!m || !hasStorage) return;
+    var m = momentsApi(); if (!m || !hasStorage) return;
     try {
-      chrome.storage.sync.set({
-        pm_reviewPrompt: m.makeReviewPromptRecord(dismissed, Date.now())
-      });
-    } catch (e) {
-      // Non-fatal: the worst case is being asked once more.
-    }
+      chrome.storage.sync.set({ pm_reviewPrompt: m.makeReviewPromptRecord(dismissed, Date.now()) });
+    } catch (e) {}
   }
-
   function hideReviewCard() {
     reviewCardEl.classList.add("pm-hidden");
     reviewCardEl.setAttribute("aria-hidden", "true");
   }
-
+  function bumpGrowth(key) {
+    var m = momentsApi(); if (!m || !hasLocalStorage) return;
+    try {
+      chrome.storage.local.get(["pm_growth"], function (items) {
+        if (chrome.runtime && chrome.runtime.lastError) return;
+        chrome.storage.local.set({ pm_growth: m.bumpGrowthCounter(items && items.pm_growth, key) });
+      });
+    } catch (e) {}
+  }
   function onReviewYes() {
     var m = momentsApi();
     markReviewPromptShown(true);
     bumpGrowth("milestoneReviewClicked");
     hideReviewCard();
     if (!m) return;
-    try {
-      chrome.tabs.create({ url: m.REVIEW_URL });
-      window.close();
-    } catch (e) {
-      window.open(m.REVIEW_URL, "_blank");
-    }
+    try { chrome.tabs.create({ url: m.REVIEW_URL }); window.close(); }
+    catch (e) { window.open(m.REVIEW_URL, "_blank"); }
   }
-
   function onReviewNo() {
     markReviewPromptShown(true);
     hideReviewCard();
     setStatus("Thanks - we won't ask again");
   }
 
-  // Robust clipboard copy with a hidden-textarea fallback, so a missing or
-  // rejecting Clipboard API still copies and still reports a result rather
-  // than failing silently. Returns Promise<boolean>. Mirrors onboarding.js.
   function copyText(text) {
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      return navigator.clipboard.writeText(text).then(
-        function () { return true; },
-        function () { return fallbackCopyText(text); }
-      );
+      return navigator.clipboard.writeText(text).then(function () { return true; }, function () { return fallbackCopyText(text); });
     }
     return Promise.resolve(fallbackCopyText(text));
   }
-
   function fallbackCopyText(text) {
     try {
       var ta = document.createElement("textarea");
-      ta.value = text;
-      ta.setAttribute("readonly", "");
-      ta.style.position = "fixed";
-      ta.style.top = "-1000px";
-      ta.style.opacity = "0";
-      document.body.appendChild(ta);
-      ta.select();
-      ta.setSelectionRange(0, text.length);
+      ta.value = text; ta.setAttribute("readonly", "");
+      ta.style.position = "fixed"; ta.style.top = "-1000px"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length);
       var ok = document.execCommand && document.execCommand("copy");
       document.body.removeChild(ta);
       return !!ok;
-    } catch (e) {
-      return false;
-    }
+    } catch (e) { return false; }
   }
-
-  // The share button briefly becomes its own confirmation, so the feedback
-  // is unmissable and not only in the small status line.
   function flashShareCopied() {
-    if (flashShareCopied._t) {
-      window.clearTimeout(flashShareCopied._t);
-    } else {
-      flashShareCopied._label = shareEl.textContent;
-    }
+    if (flashShareCopied._t) window.clearTimeout(flashShareCopied._t);
+    else flashShareCopied._label = shareEl.textContent;
     shareEl.textContent = "Link copied";
     shareEl.classList.add("pm-share--copied");
     flashShareCopied._t = window.setTimeout(function () {
@@ -1161,63 +783,34 @@
       flashShareCopied._t = null;
     }, 2500);
   }
-
   function shareWithFriend() {
     var m = momentsApi();
-    if (!m) {
-      setStatus("Share link unavailable");
-      return;
-    }
+    if (!m) { setStatus("Share link unavailable"); return; }
     copyText(m.SHARE_TEXT).then(function (ok) {
-      if (ok) {
-        flashShareCopied();
-        setStatus("Link copied");
-      } else {
-        setStatus("Couldn't copy - select the link and copy it");
-      }
+      if (ok) { flashShareCopied(); setStatus("Link copied"); }
+      else setStatus("Couldn't copy - select the link and copy it");
     });
   }
 
-  // One read for all three surfaces. pm_stats lives in the LOCAL area (see
-  // the Stats section below), so it has to be fetched separately from the
-  // sync keys and merged before the eligibility check can run.
   function loadMoments() {
-    // No storage, or an unreadable one: show none of the three. We cannot
-    // tell whether this user has acknowledged, and a banner shown on a
-    // transient sync error to someone who finished months ago is worse
-    // than a banner missed once by someone who hasn't.
     if (!hasStorage) return;
-    chrome.storage.sync.get(
-      ["pm_ackNotPerfect", "pm_installedAt", "pm_reviewPrompt"],
-      function (syncItems) {
+    chrome.storage.sync.get(["pm_ackNotPerfect", "pm_installedAt", "pm_reviewPrompt"], function (syncItems) {
+      if (chrome.runtime && chrome.runtime.lastError) return;
+      syncItems = syncItems || {};
+      renderAckSurfaces(syncItems.pm_ackNotPerfect);
+      if (!hasLocalStorage) return;
+      chrome.storage.local.get(["pm_stats"], function (localItems) {
         if (chrome.runtime && chrome.runtime.lastError) return;
-        syncItems = syncItems || {};
-        renderAckSurfaces(syncItems.pm_ackNotPerfect);
-        if (!hasLocalStorage) return;
-        chrome.storage.local.get(["pm_stats"], function (localItems) {
-          if (chrome.runtime && chrome.runtime.lastError) return;
-          renderReviewPrompt({
-            pm_ackNotPerfect: syncItems.pm_ackNotPerfect,
-            pm_installedAt: syncItems.pm_installedAt,
-            pm_reviewPrompt: syncItems.pm_reviewPrompt,
-            pm_stats: (localItems && localItems.pm_stats) || {}
-          });
+        renderReviewPrompt({
+          pm_ackNotPerfect: syncItems.pm_ackNotPerfect,
+          pm_installedAt: syncItems.pm_installedAt,
+          pm_reviewPrompt: syncItems.pm_reviewPrompt,
+          pm_stats: (localItems && localItems.pm_stats) || {}
         });
-      }
-    );
+      });
+    });
   }
 
-  // ---- Health warning (0.1.32) --------------------------------------------
-  //
-  // Asks the ACTIVE TAB's content script how it is doing, rather than
-  // reading a stored value. content.js's 'pm-health-query' handler carries
-  // the full reasoning for that choice; the short version is that health
-  // is per-tab, per-video and transient, so a single stored key would be
-  // clobbered across tabs and could outlive the thing it describes. The
-  // durable record lives in pm_devlog.
-  //
-  // Silence is a valid answer: no content script means this is not a
-  // YouTube tab, and the popup shows nothing at all.
   function renderHealth(health) {
     var unhealthy = !!(health && health.status === "unhealthy" && health.message);
     healthEl.classList.toggle("pm-hidden", !unhealthy);
@@ -1226,16 +819,8 @@
     healthMessageEl.textContent = health.message;
     healthDetailEl.textContent = health.detail || "";
   }
-
   function loadHealth() {
-    if (
-      typeof chrome === "undefined" ||
-      !chrome.tabs ||
-      typeof chrome.tabs.query !== "function" ||
-      typeof chrome.tabs.sendMessage !== "function"
-    ) {
-      return;
-    }
+    if (typeof chrome === "undefined" || !chrome.tabs || typeof chrome.tabs.query !== "function" || typeof chrome.tabs.sendMessage !== "function") return;
     try {
       chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
         if (chrome.runtime && chrome.runtime.lastError) return;
@@ -1243,116 +828,96 @@
         if (!tab || tab.id == null) return;
         try {
           chrome.tabs.sendMessage(tab.id, { type: "pm-health-query" }, function (resp) {
-            // lastError here is the ordinary "no listener in that tab"
-            // case (not a YouTube page, or the content script has not
-            // loaded). Read it so Chrome does not log it, and show
-            // nothing, which is the correct answer.
             if (chrome.runtime && chrome.runtime.lastError) return;
             renderHealth(resp);
           });
-        } catch (e) {
-          /* same as above: show nothing */
-        }
+        } catch (e) {}
       });
-    } catch (e) {
-      /* show nothing */
-    }
+    } catch (e) {}
   }
 
-  // ---- Copy debug log ---------------------------------------------------
-  // Hands over the whole `pm_devlog` ring (last 10 videos: analyzed
-  // windows, matched words, mute intervals, unanalyzed-playback gaps,
-  // caption censor events, errors) as JSON, so "why did word X get
-  // through on video Y" can be answered from evidence after the fact
-  // instead of from memory. Written by the content scripts via
-  // shared/devlog.js - see that file's header for the schema. Read-only
-  // here; the popup never edits or clears it.
   function copyDevlog() {
-    if (!hasLocalStorage) {
-      setStatus("Storage unavailable");
-      return;
-    }
+    if (!hasLocalStorage) { setStatus("Storage unavailable"); return; }
     chrome.storage.local.get(["pm_devlog"], function (items) {
-      if (chrome.runtime && chrome.runtime.lastError) {
-        setStatus("Copy failed");
-        return;
-      }
+      if (chrome.runtime && chrome.runtime.lastError) { setStatus("Copy failed"); return; }
       var log = items && items.pm_devlog;
-      // An absent key is the ordinary "nothing watched yet" case, not a
-      // failure - say so plainly rather than copying "undefined" to the
-      // clipboard and letting it look like the log is broken.
-      if (!log || !log.videos || !log.videos.length) {
-        setStatus("No debug log yet");
-        return;
-      }
+      if (!log || !log.videos || !log.videos.length) { setStatus("No debug log yet"); return; }
       var text;
-      try {
-        text = JSON.stringify(log);
-      } catch (e) {
-        setStatus("Copy failed");
-        return;
-      }
-      if (!navigator.clipboard || !navigator.clipboard.writeText) {
-        setStatus("Clipboard unavailable");
-        return;
-      }
+      try { text = JSON.stringify(log); } catch (e) { setStatus("Copy failed"); return; }
+      if (!navigator.clipboard || !navigator.clipboard.writeText) { setStatus("Clipboard unavailable"); return; }
       navigator.clipboard.writeText(text).then(
-        function () {
-          setStatus("Debug log copied (" + log.videos.length + " videos)");
-        },
-        function () {
-          setStatus("Copy failed");
-        }
+        function () { setStatus("Debug log copied (" + log.videos.length + " videos)"); },
+        function () { setStatus("Copy failed"); }
       );
     });
   }
 
-  // Live-update the stats line as the audio pipeline writes new totals
-  // while the popup happens to be open, without polling.
+  // ==== live storage updates ============================================
   if (hasLocalStorage && chrome.storage.onChanged) {
     try {
       chrome.storage.onChanged.addListener(function (changes, areaName) {
         if (areaName !== "local") return;
-        if (changes.pm_stats) {
-          renderStats(changes.pm_stats.newValue);
+        if (changes.pm_activity) {
+          var api = statsApi();
+          activityStore = api ? api.normalizeStore(changes.pm_activity.newValue) : null;
+          renderHomeSummary();
+          if (currentView === "activity") renderActivity();
         }
       });
-    } catch (e) {
-      // ignore - non-fatal if listener registration fails
-    }
+    } catch (e) {}
   }
 
-  enabledEl.addEventListener("change", saveTogglesOnly);
+  // ==== event wiring ====================================================
+  enabledEl.addEventListener("change", onEnabledChange);
   muteAudioEl.addEventListener("change", saveTogglesOnly);
   censorCaptionsEl.addEventListener("change", saveTogglesOnly);
   debugOverlayEl.addEventListener("change", saveTogglesOnly);
   showStatusEl.addEventListener("change", saveTogglesOnly);
-  for (var ci = 0; ci < catchupModeEls.length; ci++) {
-    catchupModeEls[ci].addEventListener("change", saveTogglesOnly);
-  }
-  for (var pi = 0; pi < paddingEls.length; pi++) {
-    paddingEls[pi].addEventListener("change", saveTogglesOnly);
-  }
-  // Strictness radios get their OWN handler, not the generic
-  // saveTogglesOnly - changing strictness changes which word list is
-  // ACTIVE, so (unlike every other toggle/radio) it must also
-  // re-render the masked word-list view. This is a deliberate,
-  // narrowly-scoped exception to the "toggle/radio saves never touch
-  // the masked list" rule from the earlier lag audit: it's the word
-  // list itself changing, not an unrelated setting.
-  for (var si = 0; si < strictnessEls.length; si++) {
-    strictnessEls[si].addEventListener("change", onStrictnessChange);
-  }
-  toggleMaskEl.addEventListener("click", toggleMask);
+  var i;
+  for (i = 0; i < catchupModeEls.length; i++) catchupModeEls[i].addEventListener("change", saveTogglesOnly);
+  for (i = 0; i < paddingEls.length; i++) paddingEls[i].addEventListener("change", saveTogglesOnly);
+  for (i = 0; i < strictnessEls.length; i++) strictnessEls[i].addEventListener("change", saveTogglesOnly);
+
   restoreEl.addEventListener("click", restoreDefaults);
-  saveEl.addEventListener("click", save);
-  resetStatsEl.addEventListener("click", resetStats);
   copyDevlogEl.addEventListener("click", copyDevlog);
+
+  // navigation
+  backEl.addEventListener("click", function () { showView("home"); });
+  $("pm-go-manage").addEventListener("click", function () { if (isLocked()) { promptUnlock(); return; } showView("manage"); });
+  $("pm-go-playback").addEventListener("click", function () { if (isLocked()) { promptUnlock(); return; } showView("playback"); });
+  $("pm-go-lock").addEventListener("click", function () { if (isLocked()) { promptUnlock(); return; } showView("lock"); });
+  $("pm-open-activity").addEventListener("click", function () { showView("activity"); });
+  $("pm-summary-tap").addEventListener("click", function () { showView("activity"); });
+
+  // manage words
+  blockFormEl.addEventListener("submit", function (e) { e.preventDefault(); addBlockWord(); });
+  allowFormEl.addEventListener("submit", function (e) { e.preventDefault(); addAllowWord(); });
+
+  // activity range toggle
+  for (i = 0; i < rangeOptEls.length; i++) {
+    (function (btn) {
+      btn.addEventListener("click", function () {
+        activeRange = btn.getAttribute("data-range") || "all";
+        renderActivity();
+      });
+    })(rangeOptEls[i]);
+  }
+
+  // lock
   lockSetEl.addEventListener("click", setLockPassword);
-  lockUnlockEl.addEventListener("click", unlock);
   lockRemoveEl.addEventListener("click", removeLockPassword);
-  // Enter submits the field it's typed in - a password field that
-  // ignores Enter feels broken.
+  homeUnlockEl.addEventListener("click", function () { attemptUnlock(homePassEl, function (m) { if (homeLockMsgEl) homeLockMsgEl.textContent = m; }); });
+  actUnlockEl.addEventListener("click", function () { attemptUnlock(actPassEl, function (m) { if (actLockMsgEl) actLockMsgEl.textContent = m; }); });
+  homePassEl.addEventListener("keydown", function (ev) { if (ev.key === "Enter") homeUnlockEl.click(); });
+  actPassEl.addEventListener("keydown", function (ev) { if (ev.key === "Enter") actUnlockEl.click(); });
+  lockConfirmEl.addEventListener("keydown", function (ev) { if (ev.key === "Enter") setLockPassword(); });
+  lockNowEl.addEventListener("click", relock);
+  lockIconEl.addEventListener("click", function () {
+    if (isLocked()) promptUnlock();
+    else if (hasLock()) relock();
+  });
+
+  // moments / footer
   openOnboardingEl.addEventListener("click", openOnboarding);
   finishSetupEl.addEventListener("click", openOnboarding);
   reviewYesEl.addEventListener("click", onReviewYes);
@@ -1361,29 +926,19 @@
   reportProblemEl.addEventListener("click", openReportProblem);
   healthReportEl.addEventListener("click", openReportProblem);
   viewSourceEl.addEventListener("click", openRepo);
-  lockPasswordEl.addEventListener("keydown", function (ev) {
-    if (ev.key === "Enter") unlock();
-  });
-  lockConfirmEl.addEventListener("keydown", function (ev) {
-    if (ev.key === "Enter") setLockPassword();
+
+  // idle-timer reset on any interaction with the popup (so it never relocks
+  // while actively in use). Capture phase so it sees every event.
+  ["click", "keydown", "scroll", "input"].forEach(function (type) {
+    document.addEventListener(type, resetIdle, true);
   });
 
-  load();
-  renderStats(null); // synchronous zeros first, same correct-by-default pattern as settings
-  loadStats();
-  // Render the lock UI synchronously first (setup panel showing) for the
-  // same correct-by-default reason as everything else here, then
-  // reconcile once storage answers. A write attempted inside that window
-  // is deferred, not allowed - see lockStateLoaded.
-  renderLockUI();
+  // ==== boot ============================================================
+  loadSettings();
+  loadActivity();
+  applyLockUI();
   loadLock();
-  // Note the deliberate absence of a synchronous pre-render here, unlike
-  // every other section in this file. All three of these surfaces start
-  // hidden in the HTML and are only ever revealed by a real storage read.
-  // The popup's usual "render correct defaults immediately" rule would
-  // mean flashing "Finish setup" at someone who finished setup weeks ago,
-  // on every single open - and the plain default for "have you
-  // acknowledged?" is "we don't know yet", which shows nothing.
   loadMoments();
   loadHealth();
+  showView("home");
 })();

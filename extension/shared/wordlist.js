@@ -252,6 +252,78 @@
     return !EXTENDED_SET.has(w);
   });
 
+  // ---- Category tagging (0.1.51) ------------------------------------------
+  //
+  // Every built-in word is tagged with exactly one of five categories, so
+  // the popup's Activity dashboard can show a per-type breakdown (how much
+  // of what a user muted was profanity vs slurs vs religious exclamations
+  // vs euphemisms) and a most-muted list. Crude/sexual terms fold into
+  // "profanity" (there is no separate "crude" bucket). User-added words are
+  // category "custom", assigned at match time - never listed here.
+  //
+  // ASR-mishear entries are NOT a category: a mishear is attributed to the
+  // REAL word it stands in for. In this list that means the mishear spelling
+  // shares the category of the word it is a mishear of (e.g. the "jism"/
+  // "jiz"/"jizz"/"gism" cluster all sit in profanity beside their root).
+  //
+  // The five categories, and the buckets are defined by EXCEPTION: slurs,
+  // religious exclamations and euphemisms are listed explicitly; everything
+  // else in DEFAULT_WORDLIST is "profanity". This keeps one source of truth
+  // (DEFAULT_WORDLIST) for the contents and three small, auditable sets for
+  // the non-profanity tags.
+  //
+  // Judgment calls worth naming:
+  //   * "retard"/"spaz" are tagged slur (ableist slurs), not profanity.
+  //   * "damn"/"dammit"/"hell" are tagged religious (damnation/the place),
+  //     even though they are clear enough to live in the Standard tier.
+  //   * "bloody" and "screw" are tagged euphemism (minced/softened oaths).
+  //   * "gosh"/"oh my gosh" are euphemism (minced "god"); "oh god"/"oh my
+  //     god"/"jesus christ"/the "goddamn" cluster are religious.
+  var CATEGORIES = ["profanity", "slur", "religious", "euphemism", "custom"];
+
+  var SLUR_WORDS = [
+    "chink", "dyke", "fag", "faggot", "gook", "kike", "nigga", "nigger",
+    "spic", "tranny", "wetback", "retard", "spaz"
+  ];
+  var RELIGIOUS_WORDS = [
+    "damn", "dammit", "hell", "god damn", "goddam", "goddamn", "goddamnit",
+    "jesus christ", "oh god", "oh my god"
+  ];
+  var EUPHEMISM_WORDS = [
+    "dang", "effing", "flippin", "flipping", "freaken", "freaking",
+    "fricken", "frickin", "fricking", "friggen", "friggin", "gosh", "heck",
+    "oh my gosh", "bloody", "screw"
+  ];
+
+  // word (lowercased, space-normalized) -> category. Built once from the
+  // three exception sets; DEFAULT_WORDLIST entries absent from all three
+  // are "profanity".
+  var WORD_CATEGORY = (function () {
+    var map = Object.create(null);
+    function tag(list, cat) {
+      for (var i = 0; i < list.length; i++) {
+        map[list[i].toLowerCase().replace(/\s+/g, " ")] = cat;
+      }
+    }
+    // profanity first as the default for every default entry, then the
+    // three exception sets overwrite the ones they own.
+    for (var i = 0; i < DEFAULT_WORDLIST.length; i++) {
+      map[DEFAULT_WORDLIST[i].toLowerCase().replace(/\s+/g, " ")] = "profanity";
+    }
+    tag(SLUR_WORDS, "slur");
+    tag(RELIGIOUS_WORDS, "religious");
+    tag(EUPHEMISM_WORDS, "euphemism");
+    return map;
+  })();
+
+  // The category of a single list entry. Built-in words return their tag;
+  // anything not in the built-in map is a user-added word -> "custom".
+  function categoryOfWord(word) {
+    if (typeof word !== "string") return "custom";
+    var key = word.toLowerCase().trim().replace(/\s+/g, " ");
+    return WORD_CATEGORY[key] || "custom";
+  }
+
   // pm_strictness (0.1.29 redesign): a three-way LEVEL selecting how much
   // of the built-in list is switched on. Default "strict".
   //   "none"     -> no built-in words at all
@@ -320,6 +392,40 @@
     }
     add(tier);
     add(additional);
+    return out;
+  }
+
+  // Whitelist ("Always allow") subtraction (0.1.51). Given the effective
+  // active list (tier + additional) and the user's allow list, remove every
+  // allowed word so it plays even though it is on the built-in list. This is
+  // where "allow beats block" is enforced: because the subtraction runs on
+  // the ALREADY-MERGED list (tier + the user's own added words), an entry
+  // the user both added AND allowed is removed here and therefore plays.
+  //
+  // Removing an entry also removes its stems from the matcher's stem set
+  // (buildStemSet runs on this subtracted list), so an allowed word's
+  // inflections ("damns" when "damn" is allowed) stop matching too - the
+  // symmetric mirror of how blocking a word covers its inflections.
+  // Matching is case-insensitive and whitespace-normalized, so the compare
+  // keys must be as well.
+  function subtractWords(list, allow) {
+    if (!Array.isArray(allow) || allow.length === 0) {
+      return Array.isArray(list) ? list.slice() : [];
+    }
+    var deny = new Set();
+    for (var i = 0; i < allow.length; i++) {
+      if (typeof allow[i] !== "string") continue;
+      var k = allow[i].trim().replace(/\s+/g, " ").toLowerCase();
+      if (k) deny.add(k);
+    }
+    var out = [];
+    for (var j = 0; j < list.length; j++) {
+      var entry = list[j];
+      if (typeof entry !== "string") continue;
+      var key = entry.trim().replace(/\s+/g, " ").toLowerCase();
+      if (deny.has(key)) continue;
+      out.push(entry);
+    }
     return out;
   }
 
@@ -558,6 +664,67 @@
     return set;
   }
 
+  // Category attribution maps (0.1.51). Parallel to buildStemSet /
+  // buildPhraseIndex, but keyed so a match can be traced back to the list
+  // entry it came from and that entry's category. `categoryFn(entry)`
+  // returns the category for a given list entry (built-in words get their
+  // tag, user-added words get "custom"); it is injected rather than closed
+  // over so the pure core stays testable without the WORD_CATEGORY table.
+  //
+  // buildStemCategory: stem -> {category, canonical}. `canonical` is the
+  // normalized list entry that owns the stem, used for the most-muted
+  // display (so "damns" is attributed to "damn"). First entry to claim a
+  // stem wins, matching buildStemSet's own first-wins behavior.
+  function buildStemCategory(wordlist, matchConfig, categoryFn) {
+    matchConfig = matchConfig || EN_MATCH_CONFIG;
+    var map = new Map();
+    for (var i = 0; i < wordlist.length; i++) {
+      var raw = wordlist[i];
+      var entry = normalizeToken(raw, matchConfig.foldDiacritics);
+      if (!entry) continue;
+      if (!matchConfig.substringMode && entry.indexOf(" ") !== -1) continue;
+      var cat = categoryFn ? categoryFn(raw) : "profanity";
+      var stems = stemsOf(entry, matchConfig);
+      for (var j = 0; j < stems.length; j++) {
+        if (!map.has(stems[j])) map.set(stems[j], { category: cat, canonical: entry });
+      }
+    }
+    return map;
+  }
+
+  // buildPhraseCategory: normalized phrase string -> {category, canonical}.
+  function buildPhraseCategory(wordlist, matchConfig, categoryFn) {
+    matchConfig = matchConfig || EN_MATCH_CONFIG;
+    var map = new Map();
+    for (var i = 0; i < wordlist.length; i++) {
+      var raw = wordlist[i];
+      var entry = normalizeSpaces(raw, matchConfig.foldDiacritics);
+      if (!entry || entry.indexOf(" ") === -1) continue;
+      if (!map.has(entry)) {
+        map.set(entry, {
+          category: categoryFn ? categoryFn(raw) : "profanity",
+          canonical: entry
+        });
+      }
+    }
+    return map;
+  }
+
+  // Look up the category + canonical entry for a single matched token,
+  // given a stemCategory map. Returns null when nothing is found (e.g. a
+  // wildcard match, which carries no exact stem) so callers can fall back.
+  function attributeToken(token, stemCategory, matchConfig) {
+    if (!stemCategory) return null;
+    matchConfig = matchConfig || EN_MATCH_CONFIG;
+    var norm = normalizeToken(token, matchConfig.foldDiacritics);
+    if (!norm) return null;
+    var stems = stemsOf(norm, matchConfig);
+    for (var i = 0; i < stems.length; i++) {
+      if (stemCategory.has(stems[i])) return stemCategory.get(stems[i]);
+    }
+    return null;
+  }
+
   // Substring matching, for languages with no reliable whitespace word
   // boundaries (matchConfig.substringMode - Chinese/Japanese/Thai/Korean
   // community packs). `stemSet` here holds whole (possibly multi-
@@ -632,8 +799,16 @@
   // Linear time: each token does one Map lookup plus, at most, a short
   // scan of same-first-word phrase candidates. matchConfig defaults to
   // EN_MATCH_CONFIG when omitted (pre-pack-architecture call sites).
-  function findMatchesCore(tokens, stemSet, phraseIndex, matchConfig) {
+  // catMaps (0.1.51, optional): {stem, phrase} category maps built by
+  // buildStemCategory/buildPhraseCategory. When present, each returned
+  // match also carries `category` (one of CATEGORIES) and `word` (the
+  // canonical list entry), so the audio pipeline can attribute the mute for
+  // the Activity dashboard. Omitted -> the extra fields are simply absent
+  // and every existing 4-arg call site is byte-for-byte unchanged.
+  function findMatchesCore(tokens, stemSet, phraseIndex, matchConfig, catMaps) {
     matchConfig = matchConfig || EN_MATCH_CONFIG;
+    var stemCat = catMaps && catMaps.stem;
+    var phraseCat = catMaps && catMaps.phrase;
     var matches = [];
     if (!Array.isArray(tokens) || tokens.length === 0) return matches;
 
@@ -661,7 +836,15 @@
             }
           }
           if (ok) {
-            matches.push({ index: i, length: words.length });
+            var pm = { index: i, length: words.length };
+            if (phraseCat) {
+              var pinfo = phraseCat.get(words.join(" "));
+              if (pinfo) {
+                pm.category = pinfo.category;
+                pm.word = pinfo.canonical;
+              }
+            }
+            matches.push(pm);
             matchedPhrase = true;
             break; // bucket is longest-first
           }
@@ -669,7 +852,21 @@
       }
 
       if (!matchedPhrase && isProfaneCore(tokens[i], stemSet, matchConfig)) {
-        matches.push({ index: i, length: 1 });
+        var sm = { index: i, length: 1 };
+        if (stemCat) {
+          var sinfo = attributeToken(tokens[i], stemCat, matchConfig);
+          if (sinfo) {
+            sm.category = sinfo.category;
+            sm.word = sinfo.canonical;
+          } else {
+            // Wildcard/first-letter matches carry no exact stem; attribute
+            // to profanity with the normalized token as the label rather
+            // than dropping the match from the breakdown entirely.
+            sm.category = "profanity";
+            sm.word = normalizeToken(tokens[i], matchConfig.foldDiacritics);
+          }
+        }
+        matches.push(sm);
       }
     }
 
@@ -820,6 +1017,7 @@
     "pm_showStatus",
     "pm_strictness",
     "pm_additionalWords",
+    "pm_allowWords",
     "pm_padding"
   ];
 
@@ -1001,7 +1199,15 @@
       additionalWords = [];
     }
 
-    var wordlist = mergeWordlists(tierWordlist(strictness), additionalWords);
+    // Whitelist (0.1.51). Subtracted from the merged tier+additional list
+    // so allowed words play even when they are on the built-in list, and
+    // even when the user also added them ("allow beats block"). The raw
+    // allow list is also returned for the popup to render.
+    var allowWords = sanitizeAdditionalWords(items.pm_allowWords);
+    var wordlist = subtractWords(
+      mergeWordlists(tierWordlist(strictness), additionalWords),
+      allowWords
+    );
 
     var padding = PADDING_MODES.indexOf(items.pm_padding) !== -1
       ? items.pm_padding
@@ -1020,6 +1226,9 @@
       // The user's OWN words, resolved/migrated and sanitized - what the
       // popup renders in "My additional words". Never contains built-ins.
       additionalWords: additionalWords,
+      // The "Always allow" list (0.1.51), sanitized. What the popup renders
+      // as the whitelist chips; subtracted from `wordlist` above.
+      allowWords: allowWords,
       // The EFFECTIVE list: tier + additionalWords, deduped. This is what
       // matching uses; it is never displayed anywhere in the UI.
       wordlist: wordlist
@@ -1035,6 +1244,16 @@
     buildStemSet: buildStemSet,
     buildPhraseList: buildPhraseList,
     buildPhraseIndex: buildPhraseIndex,
+    buildStemCategory: buildStemCategory,
+    buildPhraseCategory: buildPhraseCategory,
+    attributeToken: attributeToken,
+    categoryOfWord: categoryOfWord,
+    CATEGORIES: CATEGORIES,
+    WORD_CATEGORY: WORD_CATEGORY,
+    SLUR_WORDS: SLUR_WORDS,
+    RELIGIOUS_WORDS: RELIGIOUS_WORDS,
+    EUPHEMISM_WORDS: EUPHEMISM_WORDS,
+    subtractWords: subtractWords,
     isProfaneCore: isProfaneCore,
     censorTextCore: censorTextCore,
     findMatchesCore: findMatchesCore,
@@ -1072,10 +1291,17 @@
     // resolveSettingsFromStorage. Kept on _state (not on `settings`,
     // which is contractually free of arrays) for the popup to render.
     additionalWords: [],
+    // The "Always allow" list (0.1.51), for the popup to render.
+    allowWords: [],
     wordlist: DEFAULT_WORDLIST.slice(),
     stemSet: buildStemSet(DEFAULT_WORDLIST, EN_MATCH_CONFIG),
     phrases: buildPhraseList(DEFAULT_WORDLIST, EN_MATCH_CONFIG),
-    phraseIndex: buildPhraseIndex(DEFAULT_WORDLIST, EN_MATCH_CONFIG)
+    phraseIndex: buildPhraseIndex(DEFAULT_WORDLIST, EN_MATCH_CONFIG),
+    // Category attribution maps (0.1.51), kept in lockstep with the three
+    // above via rebuildFrom. Built from the same active wordlist so a
+    // match's category reflects exactly what is being filtered.
+    stemCategory: buildStemCategory(DEFAULT_WORDLIST, EN_MATCH_CONFIG, categoryOfWord),
+    phraseCategory: buildPhraseCategory(DEFAULT_WORDLIST, EN_MATCH_CONFIG, categoryOfWord)
   };
 
   // Minimal, stable-shape settings object handed to other content
@@ -1127,6 +1353,8 @@
     state.stemSet = buildStemSet(wl, matchConfig);
     state.phrases = buildPhraseList(wl, matchConfig);
     state.phraseIndex = buildPhraseIndex(wl, matchConfig);
+    state.stemCategory = buildStemCategory(wl, matchConfig, categoryOfWord);
+    state.phraseCategory = buildPhraseCategory(wl, matchConfig, categoryOfWord);
   }
 
   function refresh() {
@@ -1154,6 +1382,7 @@
           state.strictness = resolved.strictness;
           state.padding = resolved.padding;
           state.additionalWords = resolved.additionalWords;
+          state.allowWords = resolved.allowWords;
           rebuildFrom(resolved.wordlist, EN_MATCH_CONFIG);
 
           settings.enabled = resolved.enabled;
@@ -1193,7 +1422,10 @@
   // multi-word phrase from the English word list.
   function findMatches(tokens) {
     if (!state.enabled) return [];
-    return findMatchesCore(tokens, state.stemSet, state.phraseIndex, state.matchConfig);
+    return findMatchesCore(tokens, state.stemSet, state.phraseIndex, state.matchConfig, {
+      stem: state.stemCategory,
+      phrase: state.phraseCategory
+    });
   }
 
   // Wire up live updates, guarded for contexts without chrome.*.
@@ -1212,6 +1444,7 @@
           changes.pm_showStatus ||
           changes.pm_strictness ||
           changes.pm_additionalWords ||
+          changes.pm_allowWords ||
           changes.pm_padding
         ) {
           refresh();

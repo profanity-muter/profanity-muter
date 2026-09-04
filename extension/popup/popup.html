@@ -6,318 +6,314 @@
 <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
+  <!-- Design C (0.1.51): a home dashboard with drill-in sub-screens, all in
+       one popup (views toggled by .pm-hidden). The header is shared across
+       views: on Home it carries the title, the master on/off switch and the
+       parental-lock padlock; on a sub-screen the title becomes a back
+       button + the screen name, and the switch is hidden. Every existing
+       setting is preserved, reorganized under "Playback & display". -->
   <header class="pm-header">
-    <span class="pm-title">Profanity Muter</span>
-    <button id="pm-open-onboarding" class="pm-link-button" type="button">Setup guide</button>
+    <button id="pm-back" class="pm-back pm-hidden" type="button" aria-label="Back">&lsaquo;</button>
+    <span class="pm-title" id="pm-title">Profanity Muter</span>
+    <span class="pm-header-right">
+      <!-- Master switch. Stays visible and normal-looking even when locked;
+           clicking it to turn protection OFF prompts for the password
+           first (see popup.js). -->
+      <label class="pm-switch" id="pm-enabled-wrap" title="Muting and censoring on YouTube&trade;">
+        <input type="checkbox" id="pm-enabled" checked aria-label="Enable muting and censoring on YouTube" />
+        <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
+      </label>
+      <!-- Padlock: shown only when a parental lock is set. Closed when
+           locked, open when unlocked. Click to lock now (when unlocked) or
+           jump to the unlock prompt (when locked). -->
+      <button id="pm-lock-icon" class="pm-lock-icon pm-hidden" type="button" aria-label="Parental lock"></button>
+    </span>
   </header>
 
-  <!-- Health warning (0.1.32). Shown when the content script on the ACTIVE
-       tab reports that nothing is being analyzed on the video playing
-       there. Sits above everything, including the setup banner: "your
-       filter is not working right now" outranks every other thing this
-       popup has to say. Not dismissable, because it describes a live
-       condition rather than a task; it disappears when the condition
-       does. -->
-  <section class="pm-health pm-hidden" id="pm-health" aria-hidden="true" role="alert">
-    <p class="pm-health-title" id="pm-health-message"></p>
-    <p class="pm-health-detail" id="pm-health-detail"></p>
-    <button id="pm-health-report" class="pm-link-button" type="button">Report a problem</button>
-  </section>
+  <main>
+    <!-- ============================ HOME ============================ -->
+    <section id="pm-view-home" class="pm-view">
 
-  <!-- Slim, persistent until acknowledged. Not a modal and not dismissable:
-       the acknowledgment is the one thing we want every user to have
-       actually seen, so it stays until they do it - but it takes one line
-       and blocks nothing. -->
-  <button
-    id="pm-finish-setup"
-    class="pm-banner pm-hidden"
-    type="button"
-    aria-hidden="true"
-  >
-    Finish setup - 1 minute
-  </button>
+      <!-- Health warning: the filter is not working on the active tab right
+           now. Outranks everything, not dismissable. -->
+      <section class="pm-health pm-hidden" id="pm-health" aria-hidden="true" role="alert">
+        <p class="pm-health-title" id="pm-health-message"></p>
+        <p class="pm-health-detail" id="pm-health-detail"></p>
+        <button id="pm-health-report" class="pm-link-button" type="button">Report a problem</button>
+      </section>
 
-  <!-- Review prompt. Rendered only when PMMoments.reviewPromptEligibility
-       says so; see shared/moments.js for the Chrome Web Store policy rules
-       this surface has to obey (shown at most once ever, permanent
-       dismissal, no incentive, nothing gated on it). -->
-  <section class="pm-row pm-row--review pm-hidden" id="pm-review-card" aria-hidden="true">
-    <p class="pm-review-text">
-      Is Profanity Muter doing its job? A review helps others find it.
-    </p>
-    <div class="pm-review-actions">
-      <button id="pm-review-yes" class="pm-button pm-button--secondary" type="button">
-        Leave a review
+      <!-- Finish-setup banner: shown until acknowledged. -->
+      <button id="pm-finish-setup" class="pm-banner pm-hidden" type="button" aria-hidden="true">
+        Finish setup - 1 minute
       </button>
-      <button id="pm-review-no" class="pm-link-button" type="button">No thanks</button>
-    </div>
-  </section>
 
-  <section class="pm-row pm-row--toggle">
-    <label class="pm-switch-label">
-      <span class="pm-switch-text">
-        <span class="pm-switch-title">Enabled</span>
-        <!-- First and most prominent YouTube mention in the popup, so this
-             is the one that carries the mark; the convention is once per
-             page, not once per occurrence. -->
-        <span class="pm-switch-sub">Master switch for muting and censoring on YouTube&trade;</span>
-      </span>
-      <span class="pm-switch">
-        <input type="checkbox" id="pm-enabled" checked />
-        <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
-      </span>
-    </label>
-  </section>
+      <!-- Review prompt card (Chrome Web Store policy rules in shared/moments.js). -->
+      <section class="pm-row pm-row--review pm-hidden" id="pm-review-card" aria-hidden="true">
+        <p class="pm-review-text">
+          Is Profanity Muter doing its job? A review helps others find it.
+        </p>
+        <div class="pm-review-actions">
+          <button id="pm-review-yes" class="pm-button pm-button--secondary" type="button">Leave a review</button>
+          <button id="pm-review-no" class="pm-link-button" type="button">No thanks</button>
+        </div>
+      </section>
 
-  <section class="pm-row pm-row--toggle">
-    <label class="pm-switch-label">
-      <span class="pm-switch-text">
-        <span class="pm-switch-title">Mute audio</span>
-        <span class="pm-switch-sub">Silence the audio when profanity is spoken</span>
-      </span>
-      <span class="pm-switch">
-        <input type="checkbox" id="pm-mute-audio" checked />
-        <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
-      </span>
-    </label>
-  </section>
+      <!-- Relock bar: shown only while unlocked and a lock is set. -->
+      <div id="pm-relock-bar" class="pm-relock-bar pm-hidden" aria-hidden="true">
+        <span>Unlocked &middot; relocks after 5 min idle</span>
+        <button id="pm-lock-now" class="pm-relock-now" type="button">Lock now</button>
+      </div>
 
-  <section class="pm-row pm-row--toggle">
-    <label class="pm-switch-label">
-      <span class="pm-switch-text">
-        <span class="pm-switch-title">Censor captions</span>
-        <span class="pm-switch-sub">Turn off to verify audio muting against what's actually said</span>
-      </span>
-      <span class="pm-switch">
-        <input type="checkbox" id="pm-censor-captions" checked />
-        <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
-      </span>
-    </label>
-  </section>
+      <!-- Activity summary (public even when locked). Tappable: opens the
+           full Activity screen. Defaults to all-time. -->
+      <section class="pm-row">
+        <div class="pm-sh-row">
+          <span class="pm-sh">Activity</span>
+          <button id="pm-open-activity" class="pm-link-button" type="button">See all</button>
+        </div>
+        <button id="pm-summary-tap" class="pm-summary-tap" type="button" aria-label="Open full activity">
+          <div class="pm-bigstat">
+            <div class="pm-bigstat-b"><div class="pm-bigstat-v" id="pm-home-muted">0</div><div class="pm-bigstat-k">words muted</div></div>
+            <div class="pm-bigstat-b"><div class="pm-bigstat-v" id="pm-home-videos">0</div><div class="pm-bigstat-k">videos</div></div>
+          </div>
+          <div id="pm-home-cats" class="pm-cats"></div>
+        </button>
+      </section>
 
-  <section class="pm-row pm-row--toggle">
-    <label class="pm-switch-label">
-      <span class="pm-switch-text">
-        <span class="pm-switch-title">Show status on player</span>
-        <span class="pm-switch-sub">Show a small status pill on top of the YouTube player</span>
-      </span>
-      <span class="pm-switch">
-        <input type="checkbox" id="pm-show-status" checked />
-        <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
-      </span>
-    </label>
-  </section>
+      <!-- Everything below the summary is gated by the parental lock. -->
+      <div class="pm-gate">
+        <div id="pm-home-gated" class="pm-gate-body">
 
-  <section class="pm-row pm-row--radio">
-    <span class="pm-label">While catching up</span>
-    <div class="pm-radio-group" role="radiogroup" aria-label="While catching up">
-      <label class="pm-radio-label">
-        <input type="radio" name="pm-catchup-mode" id="pm-catchup-mute" value="mute" checked />
-        <span>Mute audio</span>
-      </label>
-      <label class="pm-radio-label">
-        <input type="radio" name="pm-catchup-mode" id="pm-catchup-pause" value="pause" />
-        <span>Pause video</span>
-      </label>
-      <label class="pm-radio-label">
-        <input type="radio" name="pm-catchup-mode" id="pm-catchup-play" value="play" />
-        <span>Let it play</span>
-      </label>
-    </div>
-    <p class="pm-hint">What happens in parts of the video not yet analyzed.</p>
-  </section>
+          <section class="pm-row">
+            <span class="pm-sh">Built-in list</span>
+            <div class="pm-levels" role="radiogroup" aria-label="Built-in list">
+              <label class="pm-level">
+                <input type="radio" name="pm-strictness" id="pm-strictness-none" value="none" />
+                <span class="pm-level-rd"></span>
+                <span class="pm-level-text"><span class="pm-level-lab">None</span><span class="pm-level-desc">Only the words you add</span></span>
+              </label>
+              <label class="pm-level">
+                <input type="radio" name="pm-strictness" id="pm-strictness-standard" value="standard" />
+                <span class="pm-level-rd"></span>
+                <span class="pm-level-text"><span class="pm-level-lab">Standard</span><span class="pm-level-desc">Clear profanity and slurs</span></span>
+              </label>
+              <label class="pm-level">
+                <input type="radio" name="pm-strictness" id="pm-strictness-strict" value="strict" checked />
+                <span class="pm-level-rd"></span>
+                <span class="pm-level-text"><span class="pm-level-lab">Strict</span><span class="pm-level-desc">Also euphemisms and religious words</span></span>
+              </label>
+            </div>
+          </section>
 
-  <section class="pm-row pm-row--radio">
-    <span class="pm-label">Mute padding</span>
-    <div class="pm-radio-group" role="radiogroup" aria-label="Mute padding">
-      <label class="pm-radio-label">
-        <input type="radio" name="pm-padding" id="pm-padding-tight" value="tight" />
-        <span>Tight</span>
-      </label>
-      <label class="pm-radio-label">
-        <input type="radio" name="pm-padding" id="pm-padding-normal" value="normal" checked />
-        <span>Normal</span>
-      </label>
-      <label class="pm-radio-label">
-        <input type="radio" name="pm-padding" id="pm-padding-wide" value="wide" />
-        <span>Wide</span>
-      </label>
-    </div>
-    <p class="pm-hint">
-      How much surrounding audio gets muted around a word. Tight may clip
-      word edges; wide mutes a bit of surrounding speech too.
-    </p>
-  </section>
+          <section class="pm-row pm-drills">
+            <button class="pm-drill" id="pm-go-manage" type="button">
+              <span>Manage words <span class="pm-drill-sub" id="pm-manage-sub"></span></span>
+              <span class="pm-chev">&rsaquo;</span>
+            </button>
+            <button class="pm-drill" id="pm-go-playback" type="button">
+              <span>Playback &amp; display</span><span class="pm-chev">&rsaquo;</span>
+            </button>
+            <button class="pm-drill" id="pm-go-lock" type="button">
+              <span id="pm-lock-drill-label">Set a parental lock</span><span class="pm-chev">&rsaquo;</span>
+            </button>
+          </section>
 
-  <section class="pm-row pm-row--radio">
-    <span class="pm-label">Built-in list</span>
-    <div class="pm-radio-group pm-radio-group--stacked" role="radiogroup" aria-label="Built-in list">
-      <label class="pm-radio-label pm-radio-label--stacked">
-        <input type="radio" name="pm-strictness" id="pm-strictness-none" value="none" />
-        <span>
-          <span class="pm-radio-title">None</span>
-          <span class="pm-radio-desc">Only the words you add below</span>
-        </span>
-      </label>
-      <label class="pm-radio-label pm-radio-label--stacked">
-        <input type="radio" name="pm-strictness" id="pm-strictness-standard" value="standard" />
-        <span>
-          <span class="pm-radio-title">Standard</span>
-          <span class="pm-radio-desc">Clear profanity and slurs</span>
-        </span>
-      </label>
-      <label class="pm-radio-label pm-radio-label--stacked">
-        <input type="radio" name="pm-strictness" id="pm-strictness-strict" value="strict" checked />
-        <span>
-          <span class="pm-radio-title">Strict</span>
-          <span class="pm-radio-desc">Also euphemisms and religious exclamations</span>
-        </span>
-      </label>
-    </div>
-    <p class="pm-hint">
-      The built-in lists aren't shown here - they're maintained by the
-      extension and updated with it.
-    </p>
-  </section>
+        </div>
 
-  <section class="pm-row pm-row--list">
-    <div class="pm-list-heading">
-      <label class="pm-label" for="pm-wordlist">My additional words</label>
-      <button id="pm-toggle-mask" class="pm-link-button" type="button">Show words to edit</button>
-    </div>
-    <p id="pm-wordlist-mode-note" class="pm-hint pm-wordlist-mode-note">
-      Strict list, plus 0 of your own
-    </p>
-    <p id="pm-wordlist-hint" class="pm-hint">
-      Words you add here are filtered on top of the built-in list, one word
-      or phrase per line. They're masked until you click "Show words to edit".
-    </p>
+        <!-- Overlay shown over the gated body when locked. -->
+        <div id="pm-home-overlay" class="pm-overlay pm-hidden" aria-hidden="true">
+          <div class="pm-overlay-icon">&#128274;</div>
+          <div class="pm-overlay-title">Settings are locked</div>
+          <input type="password" id="pm-home-pass" class="pm-input" placeholder="Parental password" autocomplete="current-password" />
+          <button id="pm-home-unlock" class="pm-button" type="button">Unlock settings</button>
+          <p id="pm-home-lockmsg" class="pm-overlay-hint" role="status" aria-live="polite"></p>
+          <p class="pm-overlay-hint">Stats stay visible. There is no password reset, by design.</p>
+        </div>
+      </div>
 
-    <div id="pm-masked-list" class="pm-masked-list" aria-hidden="false"></div>
+      <footer class="pm-footer">
+        <button id="pm-open-onboarding" class="pm-link-button" type="button">Setup guide</button>
+        <button id="pm-view-source" class="pm-link-button" type="button">GitHub</button>
+        <button id="pm-share" class="pm-link-button" type="button">Share</button>
+      </footer>
+    </section>
 
-    <textarea
-      id="pm-wordlist"
-      class="pm-textarea pm-hidden"
-      rows="10"
-      spellcheck="false"
-      aria-hidden="true"
-    ></textarea>
-  </section>
+    <!-- ========================= MANAGE WORDS ========================= -->
+    <section id="pm-view-manage" class="pm-view pm-hidden" aria-hidden="true">
+      <section class="pm-row">
+        <span class="pm-sh">Also block</span>
+        <p class="pm-hint">On top of the built-in list.</p>
+        <div id="pm-block-chips" class="pm-chips"></div>
+        <form id="pm-block-form" class="pm-addbox">
+          <input type="text" id="pm-block-input" class="pm-addinput" placeholder="add a word to block" autocomplete="off" spellcheck="false" />
+          <button type="submit" class="pm-add-btn" aria-label="Add word to block">Add</button>
+        </form>
+      </section>
+      <section class="pm-row">
+        <span class="pm-sh">Always allow</span>
+        <p class="pm-hint">Words on the built-in list you want to let through.</p>
+        <div id="pm-allow-chips" class="pm-chips"></div>
+        <form id="pm-allow-form" class="pm-addbox">
+          <input type="text" id="pm-allow-input" class="pm-addinput" placeholder="add a word to allow" autocomplete="off" spellcheck="false" />
+          <button type="submit" class="pm-add-btn" aria-label="Add word to allow">Add</button>
+        </form>
+      </section>
+      <section class="pm-row">
+        <p class="pm-hint">Allow wins over block: if a word is on both, it plays. Your lists stay on this device.</p>
+      </section>
+    </section>
 
-  <section class="pm-row pm-row--debug">
-    <span class="pm-label pm-label--muted">Debugging</span>
-    <label class="pm-switch-label">
-      <span class="pm-switch-text">
-        <span class="pm-switch-title">Show debug overlay</span>
-        <span class="pm-switch-sub">Show analysis status on top of the YouTube player</span>
-      </span>
-      <span class="pm-switch">
-        <input type="checkbox" id="pm-debug-overlay" />
-        <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
-      </span>
-    </label>
-    <!-- "Report a problem" sits with "Copy debug log" and shares its rule:
-         always available, never lock-gated. Someone hitting a problem must
-         always be able to report it, and neither changes a setting. -->
-    <div class="pm-debug-actions">
-      <button id="pm-copy-devlog" class="pm-link-button" type="button">Copy debug log</button>
-      <button id="pm-report-problem" class="pm-link-button" type="button">Report a problem</button>
-    </div>
-  </section>
+    <!-- ======================= PLAYBACK & DISPLAY ======================= -->
+    <section id="pm-view-playback" class="pm-view pm-hidden" aria-hidden="true">
+      <section class="pm-row">
+        <label class="pm-switch-label">
+          <span class="pm-switch-text">
+            <span class="pm-switch-title">Mute audio</span>
+            <span class="pm-switch-sub">Silence the word as it plays</span>
+          </span>
+          <span class="pm-switch">
+            <input type="checkbox" id="pm-mute-audio" checked />
+            <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
+          </span>
+        </label>
+      </section>
+      <section class="pm-row">
+        <label class="pm-switch-label">
+          <span class="pm-switch-text">
+            <span class="pm-switch-title">Censor captions</span>
+            <span class="pm-switch-sub">Mask the word in subtitles too</span>
+          </span>
+          <span class="pm-switch">
+            <input type="checkbox" id="pm-censor-captions" checked />
+            <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
+          </span>
+        </label>
+      </section>
+      <section class="pm-row">
+        <label class="pm-switch-label">
+          <span class="pm-switch-text">
+            <span class="pm-switch-title">Status pill on player</span>
+            <span class="pm-switch-sub">Small on-video indicator</span>
+          </span>
+          <span class="pm-switch">
+            <input type="checkbox" id="pm-show-status" checked />
+            <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
+          </span>
+        </label>
+      </section>
+      <section class="pm-row">
+        <span class="pm-sh">While catching up</span>
+        <p class="pm-hint">Parts not analyzed yet (video start, after skipping).</p>
+        <div class="pm-seg" role="radiogroup" aria-label="While catching up">
+          <label class="pm-seg-opt"><input type="radio" name="pm-catchup-mode" id="pm-catchup-play" value="play" /><span>Let it play</span></label>
+          <label class="pm-seg-opt"><input type="radio" name="pm-catchup-mode" id="pm-catchup-mute" value="mute" checked /><span>Mute</span></label>
+          <label class="pm-seg-opt"><input type="radio" name="pm-catchup-mode" id="pm-catchup-pause" value="pause" /><span>Pause</span></label>
+        </div>
+      </section>
+      <section class="pm-row">
+        <span class="pm-sh">Mute padding</span>
+        <p class="pm-hint">How much around each word gets muted.</p>
+        <div class="pm-seg" role="radiogroup" aria-label="Mute padding">
+          <label class="pm-seg-opt"><input type="radio" name="pm-padding" id="pm-padding-tight" value="tight" /><span>Tight</span></label>
+          <label class="pm-seg-opt"><input type="radio" name="pm-padding" id="pm-padding-normal" value="normal" checked /><span>Normal</span></label>
+          <label class="pm-seg-opt"><input type="radio" name="pm-padding" id="pm-padding-wide" value="wide" /><span>Wide</span></label>
+        </div>
+      </section>
+      <section class="pm-row">
+        <span class="pm-sh">Debugging</span>
+        <label class="pm-switch-label">
+          <span class="pm-switch-text">
+            <span class="pm-switch-title">Show debug overlay</span>
+            <span class="pm-switch-sub">Show analysis status on top of the player</span>
+          </span>
+          <span class="pm-switch">
+            <input type="checkbox" id="pm-debug-overlay" />
+            <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
+          </span>
+        </label>
+        <!-- Never lock-gated: a child who hits a problem must still be able
+             to export a log and report it (neither changes a setting). -->
+        <div class="pm-debug-actions">
+          <button id="pm-copy-devlog" class="pm-link-button" type="button">Copy debug log</button>
+          <button id="pm-report-problem" class="pm-link-button" type="button">Report a problem</button>
+        </div>
+      </section>
+      <section class="pm-row">
+        <button id="pm-restore" class="pm-button pm-button--secondary" type="button">Restore defaults</button>
+      </section>
+    </section>
 
-  <!-- Share. Shown only after acknowledgment (nobody should be recommending
-       this before they've been told its limits), and deliberately NOT
-       lock-gated - like "Copy debug log", it changes no setting. -->
-  <section class="pm-row pm-row--share pm-hidden" id="pm-share-row" aria-hidden="true">
-    <span class="pm-label pm-label--muted">Share</span>
-    <button id="pm-share" class="pm-link-button" type="button">Share with a friend</button>
-    <p class="pm-hint">
-      Copies a short message and the store link. No tracking, no referral
-      codes.
-    </p>
-  </section>
+    <!-- ========================= FULL ACTIVITY ========================= -->
+    <section id="pm-view-activity" class="pm-view pm-hidden" aria-hidden="true">
+      <section class="pm-row">
+        <div class="pm-seg pm-seg--range" role="radiogroup" aria-label="Range">
+          <button class="pm-range-opt" data-range="24h" type="button">24h</button>
+          <button class="pm-range-opt" data-range="7d" type="button">7 days</button>
+          <button class="pm-range-opt pm-range-on" data-range="all" type="button">All time</button>
+        </div>
+      </section>
+      <section class="pm-row">
+        <div class="pm-bigstat">
+          <div class="pm-bigstat-b"><div class="pm-bigstat-v" id="pm-act-muted">0</div><div class="pm-bigstat-k">words muted</div></div>
+          <div class="pm-bigstat-b"><div class="pm-bigstat-v" id="pm-act-videos">0</div><div class="pm-bigstat-k">videos</div></div>
+        </div>
+      </section>
 
-  <section class="pm-row pm-row--stats">
-    <span class="pm-label pm-label--muted">Stats</span>
-    <p id="pm-stats-line" class="pm-stats-line">
-      words muted all-time: 0 &middot; videos protected: 0
-    </p>
-    <button id="pm-reset-stats" class="pm-link-button" type="button">Reset stats</button>
-  </section>
+      <div class="pm-gate">
+        <div id="pm-act-gated" class="pm-gate-body">
+          <section class="pm-row" id="pm-act-cats-row">
+            <span class="pm-sh">By type</span>
+            <div id="pm-act-cats" class="pm-cats"></div>
+          </section>
+          <section class="pm-row">
+            <span class="pm-sh">Most muted (top 100)</span>
+            <div id="pm-act-top" class="pm-mostmuted"></div>
+          </section>
+          <section class="pm-row">
+            <p class="pm-hint">All counts are stored only on this device. Nothing is uploaded.</p>
+          </section>
+        </div>
+        <div id="pm-act-overlay" class="pm-overlay pm-hidden" aria-hidden="true">
+          <div class="pm-overlay-icon">&#128274;</div>
+          <div class="pm-overlay-title">Detailed activity is locked</div>
+          <input type="password" id="pm-act-pass" class="pm-input" placeholder="Parental password" autocomplete="current-password" />
+          <button id="pm-act-unlock" class="pm-button" type="button">Unlock</button>
+          <p id="pm-act-lockmsg" class="pm-overlay-hint" role="status" aria-live="polite"></p>
+        </div>
+      </div>
+    </section>
 
-  <!-- Parental lock. Deliberately the last section before the action
-       buttons: it is the thing a parent sets once and never touches
-       again, so it sits out of the way of everything used daily. The
-       "Copy debug log" button above stays usable while locked on
-       purpose - a kid who hits a problem must still be able to export a
-       log and send it on. -->
-  <section class="pm-row pm-row--lock">
-    <span class="pm-label pm-label--muted">Parental lock</span>
+    <!-- ========================= PARENTAL LOCK ========================= -->
+    <section id="pm-view-lock" class="pm-view pm-hidden" aria-hidden="true">
+      <div id="pm-lock-setup" class="pm-row">
+        <span class="pm-sh">Set a parental lock</span>
+        <p class="pm-hint">Lock these settings with a password.</p>
+        <input type="password" id="pm-lock-new" class="pm-input" placeholder="New password" autocomplete="new-password" />
+        <input type="password" id="pm-lock-confirm" class="pm-input" placeholder="Confirm password" autocomplete="new-password" />
+        <button id="pm-lock-set" class="pm-button" type="button">Set password</button>
+      </div>
 
-    <div id="pm-lock-setup" class="pm-lock-panel">
-      <p class="pm-hint">Lock these settings with a password.</p>
-      <input
-        type="password"
-        id="pm-lock-new"
-        class="pm-input"
-        placeholder="New password"
-        autocomplete="new-password"
-      />
-      <input
-        type="password"
-        id="pm-lock-confirm"
-        class="pm-input"
-        placeholder="Confirm password"
-        autocomplete="new-password"
-      />
-      <button id="pm-lock-set" class="pm-button pm-button--secondary" type="button">
-        Set password
-      </button>
-    </div>
+      <div id="pm-lock-manage" class="pm-row pm-hidden" aria-hidden="true">
+        <span class="pm-sh">Parental lock</span>
+        <p class="pm-hint">The lock is on. Settings relock when you close this popup or after 5 minutes idle.</p>
+        <button id="pm-lock-remove" class="pm-button pm-button--secondary" type="button">Remove password</button>
+      </div>
 
-    <div id="pm-lock-locked" class="pm-lock-panel pm-hidden" aria-hidden="true">
-      <p class="pm-hint">Settings are locked. Enter the password to change them.</p>
-      <input
-        type="password"
-        id="pm-lock-password"
-        class="pm-input"
-        placeholder="Password"
-        autocomplete="current-password"
-      />
-      <button id="pm-lock-unlock" class="pm-button pm-button--secondary" type="button">
-        Unlock
-      </button>
-    </div>
+      <div class="pm-row">
+        <p id="pm-lock-status" class="pm-lock-status" role="status" aria-live="polite"></p>
+        <p class="pm-hint pm-lock-caption">
+          This is a deterrent, not security: anyone who can open
+          chrome://extensions can clear this extension's storage or remove it.
+          There is no reset or recovery: the password is stored only on your device, with no backup. If you forget it, remove and re-add the extension (this clears settings).
+        </p>
+      </div>
+    </section>
+  </main>
 
-    <div id="pm-lock-unlocked" class="pm-lock-panel pm-hidden" aria-hidden="true">
-      <p class="pm-hint">Unlocked for now. Closing this popup locks it again.</p>
-      <button id="pm-lock-remove" class="pm-link-button" type="button">Remove password</button>
-    </div>
-
-    <p id="pm-lock-status" class="pm-hint pm-lock-status" role="status" aria-live="polite"></p>
-
-    <p class="pm-hint pm-lock-caption">
-      This is a deterrent, not security: anyone who can open
-      chrome://extensions can clear this extension's storage or remove it.
-      There is no reset or recovery: the password is stored only on your device, with no backup. If you forget it, remove and re-add the extension (this clears settings).
-    </p>
-  </section>
-
-  <section class="pm-row pm-row--actions">
-    <button id="pm-restore" class="pm-button pm-button--secondary" type="button">Restore defaults</button>
-    <button id="pm-save" class="pm-button" type="button">Save</button>
-    <span id="pm-status" class="pm-status" role="status" aria-live="polite"></span>
-  </section>
-
-  <!-- Open-source footer. Quiet trust signal, always available: the whole
-       extension is open source, and the repository link changes no setting,
-       so like "Copy debug log" it is never lock-gated. The URL lives in one
-       constant in shared/moments.js (REPO_URL). -->
-  <footer class="pm-footer">
-    <button id="pm-view-source" class="pm-link-button" type="button">View source on GitHub</button>
-  </footer>
+  <span id="pm-status" class="pm-status" role="status" aria-live="polite"></span>
 
   <script src="../shared/wordlist.js"></script>
+  <script src="../shared/stats.js"></script>
   <script src="../shared/lock.js"></script>
   <script src="../shared/moments.js"></script>
   <script src="popup.js"></script>

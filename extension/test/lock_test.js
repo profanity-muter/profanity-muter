@@ -223,6 +223,36 @@ test("mayWriteSettings: a CORRUPTED lock record fails open, not closed", () => {
   assert.strictEqual(PMLockCore.mayWriteSettings("nonsense", false), true);
 });
 
+// ---- idle auto-relock (0.1.51) -------------------------------------------
+
+test("shouldRelock: exactly at the idle boundary relocks", () => {
+  const idle = PMLockCore.IDLE_RELOCK_MS;
+  assert.strictEqual(PMLockCore.shouldRelock(1000, 1000 + idle, idle), true);
+});
+
+test("shouldRelock: one ms before the boundary stays unlocked", () => {
+  const idle = PMLockCore.IDLE_RELOCK_MS;
+  assert.strictEqual(PMLockCore.shouldRelock(1000, 1000 + idle - 1, idle), false);
+});
+
+test("shouldRelock: default idle window is five minutes", () => {
+  assert.strictEqual(PMLockCore.IDLE_RELOCK_MS, 5 * 60 * 1000);
+  // omitting idleMs uses the default
+  assert.strictEqual(PMLockCore.shouldRelock(0, 5 * 60 * 1000), true);
+  assert.strictEqual(PMLockCore.shouldRelock(0, 5 * 60 * 1000 - 1), false);
+});
+
+test("shouldRelock: an interaction resetting the clock keeps it unlocked", () => {
+  const idle = 1000;
+  // last interaction moved forward to `now - 500`, so only 500ms idle.
+  assert.strictEqual(PMLockCore.shouldRelock(9500, 10000, idle), false);
+});
+
+test("shouldRelock: a missing last-interaction time relocks (safe default)", () => {
+  assert.strictEqual(PMLockCore.shouldRelock(undefined, 10000, 1000), true);
+  assert.strictEqual(PMLockCore.shouldRelock(NaN, 10000, 1000), true);
+});
+
 // ---- summary -------------------------------------------------------------
 
 Promise.all(pending).then(function () {

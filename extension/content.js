@@ -532,7 +532,14 @@
       var ivStart = Math.max(0, tokens[i0].start - pad.lead);
       var ivEnd = tokens[i1].end + pad.trail;
       var label = wordStrings.slice(i0, i1 + 1).join(' ');
-      newIntervals.push({ start: ivStart, end: ivEnd, word: label });
+      // category/canonical (0.1.51) ride along on the interval so countMute
+      // can attribute the mute to a type + the canonical list word for the
+      // Activity dashboard. m.category/m.word come from PMWordlist.findMatches
+      // (absent only if the wordlist agent's category maps are unavailable);
+      // default to 'profanity' + the spoken label so a mute is still counted.
+      var mCat = m.category || 'profanity';
+      var mCanon = m.word || label;
+      newIntervals.push({ start: ivStart, end: ivEnd, word: label, category: mCat, canonical: mCanon });
       matched.push({ word: label, t: tokens[i0].start });
       for (var k = i0; k <= i1; k++) tokens[k].matched = true;
     }
@@ -699,8 +706,11 @@
       if (last && cur.start <= last.end) {
         last.end = Math.max(last.end, cur.end);
         if (last.word.indexOf(cur.word) === -1) last.word = last.word + '+' + cur.word;
+        // Keep the first-seen category/canonical for a merged interval - a
+        // merged interval is counted once by countMute, so it is attributed
+        // to its leading word's type (0.1.51).
       } else {
-        merged.push({ start: cur.start, end: cur.end, word: cur.word });
+        merged.push({ start: cur.start, end: cur.end, word: cur.word, category: cur.category, canonical: cur.canonical });
       }
     }
     session.intervals = merged;
@@ -823,6 +833,17 @@
     var isFirstForVideo = !session.lifetimeVideoCounted;
     session.lifetimeVideoCounted = true;
     queueStatsIncrement(1, isFirstForVideo);
+    // Per-category / per-word activity (0.1.51) for the popup's Activity
+    // dashboard. Local-only, bounded, never uploaded (see shared/stats.js).
+    // Attributed to the interval's leading word's type + canonical list
+    // entry. isFirstForVideo is the SAME "first mute for this video" signal
+    // the legacy pm_stats.videosProtected uses, so per-range video counts
+    // stay consistent with it without this path storing any video id.
+    queueActivityRecord({
+      category: interval.category || 'profanity',
+      word: interval.canonical || interval.word,
+      isNewVideo: isFirstForVideo
+    });
   }
 
   function queueStatsIncrement(muteDelta, isNewVideoProtected) {
@@ -846,6 +867,43 @@
       });
     } catch (e) {}
   }
+  // ---- per-category activity (0.1.51) --------------------------------------
+  // Buffered like pm_stats above and flushed on the same cadence, into the
+  // bounded local pm_activity store (shared/stats.js). Batched so a burst of
+  // mutes is one storage read-modify-write, not one per word.
+  var pendingActivity = [];
+  var activityFlushTimer = null;
+
+  function queueActivityRecord(event) {
+    pendingActivity.push(event);
+    if (!activityFlushTimer) activityFlushTimer = setTimeout(flushActivity, STATS_FLUSH_MS);
+  }
+
+  function flushActivity() {
+    activityFlushTimer = null;
+    if (!pendingActivity.length) return;
+    var batch = pendingActivity;
+    pendingActivity = [];
+    var api = globalThis.PMStats;
+    if (!api || typeof api.recordMute !== 'function') return;
+    try {
+      chrome.storage.local.get({ pm_activity: null }, function (items) {
+        if (chrome.runtime.lastError) return;
+        var store = api.normalizeStore(items.pm_activity);
+        var now = Date.now();
+        for (var i = 0; i < batch.length; i++) {
+          store = api.recordMute(store, {
+            category: batch[i].category,
+            word: batch[i].word,
+            isNewVideo: batch[i].isNewVideo,
+            now: now
+          });
+        }
+        chrome.storage.local.set({ pm_activity: store });
+      });
+    } catch (e) {}
+  }
+
   // Flush on pagehide too - a throttled 10s timer alone would lose whatever
   // hadn't flushed yet if the tab/page goes away first.
   window.addEventListener('pagehide', function () {
@@ -854,6 +912,11 @@
       statsFlushTimer = null;
     }
     flushStats();
+    if (activityFlushTimer) {
+      clearTimeout(activityFlushTimer);
+      activityFlushTimer = null;
+    }
+    flushActivity();
     // Same deal for the dev log: close whatever gap was still open at the
     // moment the page went away and force its final write. devlog.js has
     // its own pagehide listener, but it was registered when devlog.js

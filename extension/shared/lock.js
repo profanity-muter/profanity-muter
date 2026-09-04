@@ -184,6 +184,34 @@
     return unlockedThisSession === true;
   }
 
+  // ---- Idle auto-relock (0.1.51) ----------------------------------------
+  //
+  // Once a parent unlocks the popup, the session stays unlocked while it is
+  // actively in use and auto-relocks after IDLE_RELOCK_MS of NO
+  // interaction. "No interaction" is measured from the last click/keypress/
+  // scroll in the popup: every interaction resets the clock (see the popup's
+  // idle-timer wiring), so it never relocks mid-use, and it relocks a few
+  // minutes after a parent unlocks, changes something and walks away without
+  // closing the popup. Closing the popup relocks immediately regardless
+  // (there is no persisted unlocked flag - that property is unchanged).
+  //
+  // Five minutes: long enough that a parent reading the settings is not
+  // interrupted, short enough that a walked-away popup is not a bypass.
+  var IDLE_RELOCK_MS = 5 * 60 * 1000;
+
+  // Pure predicate: given the timestamp of the last interaction and the
+  // current time, has the popup been idle long enough to relock? Kept pure
+  // (no timers, no Date.now closure) so the exact boundary is unit-testable.
+  // A missing/invalid lastInteractionMs reads as "relock now" - the safe
+  // default is locked, and the only way lastInteractionMs is unset is that
+  // no interaction has been recorded yet.
+  function shouldRelock(lastInteractionMs, now, idleMs) {
+    if (typeof idleMs !== "number" || !(idleMs > 0)) idleMs = IDLE_RELOCK_MS;
+    if (typeof lastInteractionMs !== "number" || !isFinite(lastInteractionMs)) return true;
+    if (typeof now !== "number" || !isFinite(now)) return false;
+    return now - lastInteractionMs >= idleMs;
+  }
+
   var PMLockCore = {
     MIN_PASSWORD_LENGTH: MIN_PASSWORD_LENGTH,
     toHex: toHex,
@@ -194,7 +222,9 @@
     makeSaltHex: makeSaltHex,
     createRecord: createRecord,
     verifyRecord: verifyRecord,
-    mayWriteSettings: mayWriteSettings
+    mayWriteSettings: mayWriteSettings,
+    shouldRelock: shouldRelock,
+    IDLE_RELOCK_MS: IDLE_RELOCK_MS
   };
 
   // ======================================================================
@@ -229,6 +259,8 @@
     isLockRecord: isLockRecord,
     validateNewPassword: validateNewPassword,
     mayWriteSettings: mayWriteSettings,
+    shouldRelock: shouldRelock,
+    IDLE_RELOCK_MS: IDLE_RELOCK_MS,
     create: function (password) {
       return createRecord(password, subtleOrNull(), randomOrNull());
     },

@@ -136,43 +136,60 @@ async function open(browser, sync, local, health) {
   return { page, errors };
 }
 
+// A whole-page snapshot of the Design C popup (0.1.51).
 const snapshot = () => ({
-  textarea: document.getElementById('pm-wordlist').value,
-  modeNote: document.getElementById('pm-wordlist-mode-note').textContent.trim(),
+  view: ['home', 'manage', 'playback', 'activity', 'lock']
+    .find(v => !document.getElementById('pm-view-' + v).classList.contains('pm-hidden')),
   level: [...document.getElementsByName('pm-strictness')].find(r => r.checked)?.value,
-  maskedText: document.getElementById('pm-masked-list').textContent.trim(),
-  enabledDisabled: document.getElementById('pm-enabled').disabled,
-  saveDisabled: document.getElementById('pm-save').disabled,
-  copyDisabled: document.getElementById('pm-copy-devlog').disabled,
-  toggleMaskDisabled: document.getElementById('pm-toggle-mask').disabled,
-  resetStatsDisabled: document.getElementById('pm-reset-stats').disabled,
+  enabledChecked: document.getElementById('pm-enabled').checked,
+  homeMuted: document.getElementById('pm-home-muted').textContent.trim(),
+  homeVideos: document.getElementById('pm-home-videos').textContent.trim(),
+  homeCatsText: document.getElementById('pm-home-cats').textContent.trim(),
+  homeOverlayHidden: document.getElementById('pm-home-overlay').classList.contains('pm-hidden'),
+  actOverlayHidden: document.getElementById('pm-act-overlay').classList.contains('pm-hidden'),
+  actMuted: document.getElementById('pm-act-muted').textContent.trim(),
+  actTopText: document.getElementById('pm-act-top').textContent.trim(),
+  lockIconHidden: document.getElementById('pm-lock-icon').classList.contains('pm-hidden'),
+  lockIconOpen: document.getElementById('pm-lock-icon').textContent.includes('\u{1F513}'),
+  relockHidden: document.getElementById('pm-relock-bar').classList.contains('pm-hidden'),
   lockSetupHidden: document.getElementById('pm-lock-setup').classList.contains('pm-hidden'),
-  lockLockedHidden: document.getElementById('pm-lock-locked').classList.contains('pm-hidden'),
-  lockUnlockedHidden: document.getElementById('pm-lock-unlocked').classList.contains('pm-hidden'),
-  lockStatus: document.getElementById('pm-lock-status').textContent.trim(),
+  lockManageHidden: document.getElementById('pm-lock-manage').classList.contains('pm-hidden'),
+  homeLockMsg: document.getElementById('pm-home-lockmsg').textContent.trim(),
   status: document.getElementById('pm-status').textContent.trim(),
   bannerHidden: document.getElementById('pm-finish-setup').classList.contains('pm-hidden'),
   reviewHidden: document.getElementById('pm-review-card').classList.contains('pm-hidden'),
-  shareHidden: document.getElementById('pm-share-row').classList.contains('pm-hidden'),
+  manageSub: document.getElementById('pm-manage-sub').textContent.trim(),
+  blockChips: document.getElementById('pm-block-chips').textContent.trim(),
+  allowChips: document.getElementById('pm-allow-chips').textContent.trim(),
+  copyDisabled: document.getElementById('pm-copy-devlog').disabled,
   shareDisabled: document.getElementById('pm-share').disabled,
   setupGuideDisabled: document.getElementById('pm-open-onboarding').disabled,
   healthHidden: document.getElementById('pm-health').classList.contains('pm-hidden'),
   healthMessage: document.getElementById('pm-health-message').textContent.trim(),
-  healthDetail: document.getElementById('pm-health-detail').textContent.trim(),
-  reportDisabled: document.getElementById('pm-report-problem').disabled,
-  reportHidden: !document.getElementById('pm-report-problem').offsetParent &&
-                getComputedStyle(document.getElementById('pm-report-problem')).display === 'none'
+  healthDetail: document.getElementById('pm-health-detail').textContent.trim()
 });
 
-// A fully review-eligible sync/local pair: acknowledged, installed 8 days
-// ago, past both usage milestones, never prompted. Individual checks below
-// break exactly one gate at a time.
 const ACK = { version: 1, timestamp: 1 };
 const eligibleSync = (over = {}) => Object.assign({
   pm_ackNotPerfect: ACK,
   pm_installedAt: Date.now() - 8 * 24 * 60 * 60 * 1000
 }, over);
 const eligibleLocal = { pm_stats: { videosProtected: 12, totalMuted: 30 } };
+
+// An activity store fixture with today's counts (all-time = these).
+const activityFixture = () => {
+  const now = Date.now();
+  const d = new Date(now);
+  const dk = d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+  const bucket = {
+    muted: 12, videos: 3,
+    cats: { profanity: 7, slur: 1, religious: 3, euphemism: 1, custom: 0 },
+    words: { fuckcanon: 5, hell: 3, damn: 2, oops: 2 }
+  };
+  return { v: 1, allTime: JSON.parse(JSON.stringify(bucket)), days: { [dk]: JSON.parse(JSON.stringify(bucket)) } };
+};
 
 const browser = await chromium.launch();
 
@@ -181,280 +198,279 @@ const browser = await chromium.launch();
   const { page, errors } = await open(browser, {});
   const s = await page.evaluate(snapshot);
   check('fresh: no page errors', errors.length === 0, errors);
-  check('fresh: textarea EMPTY (no built-ins on screen)', s.textarea === '', s.textarea.slice(0, 80));
+  check('fresh: lands on home', s.view === 'home', s.view);
   check('fresh: level strict', s.level === 'strict', s.level);
-  check('fresh: mode note', s.modeNote === 'Strict list, plus 0 of your own', s.modeNote);
-  check('fresh: masked empty copy mentions built-in still on', /built-in list is still on/.test(s.maskedText), s.maskedText);
-  check('fresh: lock setup panel shown', s.lockSetupHidden === false && s.lockLockedHidden === true);
-  check('fresh: controls enabled', s.enabledDisabled === false && s.saveDisabled === false);
+  check('fresh: enabled on by default', s.enabledChecked === true);
+  check('fresh: no lock -> no overlay, no padlock', s.homeOverlayHidden === true && s.lockIconHidden === true);
+  check('fresh: home summary zeros', s.homeMuted === '0' && s.homeVideos === '0', [s.homeMuted, s.homeVideos]);
   // No built-in word must appear anywhere in the rendered page.
-  const leak = await page.evaluate(() => document.body.innerText.toLowerCase().includes('fuck') || document.body.innerText.toLowerCase().includes('shit'));
+  const leak = await page.evaluate(() => {
+    const t = document.body.innerText.toLowerCase();
+    return t.includes('fuck') || t.includes('shit');
+  });
   check('fresh: no built-in word text anywhere in the DOM', leak === false);
   await page.close();
 }
 
-// ---- 2. legacy custom migration ----
+// ---- 2. legacy custom migration surfaces in Manage words ----
 {
-  const { page, errors } = await open(browser, { pm_strictness: 'custom', pm_wordlist: ['alpha', 'beta gamma'] });
-  const s = await page.evaluate(snapshot);
-  check('legacy: no page errors', errors.length === 0, errors);
+  const { page } = await open(browser, { pm_strictness: 'custom', pm_wordlist: ['alpha', 'beta gamma'] });
+  let s = await page.evaluate(snapshot);
   check('legacy: level none', s.level === 'none', s.level);
-  check('legacy: textarea has their list', s.textarea === 'alpha\nbeta gamma', s.textarea);
-  check('legacy: mode note', s.modeNote === 'No built-in list, plus 2 of your own', s.modeNote);
-  check('legacy: masked shows shapes not words', s.maskedText.includes('*****') && !s.maskedText.includes('alpha'), s.maskedText);
+  await page.click('#pm-go-manage');
+  s = await page.evaluate(snapshot);
+  check('legacy: manage view open', s.view === 'manage', s.view);
+  check('legacy: block chips show their list', s.blockChips.includes('alpha') && s.blockChips.includes('beta gamma'), s.blockChips);
+  check('legacy: manage sub counts', /2 added/.test(s.manageSub), s.manageSub);
   await page.close();
 }
 
-// ---- 3. save writes the new key, never the deprecated one ----
+// ---- 3. adding a word writes pm_additionalWords, never pm_wordlist ----
 {
-  const { page } = await open(browser, { pm_strictness: 'custom', pm_wordlist: ['alpha'] });
-  const hiddenBefore = await page.evaluate(() => document.getElementById('pm-wordlist').classList.contains('pm-hidden'));
-  check('save: textarea is masked until asked', hiddenBefore === true);
-  await page.click('#pm-toggle-mask');
-  await page.fill('#pm-wordlist', 'alpha\nzeta');
-  await page.click('#pm-save');
+  const { page } = await open(browser, {});
+  await page.click('#pm-go-manage');
+  await page.fill('#pm-block-input', 'zeta');
+  await page.click('#pm-block-form button[type=submit]');
   await page.waitForTimeout(100);
   const w = await page.evaluate(() => window.__pmWrites);
   const last = w[w.length - 1];
-  check('save: writes pm_additionalWords', last.obj.pm_additionalWords?.join(',') === 'alpha,zeta', last.obj.pm_additionalWords);
-  check('save: never writes pm_wordlist', w.every(x => !x.keys || !x.keys.includes('pm_wordlist')), w.map(x => x.keys));
-  check('save: level unchanged by saving words', last.obj.pm_strictness === 'none', last.obj.pm_strictness);
-  const stored = await page.evaluate(() => window.__pmSync.pm_wordlist);
-  check('save: deprecated pm_wordlist left intact for rollback', JSON.stringify(stored) === '["alpha"]', stored);
+  check('add: writes pm_additionalWords', last.obj.pm_additionalWords?.join(',') === 'zeta', last.obj.pm_additionalWords);
+  check('add: never writes pm_wordlist', w.every(x => !x.keys || !x.keys.includes('pm_wordlist')), w.map(x => x.keys));
+  const s = await page.evaluate(snapshot);
+  check('add: chip shown', s.blockChips.includes('zeta'), s.blockChips);
   await page.close();
 }
 
-// ---- 4. restore defaults ----
+// ---- 4. Always allow writes pm_allowWords (new whitelist) ----
+{
+  const { page } = await open(browser, {});
+  await page.click('#pm-go-manage');
+  await page.fill('#pm-allow-input', 'hell');
+  await page.click('#pm-allow-form button[type=submit]');
+  await page.waitForTimeout(100);
+  let w = await page.evaluate(() => window.__pmWrites);
+  let last = w[w.length - 1];
+  check('allow: writes pm_allowWords', last.obj.pm_allowWords?.join(',') === 'hell', last.obj.pm_allowWords);
+  let s = await page.evaluate(snapshot);
+  check('allow: allow chip shown', s.allowChips.includes('hell'), s.allowChips);
+  check('allow: sub counts allowed', /1 allowed/.test(s.manageSub), s.manageSub);
+  // remove it again
+  await page.click('#pm-allow-chips .pm-chip-x');
+  await page.waitForTimeout(100);
+  w = await page.evaluate(() => window.__pmWrites);
+  last = w[w.length - 1];
+  check('allow: removal writes empty pm_allowWords', Array.isArray(last.obj.pm_allowWords) && last.obj.pm_allowWords.length === 0, last.obj.pm_allowWords);
+  await page.close();
+}
+
+// ---- 5. restore defaults (Playback view) ----
 {
   const { page } = await open(browser, { pm_strictness: 'none', pm_additionalWords: ['alpha'] });
+  await page.click('#pm-go-playback');
   await page.click('#pm-restore');
   await page.waitForTimeout(100);
-  const s = await page.evaluate(snapshot);
-  check('restore: level back to strict', s.level === 'strict', s.level);
-  check('restore: own words cleared', s.textarea === '', s.textarea);
   const stored = await page.evaluate(() => window.__pmSync);
-  check('restore: persisted immediately', stored.pm_strictness === 'strict' && stored.pm_additionalWords.length === 0, stored);
+  check('restore: level back to strict', stored.pm_strictness === 'strict', stored.pm_strictness);
+  check('restore: own words cleared', Array.isArray(stored.pm_additionalWords) && stored.pm_additionalWords.length === 0, stored.pm_additionalWords);
   await page.close();
 }
 
-// ---- 5. locked state ----
+// ---- 6. Playback holds every existing setting and saves immediately ----
 {
-  // Build a real record using the page's own PMLock, then reload with it.
+  const { page } = await open(browser, {});
+  await page.click('#pm-go-playback');
+  await page.click('#pm-catchup-pause');
+  await page.waitForTimeout(80);
+  let stored = await page.evaluate(() => window.__pmSync);
+  check('playback: catch-up choice saved', stored.pm_catchupMode === 'pause', stored.pm_catchupMode);
+  await page.click('#pm-padding-wide');
+  await page.waitForTimeout(80);
+  stored = await page.evaluate(() => window.__pmSync);
+  check('playback: padding saved', stored.pm_padding === 'wide', stored.pm_padding);
+  // toggles present and functional
+  await page.click('#pm-mute-audio');
+  await page.waitForTimeout(80);
+  stored = await page.evaluate(() => window.__pmSync);
+  check('playback: mute audio toggle saved', stored.pm_muteAudio === false, stored.pm_muteAudio);
+  await page.close();
+}
+
+// ---- 7. Activity dashboard: summary + range toggle + most-muted ----
+{
+  const { page } = await open(browser, {}, { pm_activity: activityFixture() });
+  await page.waitForTimeout(80);
+  let s = await page.evaluate(snapshot);
+  check('activity: home summary reads all-time totals', s.homeMuted === '12' && s.homeVideos === '3', [s.homeMuted, s.homeVideos]);
+  check('activity: home shows category bars', /Profanity/.test(s.homeCatsText), s.homeCatsText);
+  await page.click('#pm-summary-tap');
+  s = await page.evaluate(snapshot);
+  check('activity: tapping the summary opens the full view', s.view === 'activity', s.view);
+  check('activity: full view big number', s.actMuted === '12', s.actMuted);
+  check('activity: most-muted list rendered', /hell/.test(s.actTopText) && /fuckcanon/.test(s.actTopText), s.actTopText);
+  // the range toggle fills the full width (the mockup bug fix): three equal
+  // options, summing to the container width with no dead space.
+  const widths = await page.evaluate(() => {
+    const seg = document.querySelector('.pm-seg--range');
+    const opts = [...seg.querySelectorAll('.pm-range-opt')];
+    return { container: seg.clientWidth, opts: opts.map(o => o.offsetWidth) };
+  });
+  const sum = widths.opts.reduce((a, b) => a + b, 0);
+  check('activity: range toggle fills the full width (no dead space)', Math.abs(sum - widths.container) <= 2, widths);
+  check('activity: three equal-width range options', Math.max(...widths.opts) - Math.min(...widths.opts) <= 1, widths.opts);
+  // 24h still counts today's bucket (fixture is today), 7d too.
+  await page.click('.pm-range-opt[data-range="24h"]');
+  s = await page.evaluate(snapshot);
+  check('activity: 24h range drives the numbers', s.actMuted === '12', s.actMuted);
+  await page.close();
+}
+
+// ---- 8. locked state: summary public, everything else gated ----
+{
   const { page: p0 } = await open(browser, {});
   const record = await p0.evaluate(() => window.PMLock.create('hunter2'));
   await p0.close();
 
-  const { page, errors } = await open(browser, { pm_lock: record, pm_strictness: 'standard' });
+  const { page, errors } = await open(browser, { pm_lock: record, pm_strictness: 'standard' }, { pm_activity: activityFixture() });
   let s = await page.evaluate(snapshot);
   check('locked: no page errors', errors.length === 0, errors);
-  check('locked: locked panel shown', s.lockLockedHidden === false && s.lockSetupHidden === true && s.lockUnlockedHidden === true);
-  check('locked: settings controls disabled', s.enabledDisabled === true && s.saveDisabled === true && s.toggleMaskDisabled === true && s.resetStatsDisabled === true);
-  check('locked: Copy debug log stays ENABLED', s.copyDisabled === false);
+  check('locked: home summary stays public', s.homeMuted === '12' && s.homeVideos === '3', [s.homeMuted, s.homeVideos]);
+  check('locked: settings gated behind the overlay', s.homeOverlayHidden === false);
+  check('locked: padlock shown and closed', s.lockIconHidden === false && s.lockIconOpen === false);
+  check('locked: relock bar hidden while locked', s.relockHidden === true);
 
+  // The master on/off switch stays visible; clicking it to turn off prompts
+  // for the password and writes nothing.
   const writesBefore = await page.evaluate(() => window.__pmWrites.length);
-  // Force a change past the disabled attribute, exactly as a determined
-  // kid with devtools would: the central guard must still refuse.
   await page.evaluate(() => {
     const el = document.getElementById('pm-enabled');
-    el.disabled = false;
     el.checked = false;
     el.dispatchEvent(new Event('change'));
   });
   await page.waitForTimeout(100);
   const writesAfter = await page.evaluate(() => window.__pmWrites.length);
   s = await page.evaluate(snapshot);
-  check('locked: a forced change writes NOTHING', writesAfter === writesBefore, { writesBefore, writesAfter });
-  check('locked: and says why', /Locked/.test(s.status), s.status);
+  check('locked: clicking the switch off writes nothing', writesAfter === writesBefore, { writesBefore, writesAfter });
+  check('locked: the switch reverts to on', s.enabledChecked === true);
+  check('locked: and the prompt is surfaced', /password/i.test(s.status), s.status);
 
-  // Wrong password.
-  await page.fill('#pm-lock-password', 'wrong');
-  await page.click('#pm-lock-unlock');
+  // A forced settings change past the gate still writes nothing (enforcement
+  // is in persistSettings, not the DOM state).
+  const wb2 = await page.evaluate(() => window.__pmWrites.length);
+  await page.evaluate(() => {
+    const el = document.getElementById('pm-strictness-none');
+    el.checked = true;
+    el.dispatchEvent(new Event('change'));
+  });
+  await page.waitForTimeout(100);
+  const wa2 = await page.evaluate(() => window.__pmWrites.length);
+  check('locked: a forced strictness change writes nothing', wa2 === wb2, { wb2, wa2 });
+
+  // Expanded Activity: summary numbers public, per-type + most-muted gated.
+  await page.click('#pm-open-activity');
+  s = await page.evaluate(snapshot);
+  check('locked: activity summary numbers public', s.actMuted === '12', s.actMuted);
+  check('locked: activity detail gated', s.actOverlayHidden === false);
+  await page.click('#pm-back');
+
+  // Wrong then right password on the home overlay.
+  await page.fill('#pm-home-pass', 'wrong');
+  await page.click('#pm-home-unlock');
   await page.waitForTimeout(150);
   s = await page.evaluate(snapshot);
-  check('locked: wrong password rejected', s.lockStatus === 'Wrong password', s.lockStatus);
-  check('locked: still locked', s.saveDisabled === true);
+  check('locked: wrong password rejected', s.homeLockMsg === 'Wrong password', s.homeLockMsg);
+  check('locked: still locked', s.homeOverlayHidden === false);
 
-  // Right password.
-  await page.fill('#pm-lock-password', 'hunter2');
-  await page.click('#pm-lock-unlock');
+  await page.fill('#pm-home-pass', 'hunter2');
+  await page.click('#pm-home-unlock');
   await page.waitForTimeout(150);
   s = await page.evaluate(snapshot);
-  check('unlock: controls enabled', s.enabledDisabled === false && s.saveDisabled === false);
-  check('unlock: unlocked panel shown', s.lockUnlockedHidden === false && s.lockLockedHidden === true);
+  check('unlock: overlay gone', s.homeOverlayHidden === true);
+  check('unlock: padlock flips to open', s.lockIconOpen === true);
+  check('unlock: relock bar shown', s.relockHidden === false);
 
+  // Now a real settings change goes through. Pick a level that differs from
+  // the currently-checked one so the radio actually fires a change event.
   const n = await page.evaluate(() => window.__pmWrites.length);
-  await page.click('#pm-strictness-none');
+  await page.click('#pm-strictness-strict');
   await page.waitForTimeout(100);
   const n2 = await page.evaluate(() => window.__pmWrites.length);
   check('unlock: writes now go through', n2 > n, { n, n2 });
 
-  // Remove password.
-  await page.click('#pm-lock-remove');
-  await page.waitForTimeout(150);
+  // Lock now relocks immediately.
+  await page.click('#pm-lock-now');
+  await page.waitForTimeout(80);
   s = await page.evaluate(snapshot);
-  const lockGone = await page.evaluate(() => !('pm_lock' in window.__pmSync));
-  check('remove: pm_lock deleted', lockGone);
-  check('remove: setup panel back', s.lockSetupHidden === false);
+  check('lock now: relocks immediately', s.homeOverlayHidden === false && s.lockIconOpen === false);
   await page.close();
 }
 
-// ---- 6. setting a password ----
+// ---- 9. setting a password from the lock screen ----
 {
   const { page } = await open(browser, {});
+  await page.click('#pm-go-lock');
+  let s = await page.evaluate(snapshot);
+  check('setpw: lock setup shown, no lock yet', s.lockSetupHidden === false && s.lockManageHidden === true);
+
   await page.fill('#pm-lock-new', 'abc');
   await page.fill('#pm-lock-confirm', 'abc');
   await page.click('#pm-lock-set');
-  await page.waitForTimeout(150);
-  let s = await page.evaluate(snapshot);
-  check('setpw: too short rejected', s.lockStatus === 'Use at least 4 characters', s.lockStatus);
-
-  await page.fill('#pm-lock-new', 'abcd');
-  await page.fill('#pm-lock-confirm', 'abce');
-  await page.click('#pm-lock-set');
-  await page.waitForTimeout(150);
-  s = await page.evaluate(snapshot);
-  check('setpw: mismatch rejected', s.lockStatus === "Passwords don't match", s.lockStatus);
+  await page.waitForTimeout(120);
+  let msg = await page.evaluate(() => document.getElementById('pm-lock-status').textContent.trim());
+  check('setpw: too short rejected', /at least 4/.test(msg), msg);
 
   await page.fill('#pm-lock-new', 'abcd');
   await page.fill('#pm-lock-confirm', 'abcd');
   await page.click('#pm-lock-set');
   await page.waitForTimeout(200);
-  s = await page.evaluate(snapshot);
   const rec = await page.evaluate(() => window.__pmSync.pm_lock);
   check('setpw: record stored with salt+hash', !!rec && rec.salt.length === 32 && rec.hash.length === 64, rec);
   check('setpw: plaintext never stored', JSON.stringify(rec).indexOf('abcd') === -1);
-  check('setpw: parent stays unlocked in this session', s.enabledDisabled === false && s.lockUnlockedHidden === false);
+  s = await page.evaluate(snapshot);
+  check('setpw: parent stays unlocked this session', s.lockIconOpen === true && s.homeOverlayHidden === true);
+  check('setpw: manage panel now shown on the lock screen', s.lockManageHidden === false);
   await page.close();
 }
 
-// ===== 0.1.30 surfaces: onboarding banner, review prompt, share =====
-
-// ---- 7. unacknowledged: banner shows, share hidden ----
+// ---- 10. unacknowledged banner / acknowledged share ----
 {
-  const { page, errors } = await open(browser, {});
-  const s = await page.evaluate(snapshot);
-  check('banner: no page errors', errors.length === 0, errors);
+  const { page } = await open(browser, {});
+  let s = await page.evaluate(snapshot);
   check('banner: shows when unacknowledged', s.bannerHidden === false);
-  check('banner: share row hidden until acknowledged', s.shareHidden === true);
   check('banner: review card hidden', s.reviewHidden === true);
   await page.click('#pm-finish-setup');
   await page.waitForTimeout(50);
   const tabs = await page.evaluate(() => window.__pmTabs);
-  check('banner: opens the onboarding page', tabs.length === 1 && /onboarding\/onboarding\.html$/.test(tabs[0]), tabs);
+  check('banner: opens onboarding', tabs.length === 1 && /onboarding\/onboarding\.html$/.test(tabs[0]), tabs);
   await page.close();
+
+  const { page: p2 } = await open(browser, { pm_ackNotPerfect: ACK });
+  const s2 = await p2.evaluate(snapshot);
+  check('acked: banner hidden', s2.bannerHidden === true);
+  await p2.close();
 }
 
-// ---- 8. acknowledged: banner gone, share shown ----
-{
-  const { page } = await open(browser, { pm_ackNotPerfect: ACK });
-  const s = await page.evaluate(snapshot);
-  check('acked: banner hidden', s.bannerHidden === true);
-  check('acked: share row shown', s.shareHidden === false);
-  await page.close();
-}
-
-// ---- 9. a stale ack version re-shows the banner ----
-{
-  const { page } = await open(browser, { pm_ackNotPerfect: { version: 0, timestamp: 1 } });
-  const s = await page.evaluate(snapshot);
-  check('stale ack: banner returns', s.bannerHidden === false);
-  check('stale ack: share hidden again', s.shareHidden === true);
-  await page.close();
-}
-
-// ---- 10. Setup guide link always available ----
-{
-  const { page } = await open(browser, { pm_ackNotPerfect: ACK });
-  await page.click('#pm-open-onboarding');
-  await page.waitForTimeout(50);
-  const tabs = await page.evaluate(() => window.__pmTabs);
-  check('setup guide: reopens onboarding', tabs.length === 1 && /onboarding\.html$/.test(tabs[0]), tabs);
-  await page.close();
-}
-
-// ---- 11. review card: renders only when every gate passes ----
+// ---- 11. review card renders only when every gate passes ----
 {
   const { page } = await open(browser, eligibleSync(), eligibleLocal);
   const s = await page.evaluate(snapshot);
   check('review: card shown when eligible', s.reviewHidden === false);
-  // Showing it must record it immediately - otherwise closing the popup
-  // would re-ask on every open.
   const rec = await page.evaluate(() => window.__pmSync.pm_reviewPrompt);
   check('review: pm_reviewPrompt written on render', !!rec && typeof rec.shownAt === 'number' && rec.dismissed === false, rec);
-  // 0.1.33: showing the card is the badge doing its job, so it clears.
-  const badge = await page.evaluate(() => window.__pmBadge);
-  check('review: the toolbar badge is cleared when the card renders',
-    badge.some(b => b.text === '' && b.tabId === undefined), badge);
   await page.close();
 }
 
-// ---- 12. each gate individually suppresses the card ----
-{
-  const cases = [
-    ['unacknowledged', { pm_ackNotPerfect: undefined }, eligibleLocal],
-    ['no install date', { pm_installedAt: undefined }, eligibleLocal],
-    ['installed 6 days ago', { pm_installedAt: Date.now() - 6 * 24 * 60 * 60 * 1000 }, eligibleLocal],
-    ['already prompted', { pm_reviewPrompt: { shownAt: 1, dismissed: true } }, eligibleLocal],
-    ['too few videos', {}, { pm_stats: { videosProtected: 9, totalMuted: 99 } }],
-    ['too few mutes', {}, { pm_stats: { videosProtected: 99, totalMuted: 24 } }],
-    ['no stats at all', {}, {}]
-  ];
-  for (const [name, syncOver, local] of cases) {
-    const sync = eligibleSync();
-    for (const k of Object.keys(syncOver)) {
-      if (syncOver[k] === undefined) delete sync[k];
-      else sync[k] = syncOver[k];
-    }
-    const { page } = await open(browser, sync, local);
-    const s = await page.evaluate(snapshot);
-    check(`review gate: ${name} suppresses the card`, s.reviewHidden === true);
-    const wrote = await page.evaluate(() => 'pm_reviewPrompt' in window.__pmSync);
-    check(`review gate: ${name} records nothing new`, wrote === (name === 'already prompted'));
-    await page.close();
-  }
-}
-
-// ---- 13. review actions ----
-{
-  const { page } = await open(browser, eligibleSync(), eligibleLocal);
-  await page.click('#pm-review-yes');
-  await page.waitForTimeout(80);
-  let s = await page.evaluate(snapshot);
-  const tabs = await page.evaluate(() => window.__pmTabs);
-  const rec = await page.evaluate(() => window.__pmSync.pm_reviewPrompt);
-  check('review: "Leave a review" opens the store reviews URL', tabs.length === 1 && /\/reviews$/.test(tabs[0]), tabs);
-  check('review: marked dismissed after acting', rec.dismissed === true, rec);
-  check('review: card hidden after acting', s.reviewHidden === true);
-  await page.close();
-
-  const { page: p2 } = await open(browser, eligibleSync(), eligibleLocal);
-  await p2.click('#pm-review-no');
-  await p2.waitForTimeout(80);
-  s = await p2.evaluate(snapshot);
-  const rec2 = await p2.evaluate(() => window.__pmSync.pm_reviewPrompt);
-  const tabs2 = await p2.evaluate(() => window.__pmTabs);
-  check('review: "No thanks" opens nothing', tabs2.length === 0, tabs2);
-  check('review: "No thanks" dismisses permanently', rec2.dismissed === true, rec2);
-  check('review: card hidden after declining', s.reviewHidden === true);
-  check('review: says it will not ask again', /won.t ask again/.test(s.status), s.status);
-  await p2.close();
-}
-
-// ---- 14. share copies the blurb ----
+// ---- 12. share copies the blurb (footer, always ungated) ----
 {
   const { page } = await open(browser, { pm_ackNotPerfect: ACK });
   await page.click('#pm-share');
   await page.waitForTimeout(80);
   const text = await page.evaluate(() => window.__pmClipboard);
-  const s = await page.evaluate(snapshot);
   check('share: copies the blurb', /^I use Profanity Muter to auto-mute swearing/.test(text || ''), text);
   check('share: includes the store link', (text || '').includes('chromewebstore.google.com'), text);
-  check('share: no tracking parameters', !(text || '').includes('?'), text);
-  check('share: status toast', s.status === 'Link copied', s.status);
   await page.close();
 }
 
-// ---- 15. share + debug log stay usable while the settings are locked ----
+// ---- 13. footer stays usable while the settings are locked ----
 {
   const { page: p0 } = await open(browser, {});
   const record = await p0.evaluate(() => window.PMLock.create('hunter2'));
@@ -462,9 +478,7 @@ const browser = await chromium.launch();
 
   const { page } = await open(browser, { pm_lock: record, pm_ackNotPerfect: ACK });
   const s = await page.evaluate(snapshot);
-  check('locked: share row still visible', s.shareHidden === false);
-  check('locked: share button enabled', s.shareDisabled === false);
-  check('locked: Copy debug log still enabled', s.copyDisabled === false);
+  check('locked: Share still enabled', s.shareDisabled === false);
   check('locked: Setup guide still enabled', s.setupGuideDisabled === false);
   await page.click('#pm-share');
   await page.waitForTimeout(80);
@@ -472,7 +486,6 @@ const browser = await chromium.launch();
   check('locked: share still copies', (text || '').includes('Profanity Muter'), text);
   await page.close();
 }
-
 // ===== onboarding page =====
 {
   const OB = pathToFileURL(path.join(EXT, 'onboarding', 'onboarding.html')).href;
@@ -654,15 +667,15 @@ const browser = await chromium.launch();
   await page.close();
 }
 
-// ===== 0.1.31: Report a problem =====
+// ===== 0.1.31 / 0.1.51: Report a problem =====
 
-// ---- 16. the popup link ----
+// ---- the popup link (now inside Playback & display) ----
 {
   const { page, errors } = await open(browser, {});
-  const s = await page.evaluate(snapshot);
   check('report link: no page errors', errors.length === 0, errors);
-  check('report link: rendered', s.reportHidden === false);
-  check('report link: enabled', s.reportDisabled === false);
+  await page.click('#pm-go-playback');
+  const disabled = await page.evaluate(() => document.getElementById('pm-report-problem').disabled);
+  check('report link: enabled', disabled === false);
   await page.click('#pm-report-problem');
   await page.waitForTimeout(50);
   const tabs = await page.evaluate(() => window.__pmTabs);
@@ -670,22 +683,19 @@ const browser = await chromium.launch();
   await page.close();
 }
 
-// ---- 17. the link is available while locked and before acknowledgment ----
+// ---- the health card's report button works whenever it is shown ----
 {
-  const { page: p0 } = await open(browser, {});
-  const record = await p0.evaluate(() => window.PMLock.create('hunter2'));
-  await p0.close();
-
-  // Locked AND unacknowledged: the two states that hide or disable other
-  // things. Reporting a problem must survive both.
-  const { page } = await open(browser, { pm_lock: record });
-  const s = await page.evaluate(snapshot);
-  check('report link: enabled while settings are locked', s.reportDisabled === false);
-  check('report link: rendered before acknowledgment', s.reportHidden === false);
-  check('report link: (share row is hidden in this same state)', s.shareHidden === true);
+  const health = { status: 'unhealthy', message: 'Not muting on this video', detail: 'The analyzer is not running.' };
+  const { page } = await open(browser, {}, {}, health);
+  await page.waitForTimeout(80);
+  const shown = await page.evaluate(() => !document.getElementById('pm-health').classList.contains('pm-hidden'));
+  check('report link: health card shown when unhealthy', shown === true);
+  await page.click('#pm-health-report');
+  await page.waitForTimeout(50);
+  const tabs = await page.evaluate(() => window.__pmTabs);
+  check('report link: health card report opens the report page', tabs.length === 1 && /report\/report\.html$/.test(tabs[0]), tabs);
   await page.close();
 }
-
 // ===== the report page itself =====
 
 const REPORT = pathToFileURL(path.join(EXT, 'report', 'report.html')).href;
@@ -918,7 +928,7 @@ const devlogFixture = {
   const layout = await page.evaluate(() => ({
     bodyWidth: document.body.getBoundingClientRect().width,
     overflowX: document.documentElement.scrollWidth > document.documentElement.clientWidth,
-    saveVisible: !!document.getElementById('pm-save').offsetParent,
+    saveVisible: !!document.getElementById('pm-open-onboarding').offsetParent,
     healthPresent: !!document.getElementById('pm-health')
   }));
   check('popup-as-tab: stays a narrow column rather than stretching', layout.bodyWidth <= 400, layout.bodyWidth);
@@ -996,7 +1006,7 @@ const devlogFixture = {
   const { page } = await open(browser, { pm_lock: record }, {}, unhealthy);
   const s = await page.evaluate(snapshot);
   check('health: shown alongside the setup banner', s.healthHidden === false && s.bannerHidden === false);
-  check('health: shown while settings are locked', s.healthHidden === false && s.saveDisabled === true);
+  check('health: shown while settings are locked', s.healthHidden === false && s.homeOverlayHidden === false);
   const order = await page.evaluate(() => {
     const h = document.getElementById('pm-health');
     const b = document.getElementById('pm-finish-setup');

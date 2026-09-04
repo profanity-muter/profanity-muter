@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Profanity Muter",
-  "version": "0.1.50",
+  "version": "0.1.51",
   "description": "Mutes swearing in YouTube videos, on your device. Real-time speech filtering. Private, no account, open source.",
   "permissions": [
     "storage",
@@ -32,6 +32,7 @@
       ],
       "js": [
         "shared/wordlist.js",
+        "shared/stats.js",
         "shared/devlog.js",
         "shared/health.js",
         "shared/session_binding.js",
