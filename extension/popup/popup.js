@@ -14,8 +14,11 @@
 //   * Manage words: pm_additionalWords ("Also block") + pm_allowWords
 //     ("Always allow", new whitelist, 0.1.51).
 //   * Playback & display: pm_muteAudio, pm_censorCaptions, pm_showStatus,
-//     pm_catchupMode, pm_padding, pm_debugOverlay, plus Copy debug log /
-//     Report a problem (never lock-gated).
+//     pm_catchupMode, pm_padding, pm_debugOverlay, plus Copy debug log
+//     (kept behind the lock: the log carries watched-video titles).
+//   * Report a problem lives on Home, OUTSIDE the gated region, so a locked
+//     device can still report a filtering break; it exposes nothing
+//     sensitive and changes no setting.
 //   * Activity: 24h / 7d / all-time breakdown + most-muted.
 //
 // LOCK ENFORCEMENT is unchanged in principle: persistSettings() is the ONE

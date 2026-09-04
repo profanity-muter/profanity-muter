@@ -75,6 +75,14 @@
     MODEL_LOAD_FAILED: "model-load-failed",
     WORKER_DEAD: "worker-dead",
     ZERO_WINDOWS: "zero-windows-completed",
+    // 0.1.52: audio is arriving, but no init segment was ever captured,
+    // because the extension was enabled or loaded AFTER this video already
+    // started and so missed YouTube's one-time audio setup. Distinct from
+    // ZERO_WINDOWS (a genuine decode failure that DID have an init segment):
+    // this one is fail-closed but cleanly recoverable by a reload, which
+    // replays the init segment from the top. See offscreen-src.js's
+    // "no active byte run yet (no init segment captured)" diagnostic.
+    MISSED_INIT: "missed-init-segment",
     LIVESTREAM: "livestream-unsupported",
     SHORTS: "shorts-unsupported",
     STALLED: "stalled-analysis",
@@ -129,6 +137,11 @@
   // "catching up" the pill shows in the first few seconds.
   MESSAGES[REASONS.ZERO_WINDOWS] =
     "Profanity Muter received this video's audio but couldn't analyze any of it, so it is NOT being filtered. Reload the page to try again.";
+  // Started mid-video: audio is arriving, but the one-time setup at the very
+  // start was already gone by the time the extension began listening. A
+  // reload replays it from the top, so the fix is specific and easy.
+  MESSAGES[REASONS.MISSED_INIT] =
+    "Profanity Muter started after this video did, so it missed the audio setup. Reload the page and it will filter from the start.";
   MESSAGES[REASONS.LIVESTREAM] =
     "Livestreams aren't filtered. Profanity Muter needs to analyze audio a little ahead of what you hear, which a live stream doesn't allow.";
   MESSAGES[REASONS.STALLED] =
@@ -148,6 +161,7 @@
   DETAILS[REASONS.MODEL_LOAD_FAILED] = "The speech model could not be loaded.";
   DETAILS[REASONS.WORKER_DEAD] = "The analysis process stopped responding.";
   DETAILS[REASONS.ZERO_WINDOWS] = "Audio arrived but no part of it was analyzed.";
+  DETAILS[REASONS.MISSED_INIT] = "The extension began listening after playback started and missed this video's audio setup.";
   DETAILS[REASONS.LIVESTREAM] = "Live video can't be analyzed ahead of playback.";
   DETAILS[REASONS.STALLED] = "Analysis was expected to finish and did not.";
   DETAILS[REASONS.SHORTS] = "Shorts are too short, and swap too fast, to analyze before they play.";
@@ -270,6 +284,11 @@
   //                       (0.1.49 active-tab-follow). Calm, self-resolving.
   //   windowsCompleted    analysis windows finished for this video
   //   audioSegments       audio segments intercepted for this video
+  //   initSegments        init segments captured for this video. 0 means the
+  //                       extension began listening mid-video and missed the
+  //                       one-time audio setup (see REASONS.MISSED_INIT).
+  //                       Undefined from a legacy caller is treated as "not
+  //                       reported", never as zero.
   //   fatalReasons        array of reason codes from classifyDiag
   //   lastEvalAt          when evaluate last returned a non-pending verdict
   //   thresholds          {firstEvalMs, reEvalMs}
@@ -427,7 +446,17 @@
     // which is the most likely casualty of a YouTube player change.
     if (!(input.audioSegments > 0)) return unhealthy(REASONS.NO_AUDIO);
 
-    // Audio arrived, nothing came back.
+    // Audio arrived, but NO init segment was ever captured: the extension
+    // started after this video did and missed YouTube's one-time audio
+    // setup, so no run can be demuxed at all. This is a distinct, cleanly
+    // recoverable case from a genuine decode failure, and it gets its own
+    // reload-from-the-start message. Guarded on an EXPLICIT zero so a legacy
+    // caller that does not report initSegments (undefined) falls through to
+    // the ZERO_WINDOWS verdict exactly as before, never mislabeling a real
+    // decode failure as a missed-init one.
+    if (input.initSegments === 0) return unhealthy(REASONS.MISSED_INIT);
+
+    // Audio and an init segment arrived, nothing came back: a real failure.
     return unhealthy(REASONS.ZERO_WINDOWS);
 
     function unhealthy(reason) {

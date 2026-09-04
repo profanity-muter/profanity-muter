@@ -321,6 +321,9 @@
       // whether audio is being intercepted on this one.
       windowsCompleted: 0, // analysis windows that actually came back
       audioSegments: 0, // audio segments intercepted from capture.js
+      initSegments: 0, // init segments captured (0.1.52). Zero while audio is
+      // arriving means the extension started mid-video and missed YouTube's
+      // one-time audio setup - the missed-init health case (see shared/health.js).
       playbackMs: 0, // accumulated ACTUAL playback, not wall time (see tickHealth)
       lastPlaybackSampleWall: 0, // wall clock at the previous playback sample
       fatalReasons: [], // reason codes classified out of the diag stream
@@ -1504,6 +1507,10 @@
       servedElsewhere: pmServedElsewhere,
       windowsCompleted: session.windowsCompleted,
       audioSegments: session.audioSegments,
+      // 0.1.52: zero init segments while audio is arriving is the "started
+      // mid-video, missed the audio setup" case, distinct from a real decode
+      // failure. shared/health.js picks the missed-init verdict from this.
+      initSegments: session.initSegments,
       fatalReasons: session.fatalReasons,
       lastEvalAt: session.healthEvalAt || null
     });
@@ -1549,7 +1556,8 @@
       reason: verdict.reason,
       playbackMs: Math.round(session.playbackMs),
       windowsCompleted: session.windowsCompleted,
-      audioSegments: session.audioSegments
+      audioSegments: session.audioSegments,
+      initSegments: session.initSegments
     });
 
     // The livestream case gets a calm, one-time notice rather than the
@@ -3194,6 +3202,13 @@
       // metadata still proves interception is alive, which is the specific
       // thing "no-audio-intercepted" is about.
       session.audioSegments++;
+      // 0.1.52: track init segments too. YouTube emits the init segment once,
+      // at the very start; a session that only ever sees non-init media
+      // segments started listening mid-video and can never demux a run, which
+      // is a distinct, reload-recoverable health case from a real decode
+      // failure. Counted here at the relay for the same reason audioSegments
+      // is: it means exactly "an init segment reached the extension".
+      if (data.isInit) session.initSegments++;
       // Status-pill inputs (0.1.18): mirror offscreen's own bufferedRanges/
       // growth-recency tracking here too, purely from data already flowing
       // through this relay - no new message needed.

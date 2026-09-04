@@ -669,18 +669,80 @@ const browser = await chromium.launch();
 
 // ===== 0.1.31 / 0.1.51: Report a problem =====
 
-// ---- the popup link (now inside Playback & display) ----
+// ---- the popup link (0.1.52: on Home, outside the gated region) ----
 {
   const { page, errors } = await open(browser, {});
   check('report link: no page errors', errors.length === 0, errors);
-  await page.click('#pm-go-playback');
-  const disabled = await page.evaluate(() => document.getElementById('pm-report-problem').disabled);
-  check('report link: enabled', disabled === false);
+  // It lives on Home now, reachable without opening any gated sub-screen.
+  const onHome = await page.evaluate(() => {
+    const el = document.getElementById('pm-report-problem');
+    const home = document.getElementById('pm-view-home');
+    const gate = home.querySelector('.pm-gate');
+    return {
+      present: !!el,
+      disabled: el.disabled,
+      insideHome: home.contains(el),
+      insideGate: gate.contains(el)
+    };
+  });
+  check('report link: present and enabled on Home', onHome.present && onHome.disabled === false, onHome);
+  check('report link: sits OUTSIDE the gated region', onHome.insideHome === true && onHome.insideGate === false, onHome);
   await page.click('#pm-report-problem');
   await page.waitForTimeout(50);
   const tabs = await page.evaluate(() => window.__pmTabs);
   check('report link: opens the report page', tabs.length === 1 && /report\/report\.html$/.test(tabs[0]), tabs);
   await page.close();
+}
+
+// ---- 0.1.52: Report a problem stays reachable while LOCKED; Copy debug log
+//      does not (it exposes watched-video titles, so it is gated on purpose) ----
+{
+  const { page: p0 } = await open(browser, {});
+  const record = await p0.evaluate(() => window.PMLock.create('hunter2'));
+  await p0.close();
+
+  const { page, errors } = await open(browser, { pm_lock: record });
+  check('locked report: no page errors', errors.length === 0, errors);
+  let s = await page.evaluate(snapshot);
+  check('locked report: settings are actually locked', s.homeOverlayHidden === false);
+
+  // Report a problem is not blurred/gated and still opens the report page.
+  const reportReachable = await page.evaluate(() => {
+    const el = document.getElementById('pm-report-problem');
+    const gate = document.querySelector('#pm-view-home .pm-gate');
+    return { present: !!el, disabled: el.disabled, insideGate: gate.contains(el) };
+  });
+  check('locked report: Report a problem is reachable (ungated, enabled)',
+    reportReachable.present && reportReachable.disabled === false && reportReachable.insideGate === false,
+    reportReachable);
+  await page.click('#pm-report-problem');
+  await page.waitForTimeout(50);
+  const tabs = await page.evaluate(() => window.__pmTabs);
+  check('locked report: it opens the report page even while locked',
+    tabs.length === 1 && /report\/report\.html$/.test(tabs[0]), tabs);
+  await page.close();
+
+  // Copy debug log lives in Playback & display, which is behind the lock.
+  // The overlay physically covers the drill (pointer events are intercepted),
+  // so a real click cannot even reach it; and forcing the handler anyway must
+  // still refuse to open Playback (it prompts to unlock instead). Either way
+  // the log stays unreachable while locked.
+  const { page: page2 } = await open(browser, { pm_lock: record });
+  const drillCovered = await page2.evaluate(() => {
+    const drill = document.getElementById('pm-go-playback');
+    const r = drill.getBoundingClientRect();
+    const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    const overlay = document.getElementById('pm-home-overlay');
+    return overlay.contains(top) || top === overlay;
+  });
+  check('locked report: the Playback drill is physically covered by the lock overlay',
+    drillCovered === true);
+  await page2.evaluate(() => document.getElementById('pm-go-playback').click());
+  await page2.waitForTimeout(50);
+  const s2 = await page2.evaluate(snapshot);
+  check('locked report: forcing the drill still does not open Playback (Copy debug log gated)',
+    s2.view === 'home', s2.view);
+  await page2.close();
 }
 
 // ---- the health card's report button works whenever it is shown ----
@@ -696,6 +758,47 @@ const browser = await chromium.launch();
   check('report link: health card report opens the report page', tabs.length === 1 && /report\/report\.html$/.test(tabs[0]), tabs);
   await page.close();
 }
+// ---- 0.1.52: navy/gold palette, no Chrome-default blue ----
+// The selected radio/segmented state is navy ink, the on/off switch "on" is
+// the success green, and text links are gold-deep. None of them may render
+// the old blue accent (#4f7cff = rgb(79,124,255)).
+{
+  const { page } = await open(browser, {});
+  // Switch "on" track (master switch, on by default): success green.
+  const switchBg = await page.evaluate(() => {
+    const t = document.querySelector('#pm-enabled:checked + .pm-switch-track');
+    return getComputedStyle(t).backgroundColor;
+  });
+  check('palette: on/off switch "on" is green, not blue',
+    switchBg === 'rgb(47, 125, 91)', switchBg);
+
+  // A text link (Setup guide) is gold-deep.
+  const linkColor = await page.evaluate(() =>
+    getComputedStyle(document.getElementById('pm-open-onboarding')).color);
+  check('palette: footer links are gold-deep, not blue',
+    linkColor === 'rgb(138, 109, 31)', linkColor);
+
+  // Selected segmented control (Playback: padding "Normal" checked) is navy.
+  await page.click('#pm-go-playback');
+  const segBg = await page.evaluate(() => {
+    const s = document.querySelector('#pm-padding-normal:checked + span');
+    return getComputedStyle(s).backgroundColor;
+  });
+  check('palette: selected segmented state is navy ink, not blue',
+    segBg === 'rgb(29, 47, 84)', segBg);
+
+  // No element anywhere paints the old default blue.
+  const noBlue = await page.evaluate(() => {
+    const blues = ['rgb(79, 124, 255)', 'rgb(109, 147, 255)'];
+    return [...document.querySelectorAll('*')].every(el => {
+      const cs = getComputedStyle(el);
+      return !blues.includes(cs.color) && !blues.includes(cs.backgroundColor);
+    });
+  });
+  check('palette: the old blue accent appears nowhere', noBlue === true);
+  await page.close();
+}
+
 // ===== the report page itself =====
 
 const REPORT = pathToFileURL(path.join(EXT, 'report', 'report.html')).href;

@@ -131,6 +131,18 @@
         </div>
       </div>
 
+      <!-- Report a problem: deliberately OUTSIDE the .pm-gate above, so it
+           stays reachable even when the parental lock is on. A locked device
+           that stops filtering must still be able to report the break. Copy
+           debug log is NOT here - it exposes watched-video titles, so it
+           stays behind the lock in Playback & display. -->
+      <section class="pm-row pm-report-row">
+        <button id="pm-report-problem" class="pm-report-btn" type="button">
+          <span class="pm-report-btn-main">Report a problem</span>
+          <span class="pm-report-btn-sub">Not muting a video? Tell us, even with the lock on.</span>
+        </button>
+      </section>
+
       <footer class="pm-footer">
         <button id="pm-open-onboarding" class="pm-link-button" type="button">Setup guide</button>
         <button id="pm-view-source" class="pm-link-button" type="button">GitHub</button>
@@ -231,11 +243,13 @@
             <span class="pm-switch-track"><span class="pm-switch-thumb"></span></span>
           </span>
         </label>
-        <!-- Never lock-gated: a child who hits a problem must still be able
-             to export a log and report it (neither changes a setting). -->
+        <!-- Copy debug log stays here, behind the parental lock: the log
+             carries watched-video titles, so gating it behind the password
+             is intended. Report a problem moved to the always-reachable home
+             screen (it changes no setting and exposes nothing sensitive), so
+             a locked device can still report a break. -->
         <div class="pm-debug-actions">
           <button id="pm-copy-devlog" class="pm-link-button" type="button">Copy debug log</button>
-          <button id="pm-report-problem" class="pm-link-button" type="button">Report a problem</button>
         </div>
       </section>
       <section class="pm-row">

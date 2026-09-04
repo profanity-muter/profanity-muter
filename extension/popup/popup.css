@@ -1,33 +1,81 @@
+/* Brand palette (0.1.52): navy/gold ink-on-paper, matching onboarding.css
+   and the approved mockups. The blue Chrome-default accent is gone.
+   --pm-accent is the navy "ink" used for the SELECTED state of radios and
+   segmented controls, for primary buttons, and for focus rings.
+   --pm-on-accent is the text/foreground painted ON that navy (paper in
+   light, dark ink in dark), so nothing hardcodes #fff and vanishes when
+   the accent inverts in dark mode. Selection green (the on/off switch) is
+   --pm-good; links are --pm-link (gold-deep); stat bars are --pm-gold. */
 :root {
   color-scheme: light dark;
   --pm-bg: #ffffff;
-  --pm-fg: #1a1a1a;
-  --pm-muted: #6b6b6b;
-  --pm-border: #e2e2e2;
-  --pm-accent: #4f7cff;
-  --pm-track-off: #cfcfcf;
-  --pm-soft: #f4f6fb;
-  --pm-bar-track: #e9edf7;
+  --pm-fg: #1d2f54;
+  --pm-muted: #56617e;
+  --pm-border: #e4dfd2;
+  --pm-accent: #1d2f54;      /* navy ink: selected radio/segmented, buttons, focus */
+  --pm-on-accent: #faf8f2;   /* text on the navy accent */
+  --pm-track-off: #b9bfce;
+  --pm-soft: #faf8f2;
+  --pm-bar-track: #f7edd6;    /* gold-soft */
+  --pm-gold: #e8c46c;         /* stat-bar fill */
+  --pm-gold-soft: #f7edd6;
+  --pm-gold-deep: #8a6d1f;
+  --pm-link: #8a6d1f;         /* text links (gold-deep) */
   --pm-good: #2f7d5b;
   --pm-good-bg: #eef7f1;
   --pm-good-border: #cfe6d8;
 }
 
+/* Dark mode mirrors onboarding.css's [data-theme="dark"] palette, so the
+   popup is a deep-navy card rather than a bright-white one. The accent
+   inverts to near-paper ink (light control on a navy card), with dark ink
+   painted on top of it via --pm-on-accent - exactly onboarding's ink/paper
+   inversion. Both the system default (prefers-color-scheme) and an explicit
+   data-theme="dark" get the same treatment. */
+:root[data-theme="dark"] {
+  --pm-bg: #1d2f54;
+  --pm-fg: #eae6da;
+  --pm-muted: #a8a99f;
+  --pm-border: #2b3a5e;
+  --pm-accent: #eae6da;
+  --pm-on-accent: #16223d;
+  --pm-track-off: #4d5468;
+  --pm-soft: #16223d;
+  --pm-bar-track: #2b3a5e;
+  --pm-gold: #e8c46c;
+  --pm-gold-soft: #33415e;
+  --pm-gold-deep: #e8c46c;
+  --pm-link: #e8c46c;
+  --pm-good: #6bcf9f;
+  --pm-good-bg: #1c2b23;
+  --pm-good-border: #2c4636;
+}
 @media (prefers-color-scheme: dark) {
-  :root {
-    --pm-bg: #1e1f22;
-    --pm-fg: #f2f2f2;
-    --pm-muted: #a3a3a3;
-    --pm-border: #35363a;
-    --pm-accent: #6d93ff;
-    --pm-track-off: #4a4b4f;
-    --pm-soft: #26272b;
-    --pm-bar-track: #2c2e35;
+  :root:not([data-theme="light"]) {
+    --pm-bg: #1d2f54;
+    --pm-fg: #eae6da;
+    --pm-muted: #a8a99f;
+    --pm-border: #2b3a5e;
+    --pm-accent: #eae6da;
+    --pm-on-accent: #16223d;
+    --pm-track-off: #4d5468;
+    --pm-soft: #16223d;
+    --pm-bar-track: #2b3a5e;
+    --pm-gold: #e8c46c;
+    --pm-gold-soft: #33415e;
+    --pm-gold-deep: #e8c46c;
+    --pm-link: #e8c46c;
     --pm-good: #6bcf9f;
     --pm-good-bg: #1c2b23;
     --pm-good-border: #2c4636;
   }
 }
+
+/* No native control leaks the browser's default blue: every native form
+   control tints from the navy accent instead. The custom switch/radio hide
+   their real inputs, but this covers text-field carets, selections, and any
+   real checkbox the shared pages add. */
+input, textarea, button, select { accent-color: var(--pm-accent); }
 
 * { box-sizing: border-box; }
 
@@ -155,7 +203,7 @@ body {
   font-size: 12px;
 }
 .pm-stat-bar { height: 8px; border-radius: 4px; background: var(--pm-bar-track); overflow: hidden; }
-.pm-stat-bar > i { display: block; height: 100%; background: var(--pm-accent); }
+.pm-stat-bar > i { display: block; height: 100%; background: var(--pm-gold); }
 .pm-stat-n { text-align: right; font-variant-numeric: tabular-nums; color: var(--pm-muted); }
 .pm-cats-empty { font-size: 11px; color: var(--pm-muted); font-style: italic; }
 
@@ -274,7 +322,7 @@ body {
 .pm-seg-opt:last-child { border-right: none; }
 .pm-seg-opt input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .pm-seg-opt span { display: block; padding: 7px 4px; }
-.pm-seg-opt input:checked + span { background: var(--pm-accent); color: #fff; font-weight: 600; }
+.pm-seg-opt input:checked + span { background: var(--pm-accent); color: var(--pm-on-accent); font-weight: 600; }
 .pm-seg-opt input:focus-visible + span { outline: 2px solid var(--pm-accent); outline-offset: -2px; }
 
 /* Range toggle: three buttons, each flex:1 to fill the full width (no dead
@@ -292,7 +340,7 @@ body {
   cursor: pointer;
 }
 .pm-range-opt:last-child { border-right: none; }
-.pm-range-opt.pm-range-on { background: var(--pm-accent); color: #fff; font-weight: 600; }
+.pm-range-opt.pm-range-on { background: var(--pm-accent); color: var(--pm-on-accent); font-weight: 600; }
 
 /* ---- Most muted list ----------------------------------------------------- */
 .pm-mostmuted { max-height: 172px; overflow-y: auto; }
@@ -325,7 +373,8 @@ body {
 .pm-overlay-icon {
   width: 34px; height: 34px;
   border-radius: 9px;
-  background: var(--pm-soft);
+  background: var(--pm-gold-soft);
+  color: var(--pm-gold-deep);
   display: flex; align-items: center; justify-content: center;
   font-size: 18px;
 }
@@ -361,6 +410,27 @@ body {
   justify-content: center;
 }
 
+/* ---- Report a problem (home, always reachable) -------------------------- */
+.pm-report-row { padding-top: 12px; padding-bottom: 12px; }
+.pm-report-btn {
+  appearance: none;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+  cursor: pointer;
+  font: inherit;
+  color: var(--pm-fg);
+  background: var(--pm-gold-soft);
+  border: 1px solid var(--pm-gold);
+  border-radius: 8px;
+  padding: 9px 12px;
+}
+.pm-report-btn:hover { filter: brightness(0.98); }
+.pm-report-btn-main { font-weight: 600; color: var(--pm-gold-deep); }
+.pm-report-btn-sub { font-size: 11px; color: var(--pm-muted); line-height: 1.35; }
+
 /* ---- Switch (shared, reused verbatim from the prior design) -------------- */
 .pm-switch-label {
   display: flex;
@@ -392,7 +462,7 @@ body {
   background: #fff;
   transition: transform 0.14s ease;
 }
-.pm-switch input:checked + .pm-switch-track { background: var(--pm-accent); }
+.pm-switch input:checked + .pm-switch-track { background: var(--pm-good); }
 .pm-switch input:checked + .pm-switch-track .pm-switch-thumb { transform: translateX(16px); }
 .pm-switch input:focus-visible + .pm-switch-track { outline: 2px solid var(--pm-accent); outline-offset: 2px; }
 
@@ -402,7 +472,7 @@ body {
   border: none;
   background: none;
   padding: 0;
-  color: var(--pm-accent);
+  color: var(--pm-link);
   font-size: 11.5px;
   font-weight: 500;
   cursor: pointer;
@@ -417,7 +487,7 @@ body {
   border: none;
   border-radius: 8px;
   background: var(--pm-accent);
-  color: #fff;
+  color: var(--pm-on-accent);
   font-size: 13px;
   font-weight: 600;
   padding: 8px 14px;

@@ -171,6 +171,61 @@ test("audio arrived but nothing was analyzed", () => {
   assert.strictEqual(v.reason, R.ZERO_WINDOWS);
 });
 
+// ---- missed init segment (0.1.52: started mid-video) ---------------------
+//
+// Two look-alike states that must NOT collapse into one message: audio is
+// arriving and nothing is coming back either way, but "the extension started
+// after the video did and missed the audio setup" is fixed by a reload,
+// while a real decode failure that DID have an init segment is a different
+// problem. The distinguishing fact is whether any init segment was ever
+// captured.
+
+test("audio arriving with NO init segment ever captured is the missed-init case", () => {
+  const v = evaluate({ windowsCompleted: 0, audioSegments: 25, initSegments: 0 });
+  assert.strictEqual(v.status, S.UNHEALTHY);
+  assert.strictEqual(v.reason, R.MISSED_INIT);
+  assert.ok(/started after this video did/.test(v.message), v.message);
+  assert.ok(/Reload the page/.test(v.message), v.message);
+  assert.ok(v.detail.length > 0);
+});
+
+test("audio arriving WITH an init segment but no windows is a real decode failure", () => {
+  // The init segment was captured, so this is not a missed-init: it is the
+  // genuine ZERO_WINDOWS failure, and must keep its own message.
+  const v = evaluate({ windowsCompleted: 0, audioSegments: 25, initSegments: 1 });
+  assert.strictEqual(v.status, S.UNHEALTHY);
+  assert.strictEqual(v.reason, R.ZERO_WINDOWS);
+});
+
+test("a legacy caller that does not report initSegments stays ZERO_WINDOWS", () => {
+  // Undefined must be treated as "not reported", never as zero, so an old
+  // caller never gets a real decode failure relabeled as missed-init.
+  const v = evaluate({ windowsCompleted: 0, audioSegments: 25 });
+  assert.strictEqual(v.reason, R.ZERO_WINDOWS);
+});
+
+test("no audio at all outranks missed-init, even with zero init segments", () => {
+  // If no audio ever arrived, the interception layer is the story, not the
+  // init segment. NO_AUDIO is checked first and must win.
+  const v = evaluate({ windowsCompleted: 0, audioSegments: 0, initSegments: 0 });
+  assert.strictEqual(v.reason, R.NO_AUDIO);
+});
+
+test("a completed window clears the missed-init warning (reload worked)", () => {
+  const missed = evaluate({ windowsCompleted: 0, audioSegments: 25, initSegments: 0 });
+  assert.strictEqual(missed.reason, R.MISSED_INIT);
+  const recovered = evaluate({ windowsCompleted: 1, audioSegments: 30, initSegments: 1, lastEvalAt: NOW });
+  assert.strictEqual(recovered.status, S.OK);
+  assert.strictEqual(H.isTransition(missed, recovered), true);
+});
+
+test("the missed-init message names the fix and stays jargon-free", () => {
+  const m = H.messageFor(R.MISSED_INIT);
+  assert.ok(/Reload/.test(m), m);
+  assert.ok(!/offscreen|worker|init segment|demux|decode/i.test(m), m);
+  assert.ok(H.detailFor(R.MISSED_INIT).length > 0);
+});
+
 test("model load failure", () => {
   const v = evaluate({ windowsCompleted: 0, audioSegments: 25, fatalReasons: [R.MODEL_LOAD_FAILED] });
   assert.strictEqual(v.reason, R.MODEL_LOAD_FAILED);
