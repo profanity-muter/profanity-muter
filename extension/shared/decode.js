@@ -50,6 +50,35 @@
     return attemptsSoFar > 0 ? STAGE_TIMEOUT_MS : STAGE_TIMEOUT_FIRST_MS;
   }
 
+  // ---- the inference budget (0.1.54) -------------------------------------
+  //
+  // ponytail: every decode stage had a timeout and the Whisper inference call
+  // did not, so one inference that never returned held the global serial mutex
+  // and blocked every tab for hours. This sizes the timeout that now bounds it.
+  //
+  // Generous on purpose. The point is to catch a call that will NEVER return,
+  // not to punish a slow machine: a normal window finishes at rtf ~0.2-0.3, so
+  // several times the expected compute is still a wide margin. The cold case
+  // gets its own allowance because the first inference after a worker spawn
+  // pays model warm-up as well (measured rtf 1.0-1.9 there, versus ~0.23 once
+  // settled, which is where WARMUP_RTF in shared/preempt.js comes from). The
+  // ceiling keeps even a cold full-size window inside about a minute, since a
+  // wedged worker costs every tab, not just this one.
+  var INFERENCE_FLOOR_MS = 20000;
+  var INFERENCE_COLD_ALLOWANCE_MS = 15000;
+  var INFERENCE_SLACK_X = 3;
+  var INFERENCE_MAX_MS = 75000;
+  var INFERENCE_DEFAULT_RTF = 0.3; // measured steady state
+  var INFERENCE_WARMUP_RTF = 1.5;  // first inferences after a spawn
+
+  function inferenceTimeoutMsFor(audioS, isCold, rtf) {
+    var a = typeof audioS === "number" && isFinite(audioS) && audioS > 0 ? audioS : 0;
+    var r = typeof rtf === "number" && isFinite(rtf) && rtf > 0 ? rtf : INFERENCE_DEFAULT_RTF;
+    if (isCold) r = Math.max(r, INFERENCE_WARMUP_RTF);
+    var budget = a * r * 1000 * INFERENCE_SLACK_X + (isCold ? INFERENCE_COLD_ALLOWANCE_MS : 0);
+    return Math.min(INFERENCE_MAX_MS, Math.max(INFERENCE_FLOOR_MS, budget));
+  }
+
   // ---- suspend / background-throttle awareness (0.1.48) ------------------
   //
   // THE FALSE HANG. Field logs from long, backgrounded videos showed
@@ -310,7 +339,14 @@
     HANG_SKIP_AT: HANG_SKIP_AT,
     HANG_THRESHOLD: HANG_THRESHOLD,
     ANCHOR_EPS_S: ANCHOR_EPS_S,
+    INFERENCE_FLOOR_MS: INFERENCE_FLOOR_MS,
+    INFERENCE_COLD_ALLOWANCE_MS: INFERENCE_COLD_ALLOWANCE_MS,
+    INFERENCE_SLACK_X: INFERENCE_SLACK_X,
+    INFERENCE_MAX_MS: INFERENCE_MAX_MS,
+    INFERENCE_DEFAULT_RTF: INFERENCE_DEFAULT_RTF,
+    INFERENCE_WARMUP_RTF: INFERENCE_WARMUP_RTF,
     stageTimeoutMsFor: stageTimeoutMsFor,
+    inferenceTimeoutMsFor: inferenceTimeoutMsFor,
     hangAction: hangAction,
     drainWithTimeout: drainWithTimeout,
     closeIterator: closeIterator,

@@ -24,6 +24,7 @@
 
 const assert = require("assert");
 const path = require("path");
+const fs = require("fs");
 const { PMDecodeCore } = require(path.join(__dirname, "..", "shared", "decode.js"));
 
 const D = PMDecodeCore;
@@ -391,6 +392,72 @@ test("the tolerance matches mergeRangeInto's 0.05s join granularity", () => {
   assert.strictEqual(D.ANCHOR_EPS_S, 0.05);
   assert.strictEqual(D.decodeCoversAnchor(2599.66, 2599.61), true);   // within 0.05
   assert.strictEqual(D.decodeCoversAnchor(2599.67, 2599.61), false);  // just past 0.05
+});
+
+// ---- the inference budget (0.1.54) ---------------------------------------
+//
+// The field incident: one Whisper inference never returned, and because that
+// call was the only stage in the pipeline with no timeout, it held the global
+// serial mutex and every tab got nothing for hours. These pin the budget that
+// now bounds it: generous enough never to fire on a slow machine, tight
+// enough to catch a never-returning call in about a minute.
+
+test("the budget never drops below the hard floor", () => {
+  assert.strictEqual(D.inferenceTimeoutMsFor(0.5, false, 0.2), D.INFERENCE_FLOOR_MS);
+  assert.strictEqual(D.inferenceTimeoutMsFor(0, false, 0.2), D.INFERENCE_FLOOR_MS);
+  assert.ok(D.INFERENCE_FLOOR_MS >= 20000);
+});
+
+test("a cold window gets the warm-up allowance on top", () => {
+  const cold = D.inferenceTimeoutMsFor(2.5, true, 0.2);
+  const warm = D.inferenceTimeoutMsFor(2.5, false, 0.2);
+  assert.ok(cold > warm, "cold budget " + cold + " should exceed warm " + warm);
+  // The allowance covers model warm-up, on top of compute quoted at the
+  // measured warm-up rtf rather than the session's settled one.
+  assert.ok(cold >= D.INFERENCE_COLD_ALLOWANCE_MS + 2.5 * D.INFERENCE_WARMUP_RTF * 1000);
+  assert.ok(D.inferenceTimeoutMsFor(10, true, 0.2) - D.inferenceTimeoutMsFor(10, false, 0.2) >= D.INFERENCE_COLD_ALLOWANCE_MS);
+});
+
+test("a measured rtf scales the budget, a missing one falls back to the default", () => {
+  const slow = D.inferenceTimeoutMsFor(18, false, 1.2);
+  const fast = D.inferenceTimeoutMsFor(18, false, 0.2);
+  assert.ok(slow > fast, "a slower measured rtf must buy more time");
+  assert.strictEqual(D.inferenceTimeoutMsFor(18, false, null), D.inferenceTimeoutMsFor(18, false, D.INFERENCE_DEFAULT_RTF));
+  // Garbage in (negative, NaN, non-numeric) uses the default rather than
+  // producing a zero or negative budget.
+  assert.strictEqual(D.inferenceTimeoutMsFor(18, false, -3), D.inferenceTimeoutMsFor(18, false, D.INFERENCE_DEFAULT_RTF));
+  assert.strictEqual(D.inferenceTimeoutMsFor(18, false, NaN), D.inferenceTimeoutMsFor(18, false, D.INFERENCE_DEFAULT_RTF));
+});
+
+test("the budget is monotonic in audio seconds", () => {
+  let prev = 0;
+  for (const audioS of [0, 1, 2.5, 5, 10, 18, 30, 60]) {
+    const b = D.inferenceTimeoutMsFor(audioS, false, 0.5);
+    assert.ok(b >= prev, "budget must not shrink as audio grows (" + audioS + "s)");
+    prev = b;
+  }
+});
+
+test("even a cold full-size window is bounded near a minute, not hours", () => {
+  assert.ok(D.inferenceTimeoutMsFor(18, true, 1.9) <= D.INFERENCE_MAX_MS);
+  assert.ok(D.INFERENCE_MAX_MS <= 90000);
+});
+
+test("a normal steady-state window is nowhere near its budget", () => {
+  // 18s of audio at the measured steady-state rtf takes ~5s of compute.
+  assert.ok(D.inferenceTimeoutMsFor(18, false, 0.3) >= 18 * 0.3 * 1000 * 2);
+});
+
+test("the inference call inside runSerialized is wrapped in a stage timeout", () => {
+  // Regression guard for the 0.1.54 incident: an unwrapped transcribeInWorker
+  // wedges every tab, and nothing in the pipeline can recover it.
+  const src = fs.readFileSync(path.join(__dirname, "..", "src", "offscreen-src.js"), "utf8");
+  const call = src.indexOf("transcribeInWorker(effectiveModelId");
+  assert.ok(call > 0, "expected the serialized transcribeInWorker call site");
+  const before = src.slice(Math.max(0, call - 1200), call);
+  assert.ok(/withStageTimeout\(/.test(before), "the serialized inference call must be wrapped in withStageTimeout");
+  assert.ok(/inferenceTimeoutMsFor/.test(src), "the wrapper must be sized by the inference budget");
+  assert.ok(/respawnWhisperWorker\('inference hung/.test(src), "a hung inference must respawn the worker");
 });
 
 // ---- summary -------------------------------------------------------------

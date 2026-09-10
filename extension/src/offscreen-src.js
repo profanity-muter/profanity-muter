@@ -830,6 +830,14 @@ function stageTimeoutMsFor(attemptsSoFar) {
     ? globalThis.PMDecode.stageTimeoutMsFor(attemptsSoFar)
     : (attemptsSoFar > 0 ? STAGE_TIMEOUT_MS : STAGE_TIMEOUT_FIRST_MS);
 }
+// ponytail (0.1.54): the Whisper inference call was the one stage with no
+// timeout, and a single inference that never returned held the global serial
+// mutex, so every tab got nothing for hours. Budget lives in shared/decode.js.
+function inferenceTimeoutMsFor(audioS, isCold, rtf) {
+  return globalThis.PMDecode
+    ? globalThis.PMDecode.inferenceTimeoutMsFor(audioS, isCold, rtf)
+    : 60000;
+}
 function withStageTimeout(promise, label, timeoutMs) {
   const limitMs = typeof timeoutMs === 'number' ? timeoutMs : STAGE_TIMEOUT_MS;
   let timer;
@@ -1664,6 +1672,12 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   // terminated. It also carries a cancel token, which is what makes the
   // free path actually free.
   const computeToken = { cancelled: false };
+  const isColdInference = s.windowsDone == null || s.windowsDone < 2;
+  // Same map and same HANG_THRESHOLD as the decode stages, under its own key:
+  // a successful decode clears windowKeyForErrors above, and that happens on
+  // every attempt, so an inference hang counted under the plain key could
+  // never accumulate toward the threshold.
+  const inferenceHangKey = 'inference:' + windowKeyForErrors;
   inFlightCompute = {
     sessionKey: sessionKey(s.tabId, s.videoId),
     start: absStart,
@@ -1674,7 +1688,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     // A cold window runs at warm-up speed, several times slower than the
     // session's settled average. Anything before the session has a couple
     // of windows behind it counts.
-    isCold: s.windowsDone == null || s.windowsDone < 2,
+    isCold: isColdInference,
     token: computeToken
   };
   let workerResult;
@@ -1693,7 +1707,10 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       if (inFlightCompute && inFlightCompute.token === computeToken) {
         inFlightCompute.computeStartedWall = Date.now();
       }
-    return transcribeInWorker(effectiveModelId, float16k, {
+    // 0.1.54: the inference gets a stage timeout like every decode stage.
+    // Sized off this window's audio, whether the worker is cold, and the
+    // session's measured compute-only rtf, so a slow machine is never cut off.
+    return withStageTimeout(transcribeInWorker(effectiveModelId, float16k, {
       return_timestamps: 'word',
       chunk_length_s: 30,
       // Repetition mitigation (0.1.13), best-effort: each window is already
@@ -1707,7 +1724,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       // NOT verified against this exact transformers.js version, so the
       // guaranteed defense is collapseHallucinationLoops() below, not this.
       no_repeat_ngram_size: 3
-    });
+    }), 'whisper inference [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ')', inferenceTimeoutMsFor(absEnd - absStart, isColdInference, s.lastKnownRtf));
     });
   } catch (e) {
     if (e && e.isCancelledWhileQueued) {
@@ -1715,6 +1732,25 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       // moved on. Silent by design, and explicitly NOT counted against
       // any error or hang threshold.
       log('[PM-PREEMPT] window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') dropped from the queue (playhead moved away)');
+      return false;
+    }
+    if (e && e.isStageTimeout) {
+      // A hung inference is not recoverable from this side: the WASM call is
+      // not interruptible and the pending request will never settle, so the
+      // serial chain stays wedged for EVERY tab until the worker is replaced.
+      // respawnWhisperWorker rejects the pending request, terminates the
+      // worker, rebuilds the chain and spawns a fresh one. That rejection
+      // lands on an already-settled race and is neither counted nor logged
+      // again here, and this is deliberately NOT a seek preemption: no
+      // lastPreemptWall, no preempt decision report.
+      respawnWhisperWorker('inference hung on window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ')');
+      const hangCount = (s.hangAttempts.get(inferenceHangKey) || 0) + 1;
+      s.hangAttempts.set(inferenceHangKey, hangCount);
+      if (hangCount >= HANG_THRESHOLD) {
+        markUnanalyzable(s, 'window [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') inference hung ' + hangCount + 'x in a row: ' + String(e));
+      } else {
+        notifyTab(s, '[PM-HANG] inference [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ') ' + String(e && e.message ? e.message : e) + ' (' + hangCount + '/' + HANG_THRESHOLD + ') - worker respawned');
+      }
       return false;
     }
     throw e;
@@ -1726,6 +1762,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
       inFlightCompute = null;
     }
   }
+  s.hangAttempts.delete(inferenceHangKey); // the inference returned: clear any prior hang count for this span
   const transcribeMs = performance.now() - tTranscribeStart;
   // 0.1.43: report the warm-up evidence for the first few inferences of
   // each worker instance, then go quiet. Bounded on purpose: this exists to

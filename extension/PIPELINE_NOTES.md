@@ -3287,3 +3287,43 @@ work now lives in a separate repo seeded from main@0.1.44.
 - `verify/verify-offline.mjs` loads base.en offline and transcribes with the
   network hard-off.
 
+
+## 0.1.54: a stage timeout on the Whisper inference call
+
+Field incident, 2026-09-09. One inference never returned. The worker thread
+sat in WASM at 100% CPU, and because `transcribeInWorker` was awaited inside
+`runSerialized` with no timeout, the global promise-chain mutex never
+advanced. That mutex is shared by every tab using this offscreen document, so
+the whole extension stopped analyzing anything, for hours, on every video.
+
+The log signature: later windows reported `[PM-PREEMPT] ... dropped queued
+window ... it had not reached the worker`, the wedged window stayed "covered
+(or in flight)" forever, and nothing ever respawned the worker. Seek
+preemption could not clear it either, by design: it refuses to terminate work
+owned by another tab's session, and the wedged window belonged to whichever
+tab happened to start it.
+
+Every decode stage already had `withStageTimeout`. The model call, the one
+stage that can wedge a resource shared across tabs, was the only one without.
+
+- **`PMDecode.inferenceTimeoutMsFor(audioS, isCold, rtf)`** in
+  `shared/decode.js` sizes the budget: a 20s floor, the session's measured
+  compute-only rtf (falling back to 0.3) or the 1.5 warm-up rtf when the
+  window is cold, times 3, plus a 15s cold-start allowance for model warm-up,
+  capped at 75s. A steady-state 18s window computes in about 5s, so the budget
+  is several times any legitimate run: it exists to catch a call that will
+  never return, not a slow machine. The cap keeps even a cold full-size window
+  inside about a minute, because a wedged worker costs every tab.
+- **The catch arm** calls `respawnWhisperWorker('inference hung ...')`, which
+  rejects the pending request, terminates the worker, rebuilds the chain and
+  spawns a fresh one. It logs `[PM-HANG] inference [...]` and returns false so
+  the loop continues. It is not a seek preemption: no `lastPreemptWall`, no
+  preempt decision report. The respawn's own `worker preempted` rejection
+  lands on an already-settled race, so it is neither counted nor logged twice.
+- **Hang counting** uses `s.hangAttempts` and `HANG_THRESHOLD` like the decode
+  stages, under an `inference:` key prefix. The plain window key is cleared by
+  every successful decode, which happens on each attempt before the inference
+  runs, so a count kept there could never reach the threshold.
+- **Tests** pin the budget (floor, cold allowance, rtf scaling, monotonic in
+  audio seconds, the ceiling) and guard that the serialized inference call is
+  still wrapped, since an unwrapped one is invisible until it wedges a user.
