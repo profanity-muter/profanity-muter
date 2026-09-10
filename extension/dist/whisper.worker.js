@@ -27,7 +27,7 @@
       __defProp(target, name, { get: all[name], enumerable: true });
   };
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-web/dist/ort.webgpu.bundle.min.mjs
+  // node_modules/onnxruntime-web/dist/ort.webgpu.bundle.min.mjs
   var ort_webgpu_bundle_min_exports = {};
   __export(ort_webgpu_bundle_min_exports, {
     InferenceSession: () => qf,
@@ -1756,7 +1756,7 @@
   }
   var import_meta, jr, zf, Vf, jf, Hr, k, At, Hf, $t, zt, Ze, Ke, Yf, Ta, Yr, va, Ea, Sa, Aa, ie, qr, K, Ia, xa, La, Oa, Jr, Ba, Ma, Ca, Ua, Da, Pa, et, It, _a, Ra, Na, ka, Wa, Fa, le, Vt, Le, Xr, Ga, $a, tt, rt, $e, ze, Qr, jt, za, qf, Va, ja, Ha, Ya, qa, Zr, Ve, Ht, Za, Xa, Qa, Jf, Ka, ts, Xf, Qf, rs, as, tn, Zf, ge, ss, en, Kf, ec, is, tc, ns, us, os, fs, Yt, rn, nn, rr, cs, rc, nc, oc, qt, z, je, be, Lt, $, nr, ds, ls, ac, sc, ic, on, ot, uc, ps, ms, He, or, mt, at, Ot, ar, sr, an, st, Bt, sn, hs, ys, fc, cc, bs, ws, gs, dc, pe, un, vs, cn, Es, lc, Ts, pc, Ss, ir, ur, fn, As, Is, xs, fr, mc, dn, Ls, hc, Jt, Xt, it, yc, Os, xt, Qt, Zt, Bs, Kt, er, tr, Kr, ut, Ee, Mt, dr, lr, cr, ln, pn, ht, yt, wc, Ms, Cs, Us, Ds, Ps, _s, Rs, mn, Ns, gc, pr, ks, Fs, Ws, mr, Tc, Gs, Ja, gl;
   var init_ort_webgpu_bundle_min = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-web/dist/ort.webgpu.bundle.min.mjs"() {
+    "node_modules/onnxruntime-web/dist/ort.webgpu.bundle.min.mjs"() {
       import_meta = {};
       jr = Object.defineProperty;
       zf = Object.getOwnPropertyDescriptor;
@@ -3790,31 +3790,31 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/backend-impl.js
+  // node_modules/onnxruntime-common/dist/esm/backend-impl.js
   var init_backend_impl = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/backend-impl.js"() {
+    "node_modules/onnxruntime-common/dist/esm/backend-impl.js"() {
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/backend.js
+  // node_modules/onnxruntime-common/dist/esm/backend.js
   var init_backend = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/backend.js"() {
+    "node_modules/onnxruntime-common/dist/esm/backend.js"() {
       init_backend_impl();
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/version.js
+  // node_modules/onnxruntime-common/dist/esm/version.js
   var version;
   var init_version = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/version.js"() {
+    "node_modules/onnxruntime-common/dist/esm/version.js"() {
       version = "1.24.3";
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/env-impl.js
+  // node_modules/onnxruntime-common/dist/esm/env-impl.js
   var logLevelValue, env;
   var init_env_impl = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/env-impl.js"() {
+    "node_modules/onnxruntime-common/dist/esm/env-impl.js"() {
       init_version();
       logLevelValue = "warning";
       env = {
@@ -3839,17 +3839,17 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/env.js
+  // node_modules/onnxruntime-common/dist/esm/env.js
   var init_env = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/env.js"() {
+    "node_modules/onnxruntime-common/dist/esm/env.js"() {
       init_env_impl();
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-conversion-impl.js
+  // node_modules/onnxruntime-common/dist/esm/tensor-conversion-impl.js
   var tensorToDataURL, tensorToImageData;
   var init_tensor_conversion_impl = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-conversion-impl.js"() {
+    "node_modules/onnxruntime-common/dist/esm/tensor-conversion-impl.js"() {
       tensorToDataURL = (tensor, options) => {
         const canvas = typeof document !== "undefined" ? document.createElement("canvas") : new OffscreenCanvas(1, 1);
         canvas.width = tensor.dims[3];
@@ -4010,10 +4010,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-factory-impl.js
+  // node_modules/onnxruntime-common/dist/esm/tensor-factory-impl.js
   var bufferToTensor, tensorFromImage, tensorFromTexture, tensorFromGpuBuffer, tensorFromMLTensor, tensorFromPinnedBuffer;
   var init_tensor_factory_impl = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-factory-impl.js"() {
+    "node_modules/onnxruntime-common/dist/esm/tensor-factory-impl.js"() {
       init_tensor_impl();
       bufferToTensor = (buffer, options) => {
         if (buffer === void 0) {
@@ -4225,10 +4225,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-impl-type-mapping.js
+  // node_modules/onnxruntime-common/dist/esm/tensor-impl-type-mapping.js
   var NUMERIC_TENSOR_TYPE_TO_TYPEDARRAY_MAP, NUMERIC_TENSOR_TYPEDARRAY_TO_TYPE_MAP, isTypedArrayChecked, checkTypedArray;
   var init_tensor_impl_type_mapping = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-impl-type-mapping.js"() {
+    "node_modules/onnxruntime-common/dist/esm/tensor-impl-type-mapping.js"() {
       NUMERIC_TENSOR_TYPE_TO_TYPEDARRAY_MAP = /* @__PURE__ */ new Map([
         ["float32", Float32Array],
         ["uint8", Uint8Array],
@@ -4279,10 +4279,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-utils-impl.js
+  // node_modules/onnxruntime-common/dist/esm/tensor-utils-impl.js
   var calculateSize, tensorReshape;
   var init_tensor_utils_impl = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-utils-impl.js"() {
+    "node_modules/onnxruntime-common/dist/esm/tensor-utils-impl.js"() {
       init_tensor_impl();
       calculateSize = (dims) => {
         let size = 1;
@@ -4337,10 +4337,10 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-impl.js
+  // node_modules/onnxruntime-common/dist/esm/tensor-impl.js
   var Tensor;
   var init_tensor_impl = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-impl.js"() {
+    "node_modules/onnxruntime-common/dist/esm/tensor-impl.js"() {
       init_tensor_conversion_impl();
       init_tensor_factory_impl();
       init_tensor_impl_type_mapping();
@@ -4613,65 +4613,65 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor.js
+  // node_modules/onnxruntime-common/dist/esm/tensor.js
   var Tensor2;
   var init_tensor = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor.js"() {
+    "node_modules/onnxruntime-common/dist/esm/tensor.js"() {
       init_tensor_impl();
       Tensor2 = Tensor;
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/trace.js
+  // node_modules/onnxruntime-common/dist/esm/trace.js
   var init_trace = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/trace.js"() {
+    "node_modules/onnxruntime-common/dist/esm/trace.js"() {
       init_env_impl();
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/inference-session-impl.js
+  // node_modules/onnxruntime-common/dist/esm/inference-session-impl.js
   var init_inference_session_impl = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/inference-session-impl.js"() {
+    "node_modules/onnxruntime-common/dist/esm/inference-session-impl.js"() {
       init_backend_impl();
       init_tensor();
       init_trace();
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/inference-session.js
+  // node_modules/onnxruntime-common/dist/esm/inference-session.js
   var init_inference_session = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/inference-session.js"() {
+    "node_modules/onnxruntime-common/dist/esm/inference-session.js"() {
       init_inference_session_impl();
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-conversion.js
+  // node_modules/onnxruntime-common/dist/esm/tensor-conversion.js
   var init_tensor_conversion = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-conversion.js"() {
+    "node_modules/onnxruntime-common/dist/esm/tensor-conversion.js"() {
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-factory.js
+  // node_modules/onnxruntime-common/dist/esm/tensor-factory.js
   var init_tensor_factory = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/tensor-factory.js"() {
+    "node_modules/onnxruntime-common/dist/esm/tensor-factory.js"() {
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/onnx-model.js
+  // node_modules/onnxruntime-common/dist/esm/onnx-model.js
   var init_onnx_model = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/onnx-model.js"() {
+    "node_modules/onnxruntime-common/dist/esm/onnx-model.js"() {
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/onnx-value.js
+  // node_modules/onnxruntime-common/dist/esm/onnx-value.js
   var init_onnx_value = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/onnx-value.js"() {
+    "node_modules/onnxruntime-common/dist/esm/onnx-value.js"() {
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/index.js
+  // node_modules/onnxruntime-common/dist/esm/index.js
   var init_esm = __esm({
-    "../../profanity-muter-clean/extension/node_modules/onnxruntime-common/dist/esm/index.js"() {
+    "node_modules/onnxruntime-common/dist/esm/index.js"() {
       init_backend();
       init_env();
       init_inference_session();
@@ -4684,7 +4684,7 @@
     }
   });
 
-  // ../../profanity-muter-clean/extension/node_modules/@huggingface/transformers/dist/transformers.web.js
+  // node_modules/@huggingface/transformers/dist/transformers.web.js
   function isEmpty(obj) {
     return Object.keys(obj).length === 0;
   }
@@ -9837,7 +9837,7 @@ ${fake_token_around_image}${global_img_token}` + image_token.repeat(image_seq_le
   }
   var import_meta2, __defProp2, __export2, node_fs_default, node_path_default, node_url_default, VERSION, HAS_SELF, IS_FS_AVAILABLE, IS_PATH_AVAILABLE, IS_WEB_CACHE_AVAILABLE, IS_DENO_RUNTIME, IS_BUN_RUNTIME, IS_DENO_WEB_RUNTIME, IS_PROCESS_AVAILABLE, IS_NODE_ENV, IS_BROWSER_ENV, IS_WEBWORKER_ENV, IS_WEB_ENV, IS_WEBGPU_AVAILABLE, IS_WEBNN_AVAILABLE, IS_CRYPTO_AVAILABLE, IS_CHROME_AVAILABLE, IS_SERVICE_WORKER_ENV, isSafari, IS_SAFARI, apis, RUNNING_LOCALLY, dirname__, DEFAULT_CACHE_DIR, DEFAULT_LOCAL_MODEL_PATH, localModelPath, DEFAULT_FETCH, LogLevel, logLevel, env2, Callable, DefaultProgressCallback, logger, DictionarySplitter, DictionarySplitter_default, AddedToken, AddedToken_default, BYTES_TO_UNICODE, reverse_dictionary, UNICODE_TO_BYTES, BLOOM_SPLIT_CHARS, PROBLEMATIC_REGEX_MAP, PUNCTUATION_REGEX, clean_up_tokenization, create_pattern, escape_reg_exp, fuse_unk, is_chinese_char, is_integral_number, len, lowercase_and_remove_accents, merge_arrays, object_to_map, regex_split, remove_accents, validate_object, whitespace_split, Callable2, Callable_default, Normalizer, Normalizer_default, BertNormalizer, BertNormalizer_default, Precompiled, Precompiled_default, Sequence, Sequence_default, Replace, Replace_default, UnicodeNormalizer, UnicodeNormalizer_default, NFC, NFC_default, NFD, NFD_default, NFKC, NFKC_default, NFKD, NFKD_default, Strip, Strip_default, StripAccents, StripAccents_default, Lowercase, Lowercase_default, Prepend, Prepend_default, create_normalizer_default, PreTokenizer, PreTokenizer_default, ByteLevel, ByteLevel_default, Whitespace, Whitespace_default, Metaspace, Metaspace_default, Split, Split_default, Punctuation, Punctuation_default, Digits, Digits_default, BertPreTokenizer, BertPreTokenizer_default, Replace2, Replace_default2, Sequence2, Sequence_default2, WhitespaceSplit, WhitespaceSplit_default, FixedLength, FixedLength_default, create_pre_tokenizer_default, TokenizerModel, TokenizerModel_default, WordPieceTokenizer, WordPiece_default, CharTrieNode, CharTrie, CharTrie_default, TokenLatticeNode, TokenLattice, TokenLattice_default, Unigram, Unigram_default, PriorityQueue, PriorityQueue_default, LRUCache, LRUCache_default, BPE, BPE_default, Legacy, Legacy_default, create_tokenizer_model_default, PostProcessor, PostProcessor_default, TemplateProcessing, TemplateProcessing_default, ByteLevel2, ByteLevel_default2, BertProcessing, BertProcessing_default, RobertaProcessing, RobertaProcessing_default, Sequence3, Sequence_default3, create_post_processor_default, Decoder, Decoder_default, ByteLevel3, ByteLevel_default3, WordPiece, WordPiece_default2, Metaspace2, Metaspace_default2, BPE2, BPE_default2, CTC, CTC_default, Sequence4, Sequence_default4, Replace3, Replace_default3, Fuse, Fuse_default, Strip2, Strip_default2, ByteFallback, ByteFallback_default, create_decoder_default, Tokenizer, Tokenizer_default, TOKEN_TYPES, Token, ORDERED_MAPPING_TABLE, ESCAPE_CHARACTERS, Statement, Program, If, For, Break, Continue, SetStatement, Macro, Comment, Expression, MemberExpression, CallExpression, Identifier, Literal, IntegerLiteral, FloatLiteral, StringLiteral, ArrayLiteral, TupleLiteral, ObjectLiteral, BinaryExpression, FilterExpression, FilterStatement, SelectExpression, TestExpression, UnaryExpression, SliceExpression, KeywordArgumentExpression, SpreadExpression, CallStatement, Ternary, BreakControl, ContinueControl, RuntimeValue, IntegerValue, FloatValue, StringValue, BooleanValue, NON_ASCII_CHARS, ObjectValue, KeywordArgumentsValue, ArrayValue, TupleValue, FunctionValue, NullValue, UndefinedValue, Environment, Interpreter, NEWLINE, OPEN_STATEMENT, CLOSE_STATEMENT, Template, CONTENT_TYPE_MAP, FileResponse, Random, _default, random, _weightedIndex, rng, FileCache, ERROR_MAPPING, MAX_EXTERNAL_DATA_CHUNKS, REPO_ID_REGEX, HASH_ALGORITHM, HASH_CACHE_NAME, makeHashDescriptor, CrossOriginStorage, LRUCache2, MAX_CACHE_SIZE, cache, INFLIGHT_LOADS, P2FFT, NP2FFT, FFT, uint16_to_float32, onnxruntime_node_exports, onnxruntime_node_default, DEVICE_TO_EXECUTION_PROVIDER_MAPPING, ONNX_LOG_LEVEL_NAMES, supportedDevices, defaultDevices, ONNX, ORT_SYMBOL, InferenceSession2, webInitChain, wasmLoadPromise, webInferenceChain, ONNX_ENV, wrap, TensorOpRegistry, DEVICE_TYPES, DEFAULT_DEVICE, isWebGpuFp16Supported, DATA_TYPES, DEFAULT_DEVICE_DTYPE, DEFAULT_DEVICE_DTYPE_MAPPING, DEFAULT_DTYPE_SUFFIX_MAPPING, DataTypeMap, Tensor22, arrayToIndexTensor, SPECIAL_TOKEN_ATTRIBUTES, PreTrainedTokenizer, tokenizers_exports, AlbertTokenizer, BartTokenizer, BertTokenizer, BlenderbotSmallTokenizer, BlenderbotTokenizer, BloomTokenizer, CamembertTokenizer, CLIPTokenizer, CodeLlamaTokenizer, CodeGenTokenizer, CohereTokenizer, CohereAsrTokenizer, ConvBertTokenizer, DebertaV2Tokenizer, DebertaTokenizer, DistilBertTokenizer, ElectraTokenizer, EsmTokenizer, FalconTokenizer, GemmaTokenizer, GPTNeoXTokenizer, GPT2Tokenizer, HerbertTokenizer, LlamaTokenizer, M2M100Tokenizer, MarianTokenizer, MBartTokenizer, MBart50Tokenizer, MgpstrTokenizer, MobileBertTokenizer, MPNetTokenizer, NllbTokenizer, NougatTokenizer, Qwen2Tokenizer, RobertaTokenizer, RoFormerTokenizer, SiglipTokenizer, SpeechT5Tokenizer, SqueezeBertTokenizer, T5Tokenizer, VitsDecoder, VitsTokenizer, Wav2Vec2CTCTokenizer, WHISPER_LANGUAGES, WHISPER_LANGUAGE_MAPPING, WHISPER_TO_LANGUAGE_CODE_MAPPING, PUNCTUATION_REGEX2, PUNCTUATION_ONLY_REGEX, TIMESTAMP_MERGE_TOLERANCE, WhisperTokenizer, XLMRobertaTokenizer, XLMTokenizer, AutoTokenizer, GITHUB_ISSUE_URL, FEATURE_EXTRACTOR_NAME, IMAGE_PROCESSOR_NAME, PROCESSOR_NAME, CHAT_TEMPLATE_NAME, Processor, processors_exports, FeatureExtractor, feature_extractors_exports, noop, Readable, noop2, pipeline, read_audio, HERTZ_TO_MEL_MAPPING, MEL_TO_HERTZ_MAPPING, RawAudio, ASTFeatureExtractor, EncodecFeatureExtractor, ChatterboxFeatureExtractor, ClapFeatureExtractor, EPSILON, ParakeetFeatureExtractor, CohereAsrFeatureExtractor, DacFeatureExtractor, Gemma3nAudioFeatureExtractor, Gemma4AudioFeatureExtractor, GraniteSpeechFeatureExtractor, MoonshineFeatureExtractor, PyAnnoteFeatureExtractor, SeamlessM4TFeatureExtractor, SnacFeatureExtractor, SpeechT5FeatureExtractor, Wav2Vec2FeatureExtractor, WeSpeakerFeatureExtractor, VoxtralRealtimeFeatureExtractor, WhisperFeatureExtractor, AutoFeatureExtractor, ChatterboxProcessor, NO_SPACE_LANGUAGES, CohereAsrProcessor, sharp_default, createCanvasFunction, ImageDataClass, loadImageFunction, RESAMPLING_MAPPING, CONTENT_TYPE_MAP2, RawImage, load_image, ImageProcessor, image_processors_exports, BeitFeatureExtractor, BitImageProcessor, ChineseCLIPFeatureExtractor, CHMv2ImageProcessor, CLIPImageProcessor, CLIPFeatureExtractor, ConvNextImageProcessor, ConvNextFeatureExtractor, DeiTImageProcessor, DeiTFeatureExtractor, DetrImageProcessor, DetrFeatureExtractor, DINOv3ViTImageProcessor, DonutImageProcessor, DonutFeatureExtractor, DPTImageProcessor, DPTFeatureExtractor, EfficientNetImageProcessor, Gemma3ImageProcessor, Gemma4ImageProcessor, Qwen2VLImageProcessor, Glm46VImageProcessor, GLPNFeatureExtractor, GroundingDinoImageProcessor, Idefics3ImageProcessor, VLMImageProcessor, JinaCLIPImageProcessor, Lfm2VlImageProcessor, LlavaOnevisionImageProcessor, MaskFormerImageProcessor, MaskFormerFeatureExtractor, Mask2FormerImageProcessor, MobileNetV1ImageProcessor, MobileNetV1FeatureExtractor, MobileNetV2ImageProcessor, MobileNetV2FeatureExtractor, MobileNetV3ImageProcessor, MobileNetV3FeatureExtractor, MobileNetV4ImageProcessor, MobileNetV4FeatureExtractor, MobileViTImageProcessor, MobileViTFeatureExtractor, NougatImageProcessor, OwlViTImageProcessor, OwlViTFeatureExtractor, Owlv2ImageProcessor, IMAGE_SIZE, SLICE_AXES, ceil, floor, sqrt, Phi3VImageProcessor, PixtralImageProcessor, PvtImageProcessor, RTDetrImageProcessor, SamImageProcessor, SapiensImageProcessor, SapiensFeatureExtractor, SegformerImageProcessor, SegformerFeatureExtractor, SiglipImageProcessor, Swin2SRImageProcessor, ViTImageProcessor, ViTFeatureExtractor, VitMatteImageProcessor, VitPoseImageProcessor, YolosImageProcessor, YolosFeatureExtractor, AutoImageProcessor, Florence2Processor, Gemma3Processor, Gemma3nProcessor, Gemma4Processor, Qwen2VLProcessor, Glm46VProcessor, GraniteSpeechProcessor, GroundingDinoProcessor, Idefics3Processor, VLChatProcessor, JinaCLIPProcessor, Lfm2VlProcessor, LlavaProcessor, DECODE_TYPE_MAPPING, MgpstrProcessor, MoonshineProcessor, OwlViTProcessor, IMAGE_TOKEN, PaliGemmaProcessor, IMAGE_TOKEN2, IMAGE_TOKEN_PATTERN, Phi3VProcessor, PixtralProcessor, PyAnnoteProcessor, Qwen2_5_VLProcessor, Qwen3VLProcessor, SamProcessor, Sam2Processor, Sam2VideoProcessor, SpeechT5Processor, UltravoxProcessor, AUDIO_TOKEN, BEGIN_AUDIO_TOKEN, NUM_AUDIO_TOKENS, VoxtralProcessor, NUM_LEFT_PAD_TOKENS, NUM_DELAY_TOKENS, AUDIO_LENGTH_PER_TOK, OFFLINE_STREAMING_BUFFER_TOKENS, STREAMING_PAD_TOKEN_ID, VoxtralRealtimeProcessor, Wav2Vec2Processor, Wav2Vec2ProcessorWithLM, WhisperProcessor, AutoProcessor, PretrainedConfig, AutoConfig, ModelOutput, SequenceClassifierOutput, TokenClassifierOutput, MaskedLMOutput, QuestionAnsweringModelOutput, CausalLMOutput, ImageMattingOutput, LogitsProcessor, LogitsWarper, LogitsProcessorList, ForcedBOSTokenLogitsProcessor, ForcedEOSTokenLogitsProcessor, SuppressTokensLogitsProcessor, SuppressTokensAtBeginLogitsProcessor, WhisperTimeStampLogitsProcessor, NoRepeatNGramLogitsProcessor, RepetitionPenaltyLogitsProcessor, MinLengthLogitsProcessor, MinNewTokensLengthLogitsProcessor, NoBadWordsLogitsProcessor, ClassifierFreeGuidanceLogitsProcessor, TemperatureLogitsWarper, GenerationConfig, StoppingCriteria, StoppingCriteriaList, MaxLengthCriteria, EosTokenCriteria, LogitsSampler, GreedySampler, MultinomialSampler, BeamSearchSampler, _DynamicCache, DynamicCache, MODEL_TYPES, MODEL_SESSION_CONFIG, MODEL_MAPPING_NAMES, MODEL_RUNTIME_CONFIG, MODEL_TYPE_MAPPING, MODEL_NAME_TO_CLASS_MAPPING, MODEL_CLASS_TO_NAME_MAPPING, PreTrainedModel, models_exports, AlbertPreTrainedModel, AlbertModel, AlbertForSequenceClassification, AlbertForQuestionAnswering, AlbertForMaskedLM, ApertusPreTrainedModel, ApertusModel, ApertusForCausalLM, AfmoePreTrainedModel, AfmoeModel, AfmoeForCausalLM, ArceePreTrainedModel, ArceeModel, ArceeForCausalLM, ASTPreTrainedModel, ASTModel, ASTForAudioClassification, BartPretrainedModel, BartModel, BartForConditionalGeneration, BartForSequenceClassification, BeitPreTrainedModel, BeitModel, BeitForImageClassification, BertPreTrainedModel, BertModel, BertForMaskedLM, BertForSequenceClassification, BertForTokenClassification, BertForQuestionAnswering, BlenderbotPreTrainedModel, BlenderbotModel, BlenderbotForConditionalGeneration, BlenderbotSmallPreTrainedModel, BlenderbotSmallModel, BlenderbotSmallForConditionalGeneration, BloomPreTrainedModel, BloomModel, BloomForCausalLM, CamembertPreTrainedModel, CamembertModel, CamembertForMaskedLM, CamembertForSequenceClassification, CamembertForTokenClassification, CamembertForQuestionAnswering, SILENCE_TOKEN, START_SPEECH_TOKEN, ChatterboxPreTrainedModel, ChatterboxModel, ChineseCLIPPreTrainedModel, ChineseCLIPModel, CHMv2PreTrainedModel, CHMv2ForDepthEstimation, ClapPreTrainedModel, ClapModel, ClapTextModelWithProjection, ClapAudioModelWithProjection, CLIPPreTrainedModel, CLIPModel, CLIPTextModel, CLIPTextModelWithProjection, CLIPVisionModel, CLIPVisionModelWithProjection, CLIPSegPreTrainedModel, CLIPSegModel, CLIPSegForImageSegmentation, CodeGenPreTrainedModel, CodeGenModel, CodeGenForCausalLM, CoherePreTrainedModel, CohereModel, CohereForCausalLM, Cohere2PreTrainedModel, Cohere2Model, Cohere2ForCausalLM, CohereAsrPreTrainedModel, CohereAsrModel, CohereAsrForConditionalGeneration, ConvBertPreTrainedModel, ConvBertModel, ConvBertForMaskedLM, ConvBertForSequenceClassification, ConvBertForTokenClassification, ConvBertForQuestionAnswering, ConvNextPreTrainedModel, ConvNextModel, ConvNextForImageClassification, ConvNextV2PreTrainedModel, ConvNextV2Model, ConvNextV2ForImageClassification, RTDetrPreTrainedModel, RTDetrModel, RTDetrForObjectDetection, RTDetrObjectDetectionOutput, DFinePreTrainedModel, DFineModel, DFineForObjectDetection, DacEncoderOutput, DacDecoderOutput, DacPreTrainedModel, DacModel, DacEncoderModel, DacDecoderModel, DebertaPreTrainedModel, DebertaModel, DebertaForMaskedLM, DebertaForSequenceClassification, DebertaForTokenClassification, DebertaForQuestionAnswering, DeepseekV3PreTrainedModel, DeepseekV3Model, DeepseekV3ForCausalLM, DebertaV2PreTrainedModel, DebertaV2Model, DebertaV2ForMaskedLM, DebertaV2ForSequenceClassification, DebertaV2ForTokenClassification, DebertaV2ForQuestionAnswering, DecisionTransformerPreTrainedModel, DecisionTransformerModel, DeiTPreTrainedModel, DeiTModel, DeiTForImageClassification, DepthAnythingPreTrainedModel, DepthAnythingForDepthEstimation, DepthProPreTrainedModel, DepthProForDepthEstimation, DetrPreTrainedModel, DetrModel, DetrForObjectDetection, DetrForSegmentation, DetrObjectDetectionOutput, DetrSegmentationOutput, Dinov2PreTrainedModel, Dinov2Model, Dinov2ForImageClassification, Dinov2WithRegistersPreTrainedModel, Dinov2WithRegistersModel, Dinov2WithRegistersForImageClassification, DINOv3ConvNextPreTrainedModel, DINOv3ConvNextModel, DINOv3ViTPreTrainedModel, DINOv3ViTModel, DistilBertPreTrainedModel, DistilBertModel, DistilBertForSequenceClassification, DistilBertForTokenClassification, DistilBertForQuestionAnswering, DistilBertForMaskedLM, DonutSwinPreTrainedModel, DonutSwinModel, DPTPreTrainedModel, DPTModel, DPTForDepthEstimation, EfficientNetPreTrainedModel, EfficientNetModel, EfficientNetForImageClassification, ElectraPreTrainedModel, ElectraModel, ElectraForMaskedLM, ElectraForSequenceClassification, ElectraForTokenClassification, ElectraForQuestionAnswering, Ernie4_5PretrainedModel, Ernie4_5Model, Ernie4_5ForCausalLM, EsmPreTrainedModel, EsmModel, EsmForMaskedLM, EsmForSequenceClassification, EsmForTokenClassification, EuroBertPreTrainedModel, EuroBertModel, EuroBertForMaskedLM, EuroBertForSequenceClassification, EuroBertForTokenClassification, ExaonePreTrainedModel, ExaoneModel, ExaoneForCausalLM, FalconPreTrainedModel, FalconModel, FalconForCausalLM, FalconH1PreTrainedModel, FalconH1Model, FalconH1ForCausalLM, FastViTPreTrainedModel, FastViTModel, FastViTForImageClassification, Florence2PreTrainedModel, Florence2ForConditionalGeneration, GemmaPreTrainedModel, GemmaModel, GemmaForCausalLM, Gemma2PreTrainedModel, Gemma2Model, Gemma2ForCausalLM, LlavaPreTrainedModel, LlavaForConditionalGeneration, Moondream1ForConditionalGeneration, LlavaQwen2ForCausalLM, Gemma3PreTrainedModel, Gemma3Model, Gemma3ForConditionalGeneration, Gemma3ForCausalLM, Gemma3nPreTrainedModel, Gemma3nForConditionalGeneration, Gemma3nForCausalLM, Gemma4ForConditionalGeneration, Gemma4ForCausalLM, GlmPreTrainedModel, GlmModel, GlmForCausalLM, GlmMoeDsaPreTrainedModel, GlmMoeDsaModel, GlmMoeDsaForCausalLM, Qwen2VLPreTrainedModel, Qwen2VLForConditionalGeneration, Qwen2VLForCausalLM, Qwen2_5_VLForConditionalGeneration, Qwen2_5_VLForCausalLM, GlmOcrForConditionalGeneration, GLPNPreTrainedModel, GLPNModel, GLPNForDepthEstimation, GPTBigCodePreTrainedModel, GPTBigCodeModel, GPTBigCodeForCausalLM, GPTNeoPreTrainedModel, GPTNeoModel, GPTNeoForCausalLM, GPTNeoXPreTrainedModel, GPTNeoXModel, GPTNeoXForCausalLM, GptOssPreTrainedModel, GptOssModel, GptOssForCausalLM, GPT2PreTrainedModel, GPT2Model, GPT2LMHeadModel, GPTJPreTrainedModel, GPTJModel, GPTJForCausalLM, GranitePreTrainedModel, GraniteModel, GraniteForCausalLM, GraniteMoeHybridPreTrainedModel, GraniteMoeHybridModel, GraniteMoeHybridForCausalLM, UltravoxPreTrainedModel, UltravoxModel, GraniteSpeechForConditionalGeneration, GroundingDinoPreTrainedModel, GroundingDinoForObjectDetection, GroupViTPreTrainedModel, GroupViTModel, HeliumPreTrainedModel, HeliumModel, HeliumForCausalLM, HieraPreTrainedModel, HieraModel, HieraForImageClassification, Wav2Vec2PreTrainedModel, Wav2Vec2Model, Wav2Vec2ForCTC, Wav2Vec2ForSequenceClassification, Wav2Vec2ForAudioFrameClassification, HubertPreTrainedModel, HubertModel, HubertForCTC, HubertForSequenceClassification, HunYuanDenseV1PreTrainedModel, HunYuanDenseV1Model, HunYuanDenseV1ForCausalLM, Idefics3ForConditionalGeneration, IJepaPreTrainedModel, IJepaModel, IJepaForImageClassification, JAISPreTrainedModel, JAISModel, JAISLMHeadModel, JinaCLIPPreTrainedModel, JinaCLIPModel, JinaCLIPTextModel, JinaCLIPVisionModel, Lfm2PreTrainedModel, Lfm2Model, Lfm2ForCausalLM, LightOnOcrForConditionalGeneration, Lfm2MoePreTrainedModel, Lfm2MoeModel, Lfm2MoeForCausalLM, Lfm2VlForConditionalGeneration, LlamaPreTrainedModel, LlamaModel, LlamaForCausalLM, Llama4PreTrainedModel, Llama4ForCausalLM, LongT5PreTrainedModel, LongT5Model, LongT5ForConditionalGeneration, M2M100PreTrainedModel, M2M100Model, M2M100ForConditionalGeneration, MarianPreTrainedModel, MarianModel, MarianMTModel, MaskFormerPreTrainedModel, MaskFormerModel, MaskFormerForInstanceSegmentation, MBartPreTrainedModel, MBartModel, MBartForConditionalGeneration, MBartForSequenceClassification, MBartForCausalLM, Metric3DPreTrainedModel, Metric3DForDepthEstimation, Metric3Dv2PreTrainedModel, Metric3Dv2ForDepthEstimation, MgpstrModelOutput, MgpstrPreTrainedModel, MgpstrForSceneTextRecognition, MimiEncoderOutput, MimiDecoderOutput, MimiPreTrainedModel, MimiModel, MimiEncoderModel, MimiDecoderModel, MistralPreTrainedModel, MistralModel, MistralForCausalLM, Mistral4PreTrainedModel, Mistral4Model, Mistral4ForCausalLM, MobileBertPreTrainedModel, MobileBertModel, MobileBertForMaskedLM, MobileBertForSequenceClassification, MobileBertForQuestionAnswering, MobileLLMPreTrainedModel, MobileLLMModel, MobileLLMForCausalLM, MobileNetV1PreTrainedModel, MobileNetV1Model, MobileNetV1ForImageClassification, MobileNetV1ForSemanticSegmentation, MobileNetV2PreTrainedModel, MobileNetV2Model, MobileNetV2ForImageClassification, MobileNetV2ForSemanticSegmentation, MobileNetV3PreTrainedModel, MobileNetV3Model, MobileNetV3ForImageClassification, MobileNetV3ForSemanticSegmentation, MobileNetV4PreTrainedModel, MobileNetV4Model, MobileNetV4ForImageClassification, MobileNetV4ForSemanticSegmentation, MobileViTPreTrainedModel, MobileViTModel, MobileViTForImageClassification, MobileViTV2PreTrainedModel, MobileViTV2Model, MobileViTV2ForImageClassification, ModernBertPreTrainedModel, ModernBertModel, ModernBertForMaskedLM, ModernBertForSequenceClassification, ModernBertForTokenClassification, ModernBertDecoderPreTrainedModel, ModernBertDecoderModel, ModernBertDecoderForCausalLM, MoonshinePreTrainedModel, MoonshineModel, MoonshineForConditionalGeneration, MPNetPreTrainedModel, MPNetModel, MPNetForMaskedLM, MPNetForSequenceClassification, MPNetForTokenClassification, MPNetForQuestionAnswering, MptPreTrainedModel, MptModel, MptForCausalLM, MT5PreTrainedModel, MT5Model, MT5ForConditionalGeneration, MultiModalityPreTrainedModel, MultiModalityCausalLM, MusicgenPreTrainedModel, MusicgenModel, MusicgenForCausalLM, MusicgenForConditionalGeneration, NanoChatPreTrainedModel, NanoChatModel, NanoChatForCausalLM, NemotronHPreTrainedModel, NemotronHModel, NemotronHForCausalLM, NeoBertPreTrainedModel, NeoBertModel, NeoBertForMaskedLM, NeoBertForSequenceClassification, NeoBertForTokenClassification, NeoBertForQuestionAnswering, NomicBertPreTrainedModel, NomicBertModel, OlmoPreTrainedModel, OlmoModel, OlmoForCausalLM, Olmo2PreTrainedModel, Olmo2Model, Olmo2ForCausalLM, Olmo3PreTrainedModel, Olmo3Model, Olmo3ForCausalLM, OlmoHybridPreTrainedModel, OlmoHybridModel, OlmoHybridForCausalLM, OpenAIPrivacyFilterPreTrainedModel, OpenAIPrivacyFilterModel, OpenAIPrivacyFilterForTokenClassification, OpenELMPreTrainedModel, OpenELMModel, OpenELMForCausalLM, OPTPreTrainedModel, OPTModel, OPTForCausalLM, Owlv2PreTrainedModel, Owlv2Model, Owlv2ForObjectDetection, OwlViTPreTrainedModel, OwlViTModel, OwlViTForObjectDetection, PaliGemmaForConditionalGeneration, ParakeetPreTrainedModel, ParakeetForCTC, PatchTSMixerPreTrainedModel, PatchTSMixerModel, PatchTSMixerForPrediction, PatchTSTPreTrainedModel, PatchTSTModel, PatchTSTForPrediction, PhiPreTrainedModel, PhiModel, PhiForCausalLM, Phi3PreTrainedModel, Phi3Model, Phi3ForCausalLM, Phi3VPreTrainedModel, Phi3VForCausalLM, PvtPreTrainedModel, PvtModel, PvtForImageClassification, PyAnnotePreTrainedModel, PyAnnoteModel, PyAnnoteForAudioFrameClassification, Qwen2PreTrainedModel, Qwen2Model, Qwen2ForCausalLM, Qwen2MoePreTrainedModel, Qwen2MoeModel, Qwen2MoeForCausalLM, Qwen3PreTrainedModel, Qwen3Model, Qwen3ForCausalLM, Qwen3MoePreTrainedModel, Qwen3MoeModel, Qwen3MoeForCausalLM, Qwen3NextPreTrainedModel, Qwen3NextModel, Qwen3NextForCausalLM, Qwen3VLForConditionalGeneration, Qwen3VLForCausalLM, Qwen3VLMoeForConditionalGeneration, Qwen3VLMoeForCausalLM, Qwen3_5ForConditionalGeneration, Qwen3_5ForCausalLM, Qwen3_5MoeForConditionalGeneration, Qwen3_5MoeForCausalLM, ResNetPreTrainedModel, ResNetModel, ResNetForImageClassification, RFDetrPreTrainedModel, RFDetrModel, RFDetrForObjectDetection, RFDetrObjectDetectionOutput, RobertaPreTrainedModel, RobertaModel, RobertaForMaskedLM, RobertaForSequenceClassification, RobertaForTokenClassification, RobertaForQuestionAnswering, RoFormerPreTrainedModel, RoFormerModel, RoFormerForMaskedLM, RoFormerForSequenceClassification, RoFormerForTokenClassification, RoFormerForQuestionAnswering, RTDetrV2PreTrainedModel, RTDetrV2Model, RTDetrV2ForObjectDetection, RTDetrV2ObjectDetectionOutput, SamImageSegmentationOutput, SamPreTrainedModel, SamModel, Sam2ImageSegmentationOutput, Sam2PreTrainedModel, Sam2Model, EdgeTamModel, Sam3TrackerModel, SapiensPreTrainedModel, SapiensForSemanticSegmentation, SapiensForDepthEstimation, SapiensForNormalEstimation, SegformerPreTrainedModel, SegformerModel, SegformerForImageClassification, SegformerForSemanticSegmentation, SiglipPreTrainedModel, SiglipModel, SiglipTextModel, SiglipVisionModel, SmolLM3PreTrainedModel, SmolLM3Model, SmolLM3ForCausalLM, SmolVLMForConditionalGeneration, SnacPreTrainedModel, SnacModel, SnacEncoderModel, SnacDecoderModel, SolarOpenPreTrainedModel, SolarOpenModel, SolarOpenForCausalLM, SpeechT5PreTrainedModel, SpeechT5Model, SpeechT5ForSpeechToText, SpeechT5ForTextToSpeech, SpeechT5HifiGan, SqueezeBertPreTrainedModel, SqueezeBertModel, SqueezeBertForMaskedLM, SqueezeBertForSequenceClassification, SqueezeBertForQuestionAnswering, StableLmPreTrainedModel, StableLmModel, StableLmForCausalLM, Starcoder2PreTrainedModel, Starcoder2Model, Starcoder2ForCausalLM, StyleTextToSpeech2PreTrainedModel, StyleTextToSpeech2Model, SupertonicPreTrainedModel, SupertonicForConditionalGeneration, SwinPreTrainedModel, SwinModel, SwinForImageClassification, SwinForSemanticSegmentation, Swin2SRPreTrainedModel, Swin2SRModel, Swin2SRForImageSuperResolution, T5PreTrainedModel, T5Model, T5ForConditionalGeneration, TableTransformerPreTrainedModel, TableTransformerModel, TableTransformerForObjectDetection, TableTransformerObjectDetectionOutput, TrOCRPreTrainedModel, TrOCRForCausalLM, UniSpeechPreTrainedModel, UniSpeechModel, UniSpeechForCTC, UniSpeechForSequenceClassification, UniSpeechSatPreTrainedModel, UniSpeechSatModel, UniSpeechSatForCTC, UniSpeechSatForSequenceClassification, UniSpeechSatForAudioFrameClassification, VaultGemmaPreTrainedModel, VaultGemmaModel, VaultGemmaForCausalLM, VisionEncoderDecoderModel, ViTPreTrainedModel, ViTModel, ViTForImageClassification, ViTMAEPreTrainedModel, ViTMAEModel, ViTMSNPreTrainedModel, ViTMSNModel, ViTMSNForImageClassification, VitMattePreTrainedModel, VitMatteForImageMatting, VitPosePreTrainedModel, VitPoseForPoseEstimation, VitsModelOutput, VitsPreTrainedModel, VitsModel, VoxtralForConditionalGeneration, CONV1_LEFT_PAD, CONV2_LEFT_PAD, states, AudioExhaustedCriteria, VoxtralRealtimePreTrainedModel, VoxtralRealtimeForConditionalGeneration, Wav2Vec2BertPreTrainedModel, Wav2Vec2BertModel, Wav2Vec2BertForCTC, Wav2Vec2BertForSequenceClassification, XVectorOutput, WavLMPreTrainedModel, WavLMModel, WavLMForCTC, WavLMForSequenceClassification, WavLMForXVector, WavLMForAudioFrameClassification, WeSpeakerResNetPreTrainedModel, WeSpeakerResNetModel, WhisperGenerationConfig, WhisperPreTrainedModel, WhisperModel, WhisperForConditionalGeneration, LiteWhisperForConditionalGeneration, XLMPreTrainedModel, XLMModel, XLMWithLMHeadModel, XLMForSequenceClassification, XLMForTokenClassification, XLMForQuestionAnswering, XLMRobertaPreTrainedModel, XLMRobertaModel, XLMRobertaForMaskedLM, XLMRobertaForSequenceClassification, XLMRobertaForTokenClassification, XLMRobertaForQuestionAnswering, YolosPreTrainedModel, YolosModel, YolosForObjectDetection, YolosObjectDetectionOutput, YoutuPreTrainedModel, YoutuModel, YoutuForCausalLM, MODEL_MAPPING_NAMES_ENCODER_ONLY, MODEL_MAPPING_NAMES_ENCODER_DECODER, MODEL_MAPPING_NAMES_AUTO_ENCODER, MODEL_MAPPING_NAMES_DECODER_ONLY, MODEL_FOR_SPEECH_SEQ_2_SEQ_MAPPING_NAMES, MODEL_FOR_TEXT_TO_SPECTROGRAM_MAPPING_NAMES, MODEL_FOR_TEXT_TO_WAVEFORM_MAPPING_NAMES, MODEL_FOR_SEQUENCE_CLASSIFICATION_MAPPING_NAMES, MODEL_FOR_TOKEN_CLASSIFICATION_MAPPING_NAMES, MODEL_FOR_SEQ_TO_SEQ_CAUSAL_LM_MAPPING_NAMES, MODEL_FOR_CAUSAL_LM_MAPPING_NAMES, MODEL_FOR_MULTIMODALITY_MAPPING_NAMES, MODEL_FOR_MASKED_LM_MAPPING_NAMES, MODEL_FOR_QUESTION_ANSWERING_MAPPING_NAMES, MODEL_FOR_VISION_2_SEQ_MAPPING_NAMES, MODEL_FOR_IMAGE_TEXT_TO_TEXT_MAPPING_NAMES, MODEL_FOR_AUDIO_TEXT_TO_TEXT_MAPPING_NAMES, MODEL_FOR_DOCUMENT_QUESTION_ANSWERING_MAPPING_NAMES, MODEL_FOR_IMAGE_CLASSIFICATION_MAPPING_NAMES, MODEL_FOR_OBJECT_DETECTION_MAPPING_NAMES, MODEL_FOR_ZERO_SHOT_OBJECT_DETECTION_MAPPING_NAMES, MODEL_FOR_IMAGE_SEGMENTATION_MAPPING_NAMES, MODEL_FOR_SEMANTIC_SEGMENTATION_MAPPING_NAMES, MODEL_FOR_UNIVERSAL_SEGMENTATION_MAPPING_NAMES, MODEL_FOR_MASK_GENERATION_MAPPING_NAMES, MODEL_FOR_CTC_MAPPING_NAMES, MODEL_FOR_AUDIO_CLASSIFICATION_MAPPING_NAMES, MODEL_FOR_AUDIO_XVECTOR_MAPPING_NAMES, MODEL_FOR_AUDIO_FRAME_CLASSIFICATION_MAPPING_NAMES, MODEL_FOR_IMAGE_MATTING_MAPPING_NAMES, MODEL_FOR_TIME_SERIES_PREDICTION_MAPPING_NAMES, MODEL_FOR_IMAGE_TO_IMAGE_MAPPING_NAMES, MODEL_FOR_DEPTH_ESTIMATION_MAPPING_NAMES, MODEL_FOR_NORMAL_ESTIMATION_MAPPING_NAMES, MODEL_FOR_POSE_ESTIMATION_MAPPING_NAMES, MODEL_FOR_IMAGE_FEATURE_EXTRACTION_MAPPING_NAMES, MODEL_CLASS_TYPE_MAPPING, CUSTOM_MAPPING, CUSTOM_ARCHITECTURES_MAPPING, CUSTOM_ARCHITECTURES, MODEL_MAPPINGS, PretrainedMixin, AutoModel, AutoModelForSequenceClassification, AutoModelForTokenClassification, AutoModelForSeq2SeqLM, AutoModelForSpeechSeq2Seq, AutoModelForTextToSpectrogram, AutoModelForTextToWaveform, AutoModelForCausalLM, AutoModelForMaskedLM, AutoModelForQuestionAnswering, AutoModelForVision2Seq, AutoModelForImageClassification, AutoModelForImageSegmentation, AutoModelForSemanticSegmentation, AutoModelForUniversalSegmentation, AutoModelForObjectDetection, AutoModelForZeroShotObjectDetection, AutoModelForMaskGeneration, AutoModelForCTC, AutoModelForAudioClassification, AutoModelForXVector, AutoModelForAudioFrameClassification, AutoModelForDocumentQuestionAnswering, AutoModelForImageMatting, AutoModelForImageToImage, AutoModelForDepthEstimation, AutoModelForNormalEstimation, AutoModelForPoseEstimation, AutoModelForImageFeatureExtraction, AutoModelForImageTextToText, AutoModelForAudioTextToText, Pipeline, TextClassificationPipeline, TokenClassificationPipeline, QuestionAnsweringPipeline, FillMaskPipeline, Text2TextGenerationPipeline, SummarizationPipeline, TranslationPipeline, TextGenerationPipeline, ZeroShotClassificationPipeline, AudioClassificationPipeline, ZeroShotAudioClassificationPipeline, AutomaticSpeechRecognitionPipeline, TextToAudioPipeline, ImageToTextPipeline, ImageClassificationPipeline, SUBTASKS_MAPPING, ImageSegmentationPipeline, BackgroundRemovalPipeline, ZeroShotImageClassificationPipeline, ObjectDetectionPipeline, ZeroShotObjectDetectionPipeline, DocumentQuestionAnsweringPipeline, ImageToImagePipeline, DepthEstimationPipeline, FeatureExtractionPipeline, ImageFeatureExtractionPipeline, SUPPORTED_TASKS, TASK_ALIASES, stdout_write, CONCRETE_DTYPES;
   var init_transformers_web = __esm({
-    "../../profanity-muter-clean/extension/node_modules/@huggingface/transformers/dist/transformers.web.js"() {
+    "node_modules/@huggingface/transformers/dist/transformers.web.js"() {
       init_ort_webgpu_bundle_min();
       init_esm();
       import_meta2 = {};
