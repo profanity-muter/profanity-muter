@@ -13,6 +13,7 @@
 "use strict";
 
 const assert = require("assert");
+const fs = require("fs");
 const path = require("path");
 const { PMBadgeCore } = require(path.join(__dirname, "..", "shared", "badge.js"));
 
@@ -259,6 +260,37 @@ test("only 'unhealthy' badges: the other health statuses are not faults", () => 
     const d = B.badgeState(watching({ healthStatus: status, presented: "protected", mutedCount: 2 }));
     assert.strictEqual(d.text, "2", String(status));
   });
+});
+
+test("the onboarding Pin it step shows the shipped badge states", () => {
+  // 0.1.56, third pass. "Pin this" is a chore until the user has seen what
+  // the pinned thing does, so the step draws the five states above the
+  // instructions. It is plain markup, so the only way it can go wrong is by
+  // showing a colour or a text this table does not produce: a captioned row
+  // of invented badges would be the page lying about the product.
+  const html = fs.readFileSync(
+    path.join(__dirname, "..", "onboarding", "onboarding.html"),
+    "utf8"
+  );
+  const css = fs.readFileSync(
+    path.join(__dirname, "..", "onboarding", "onboarding.css"),
+    "utf8"
+  );
+  ["Not on YouTube", "Analyzing", "Protected", "3 words muted", "Needs a look"].forEach(
+    function (caption) {
+      assert.ok(html.indexOf(">" + caption + "<") > 0, "caption missing: " + caption);
+    }
+  );
+  // The badge texts are this module's constants, not lookalikes.
+  assert.ok(html.indexOf(">" + B.TEXT_WORKING + "<") > 0, "the working badge text");
+  assert.ok(html.indexOf(">" + B.TEXT_PROTECTED_ZERO + "<") > 0, "the protected-zero text");
+  assert.ok(html.indexOf(">" + B.TEXT_HEALTH + "<") > 0, "the health text");
+  // And the colours, which live in the stylesheet.
+  [B.COLOR_WORKING, B.COLOR_PROTECTED, B.COLOR_HEALTH].forEach(function (color) {
+    assert.ok(css.indexOf(color) > 0, "colour missing from onboarding.css: " + color);
+  });
+  // The faded set, for the state that has no badge at all.
+  assert.ok(html.indexOf("icons/off/icon32.png") > 0, "the off icon");
 });
 
 // ---- summary -------------------------------------------------------------

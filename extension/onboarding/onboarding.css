@@ -822,6 +822,81 @@ input:focus-visible {
   color: #1e8e3e;
 }
 
+
+/* The five badge states (0.1.56, third pass), drawn rather than
+   screenshotted: Chrome composites badge text onto the icon at paint time,
+   so there is no such picture to ship. The icons are the real assets and the
+   colours are the shipped constants from shared/badge.js, pasted nowhere
+   else on this page. It sits above the instructions on purpose: "pin this"
+   is a chore until you have seen what the pinned thing does. */
+.ob-badge-row-title {
+  margin: 20px 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.ob-badge-row {
+  display: flex;
+  flex-wrap: wrap; /* two rows on a narrow window rather than a squeeze */
+  gap: 16px 14px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.ob-badge-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  /* Narrow enough that all five fit one row in the step's 504px column and
+     wide enough that "3 words muted" takes two lines rather than three. */
+  width: 84px;
+}
+
+.ob-badge-slot {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  display: block;
+}
+
+.ob-badge-slot img {
+  display: block;
+  width: 32px;
+  height: 32px;
+}
+
+/* Chrome's own badge geometry: a small rounded rectangle hanging off the
+   bottom-right of the icon, white bold type, a thin light outline so it
+   stays legible against a dark icon or a dark toolbar. */
+.ob-badge-chip {
+  position: absolute;
+  right: -7px;
+  bottom: -4px;
+  min-width: 11px;
+  height: 16px;
+  padding: 0 3px;
+  border-radius: 3px;
+  color: #fff;
+  font: bold 10px/16px Arial, Helvetica, sans-serif;
+  text-align: center;
+  white-space: nowrap;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.75);
+}
+
+.ob-badge-chip--working { background: #D89B12; }
+.ob-badge-chip--protected { background: #1E8E3E; }
+.ob-badge-chip--health { background: #8a1f11; }
+
+.ob-badge-cap {
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: center;
+  color: var(--ink-60);
+}
+
 /* The Pin it picture (0.1.56, second pass). Rendered by us from
    tools/pin-menu-mockup.html, not screenshotted: a real capture of a Chrome
    extensions menu would carry other vendors' icons and names into a Chrome
@@ -831,6 +906,14 @@ input:focus-visible {
    into it. */
 .ob-figure {
   margin: 18px 0 0;
+}
+
+/* The frame exists only to be the rings' positioning context: the rings are
+   placed as percentages of the picture, so whatever they are inside has to
+   be exactly the picture's box and nothing else. */
+.ob-figure-frame {
+  position: relative;
+  display: block;
 }
 
 .ob-figure img {
@@ -843,16 +926,62 @@ input:focus-visible {
   background: var(--paper);
 }
 
-/* The bouncing arrow. Fixed to the VIEWPORT because the thing it points at
+
+/* The two pulsing markers (0.1.56, third pass). The drawing already numbers
+   the two controls, but a still number is something you find after you have
+   read the whole picture; a ring that lights up 1, then 2, walks the eye
+   through the two clicks in the order the instructions give them.
+
+   The percentages are PMMoments.pinMenuMarkers(), computed from the marker
+   coordinates in tools/pin-menu-mockup.html. test/moments_test.js asserts
+   this file still carries the numbers that function returns, so moving a
+   marker in the drawing cannot quietly leave a ring floating in white space.
+   content.js draws the identical ring over the identical picture in the
+   unpinned branch of the first-protected tour; it cannot share this file,
+   because a content script cannot link a stylesheet into YouTube's page. */
+.ob-figure-ring {
+  position: absolute;
+  width: 6.5%;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  /* Literal ink, NOT var(--ink): the drawing underneath is a fixed light
+     image in every theme, so a ring that flipped to the dark-mode ink would
+     be cream drawn on cream. */
+  border: 2.5px solid #1d2f54;
+  box-shadow: 0 0 0 2px rgba(250, 248, 242, 0.85);
+  transform: translate(-50%, -50%);
+  opacity: 0.45;
+  pointer-events: none;
+  animation: ob-figure-ring-pulse 2400ms ease-in-out infinite;
+}
+
+.ob-figure-ring--1 { left: 78.29%; top: 17.91%; }
+.ob-figure-ring--2 { left: 90.13%; top: 69.53%; animation-delay: 1200ms; }
+
+@keyframes ob-figure-ring-pulse {
+  0% { transform: translate(-50%, -50%) scale(1); opacity: 0.45; }
+  8% { transform: translate(-50%, -50%) scale(1.4); opacity: 1; }
+  25% { transform: translate(-50%, -50%) scale(1); opacity: 0.45; }
+  100% { transform: translate(-50%, -50%) scale(1); opacity: 0.45; }
+}
+
+/* The bouncing bracket. Fixed to the VIEWPORT because the thing it points at
    is the browser's own toolbar, which is not on the page at all: the closest
-   this document can get is its own top-right corner. `right` is 96px rather
-   than 0 because the puzzle piece sits to the LEFT of the profile avatar and
-   the three-dot menu, so aiming at the actual corner would aim at the wrong
-   control. */
+   this document can get is its own top-right corner.
+
+   It spans 90px to 190px in from the right edge with the head at 140px,
+   because where the puzzle piece actually sits depends on how many other
+   extensions are pinned and whether the side-panel button is showing. A
+   single arrow 40px off sends the user to the wrong control with confidence;
+   a bracket says "one of these" and is right on every machine we can expect.
+
+   All ink, no gold: the first cut outlined the head in gold, and gold on the
+   cream page is very nearly invisible, which is the note that started this
+   pass. */
 .ob-pin-arrow {
   position: fixed;
   top: 8px;
-  right: 96px;
+  right: 90px;
   z-index: 60;
   display: flex;
   flex-direction: column;
@@ -863,16 +992,26 @@ input:focus-visible {
 }
 
 .ob-pin-arrow-mark {
-  width: 22px;
-  height: 31px;
+  width: 100px;
+  height: 34px;
+  display: block;
+}
+
+.ob-pin-arrow-head {
   fill: var(--ink);
-  stroke: var(--gold);
-  stroke-width: 1.5;
+}
+
+.ob-pin-arrow-bar {
+  fill: none;
+  stroke: var(--ink);
+  stroke-width: 3;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .ob-pin-arrow-label {
   background: var(--ink);
-  color: var(--gold);
+  color: var(--paper);
   font-size: 11.5px;
   font-weight: 600;
   line-height: 1;
@@ -893,5 +1032,12 @@ input:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .ob-pin-arrow {
     animation: none;
+  }
+
+  /* Fully drawn, just still. Hiding them would take the cue away from the
+     one user who most needs a static picture to work on its own. */
+  .ob-figure-ring {
+    animation: none;
+    opacity: 1;
   }
 }

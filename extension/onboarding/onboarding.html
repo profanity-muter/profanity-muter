@@ -318,13 +318,67 @@
         The toolbar icon is where you see the filter working. Chrome hides new
         extensions behind a menu until you pin them.
       </p>
+      <!-- What the icon is FOR, before the instructions for getting it.
+           "Pin this" with no picture of the payoff is a chore; the five
+           states are the payoff, and they are the shipped constants from
+           shared/badge.js rather than an illustrator's idea of them. Drawn
+           in HTML: Chrome composites the badge onto the icon at paint time,
+           so there is no such image to ship even if we wanted one. -->
+      <p class="ob-badge-row-title">What the pinned icon tells you</p>
+      <ul class="ob-badge-row">
+        <li class="ob-badge-item">
+          <span class="ob-badge-slot">
+            <img src="../icons/off/icon32.png" alt="" width="32" height="32" />
+          </span>
+          <span class="ob-badge-cap">Not on YouTube</span>
+        </li>
+        <li class="ob-badge-item">
+          <span class="ob-badge-slot">
+            <img src="../icons/icon32.png" alt="" width="32" height="32" />
+            <span class="ob-badge-chip ob-badge-chip--working">…</span>
+          </span>
+          <span class="ob-badge-cap">Analyzing</span>
+        </li>
+        <li class="ob-badge-item">
+          <span class="ob-badge-slot">
+            <img src="../icons/icon32.png" alt="" width="32" height="32" />
+            <span class="ob-badge-chip ob-badge-chip--protected">ON</span>
+          </span>
+          <span class="ob-badge-cap">Protected</span>
+        </li>
+        <li class="ob-badge-item">
+          <span class="ob-badge-slot">
+            <img src="../icons/icon32.png" alt="" width="32" height="32" />
+            <span class="ob-badge-chip ob-badge-chip--protected">3</span>
+          </span>
+          <span class="ob-badge-cap">3 words muted</span>
+        </li>
+        <li class="ob-badge-item">
+          <span class="ob-badge-slot">
+            <img src="../icons/icon32.png" alt="" width="32" height="32" />
+            <span class="ob-badge-chip ob-badge-chip--health">!</span>
+          </span>
+          <span class="ob-badge-cap">Needs a look</span>
+        </li>
+      </ul>
       <ol class="ob-list ob-list--inline">
         <li>Click the <strong><svg class="ob-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11H19V7a2 2 0 0 0-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4a2 2 0 0 0-2 2v3.8h1.5a2.7 2.7 0 0 1 0 5.4H2V20a2 2 0 0 0 2 2h3.8v-1.5a2.7 2.7 0 0 1 5.4 0V22H17a2 2 0 0 0 2-2v-4h1.5a2.5 2.5 0 0 0 0-5z"/></svg>puzzle-piece icon</strong> in the Chrome toolbar.</li>
         <li>Click the <strong><svg class="ob-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>pin</strong> next to Profanity Muter.</li>
       </ol>
       <figure class="ob-figure">
-        <img src="pin-menu.png" width="760" height="430"
-             alt="The top-right of a Chrome window. The puzzle-piece icon in the toolbar is ringed and marked 1. Below it the Extensions menu is open, listing several extensions; the Profanity Muter row is highlighted and its pin control is ringed and marked 2." />
+        <!-- The rings pulse 1 then 2 over the drawing's own numbered
+             markers. Their positions are percentages of the image box, so
+             they hold at any width; the numbers come from
+             PMMoments.pinMenuMarkers(), which derives them from the marker
+             coordinates in tools/pin-menu-mockup.html, and a node test
+             checks the stylesheet still agrees with it. The content script's
+             copy of this card uses the identical rule. -->
+        <div class="ob-figure-frame">
+          <img src="pin-menu.png" width="760" height="430"
+               alt="The top-right of a Chrome window. The puzzle-piece icon in the toolbar is ringed and marked 1. Below it the Extensions menu is open, listing several extensions; the Profanity Muter row is highlighted and its pin control is ringed and marked 2." />
+          <span class="ob-figure-ring ob-figure-ring--1" aria-hidden="true"></span>
+          <span class="ob-figure-ring ob-figure-ring--2" aria-hidden="true"></span>
+        </div>
       </figure>
       <p class="ob-pin-state" id="ob-pin-state" role="status" aria-live="polite"></p>
       <p class="pm-hint">
@@ -333,19 +387,29 @@
       </p>
     </section>
 
-    <!-- The bouncing arrow (0.1.56, second pass). "The puzzle-piece icon in
+    <!-- The bouncing bracket (0.1.56, third pass). "The puzzle-piece icon in
          the Chrome toolbar" means nothing to someone who has never pinned an
          extension, and the picture above shows the menu rather than where on
-         THEIR window to look. This is fixed to the top-right of the page,
-         aimed slightly left of the corner because the puzzle piece sits left
-         of the profile avatar and the three-dot menu. It is shown only while
-         the Pin it step is on screen and only while the icon is not yet
-         pinned: advice that outlives its problem is noise. -->
+         THEIR window to look.
+
+         It was a single arrow aimed at one x. That x is a guess: how far in
+         from the right edge the puzzle piece sits depends on how many other
+         extensions are already pinned and whether the side-panel button is
+         showing, which varies per machine and which this page cannot read.
+         An arrow that points 40px off is worse than no arrow, because the
+         user follows it and finds a different control. So it is a bracket:
+         it underlines the stretch from about 90px to 190px in from the right
+         edge, with the head at the middle of that range, and claims the
+         neighbourhood rather than the pixel.
+
+         Shown only while the Pin it step is on screen and only while the
+         icon is not yet pinned: advice that outlives its problem is noise. -->
     <div class="ob-pin-arrow pm-hidden" id="ob-pin-arrow" aria-hidden="true">
-      <svg class="ob-pin-arrow-mark" viewBox="0 0 24 34" aria-hidden="true">
-        <path d="M12 0 2.5 11h6v23h7V11h6z" />
+      <svg class="ob-pin-arrow-mark" viewBox="0 0 100 34" aria-hidden="true">
+        <path class="ob-pin-arrow-head" d="M50 0 39 14h7v9h8v-9h7z" />
+        <path class="ob-pin-arrow-bar" d="M2 20v10h96V20" />
       </svg>
-      <span class="ob-pin-arrow-label">Extensions menu is up here</span>
+      <span class="ob-pin-arrow-label">The puzzle piece is up here on the right</span>
     </div>
 
     <!-- ===== 5. Acknowledgment ===== -->

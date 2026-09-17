@@ -3548,3 +3548,62 @@ greyscale looks like a different extension, while the same colour icon at 35%
 opacity looks like this extension switched off, which is the message. The set
 is now `icons/off/` (colour, alpha 0.35), rendered by `tools/fade-icons.mjs`;
 `badge.js` calls the set `ICON_OFF`. Nothing else in the decision table moved.
+
+**Third pass, same release: the pointers were the wrong colour, and one of
+them was a guess pretending to be a measurement.** The owner read the
+screenshots and the first note was that the gold had disappeared. Gold on a
+bright video frame, and gold on the cream onboarding page, is very nearly
+nothing: the caret added last pass to join the box to the badge was invisible
+in the capture, which put the box straight back to looking like a box that
+happened to be nearby. Every pointer is now ink. The tour's border is
+`#2b4478`, a step up from the `#1d2f54` fill so the box still has an edge
+against itself; the caret is the same ink and stopped being a CSS
+border-triangle, because a triangle cannot carry an outline and the live
+capture then caught a solid ink caret sitting on a black video frame,
+invisible for exactly the reason the gold one was. It is a rotated square
+with the box's own edge on its two exposed sides, which reads on whatever the
+video is showing. Box CONTENTS did not move: navy fill, cream type, cream
+"Got it".
+
+**The onboarding arrow became a bracket.** It pointed at a single x, and that
+x is not knowable from inside a page: how far in from the right edge the
+puzzle piece sits depends on how many other extensions are already pinned and
+whether the side-panel button is showing, which varies per machine. An arrow
+40px off is worse than no arrow, because the user follows it to a different
+control with confidence. It now underlines 90px to 190px in from the right
+edge with the head at the middle, and says "The puzzle piece is up here on the
+right": claim the neighbourhood, not the pixel.
+
+**And the tour's unpinned branch stopped being a sentence.** `firstProtectedSteps(false)`
+now returns an instruction card: "Pin it to keep it in view:", the two clicks
+numbered, and `onboarding/pin-menu.png` itself, the same drawing the
+onboarding Pin it step uses. Reusing it rather than drawing a second one is
+the point: the user being told to pin the icon here is precisely the user who
+did not do it there, and two pictures of one menu are two things to keep true.
+A content script cannot load a packaged file by relative path (the URL would
+resolve against youtube.com and 404 in silence), so the image is
+`chrome.runtime.getURL`'d and `onboarding/pin-menu.png` joins
+web_accessible_resources, YouTube origins only. Over it, two ink rings pulse 1
+then 2 on a 2.4s loop, positioned as percentages of the image box so they hold
+at any width; `PMMoments.pinMenuMarkers()` derives those percentages from the
+marker coordinates in `tools/pin-menu-mockup.html`, and a test asserts
+onboarding.css still carries the numbers that function returns, so a marker
+that moves in the drawing cannot leave a ring floating in white space. The
+onboarding page draws the identical rings over the identical picture; it
+cannot share the stylesheet, because a content script cannot link one into
+YouTube's page. The card keeps "Got it", the fullscreen exit and the once-ever
+latch, and gets 30s rather than 20s, since two lines plus a drawing with two
+markers to find does not fit in the dwell a two-line box gets. The pinned
+branch shortened to "Keep it pinned. The icon up here shows the status of
+every video, plus a count of words muted."
+
+**The Pin it step also shows what the icon is FOR, above the instructions.**
+Five 32px slots with Chrome-style badge overlays and captions: faded icon and
+no badge for "Not on YouTube", then Analyzing, Protected, 3 words muted, Needs
+a look. "Pin this" is a chore until you have seen the payoff. Drawn in
+HTML/CSS with the real icon assets and the shipped constants from
+`shared/badge.js`, because Chrome composites badge text onto the icon at paint
+time and there is no such image to ship; `badge_test.js` asserts the five
+captions, the three badge texts and the three colours are the ones this
+extension actually produces, so the row cannot quietly become an illustration
+of a product we do not have. 520 tests across 18 files, from 513.

@@ -1977,6 +1977,50 @@
   // constant: the box's top offset is computed from it so the tip lands
   // just under the badge however big the triangle gets.
   var CALLOUT_CARET_PX = 8;
+  // The pointer colour, 0.1.56 third pass. The caret and the box border were
+  // gold, and on a bright video frame gold on cream is very nearly nothing:
+  // the owner's read of the shipped capture was that the box had no caret at
+  // all. Pointers are now the onboarding ink, which is the darkest thing in
+  // the palette and the only one that survives an arbitrary background. The
+  // border is a step lighter than the box fill so the edge still reads
+  // against it; the caret is the same ink, because a triangle sitting on the
+  // picture has to be dark to be a triangle.
+  var CALLOUT_POINTER = '#1d2f54';
+  var CALLOUT_BORDER = '#2b4478';
+  // The caret is a rotated SQUARE, not a CSS border-triangle, for one
+  // reason: a triangle cannot carry an outline, and the live capture caught
+  // a solid ink caret sitting on a black video frame, which is the same
+  // invisible caret the gold one was on a bright frame. A square takes the
+  // box's own edge colour on its two exposed sides and its fill on the rest,
+  // so it reads on whatever the video happens to be showing. Side length is
+  // the diagonal the old triangle stood on: it pokes CALLOUT_CARET_PX above
+  // the box, same as before.
+  var CALLOUT_CARET_SIDE = Math.round(CALLOUT_CARET_PX * Math.SQRT2);
+  // The card's picture, at the width the drawing stops gaining detail.
+  var CALLOUT_IMAGE_MAX_PX = 360;
+  // The markers' rings. Same shape and the same 2.4s one-then-two loop as
+  // the onboarding page's (.ob-figure-ring in onboarding/onboarding.css);
+  // it cannot be a shared file because a content script cannot link a
+  // stylesheet into someone else's page, so the two are kept deliberately
+  // identical and the geometry they both use comes from one function in
+  // shared/moments.js. A paper halo under the ink ring so the ring survives
+  // the darker parts of the drawing it sits on.
+  var TOUR_RING_CSS =
+    '.pm-tour-ring{position:absolute;width:6.5%;aspect-ratio:1;' +
+    'border-radius:50%;border:2.5px solid ' + CALLOUT_POINTER + ';' +
+    'box-shadow:0 0 0 2px rgba(250,248,242,0.85);pointer-events:none;' +
+    'transform:translate(-50%,-50%);opacity:0.45;' +
+    'animation:pm-tour-ring-pulse 2400ms ease-in-out infinite;}' +
+    '.pm-tour-ring--2{animation-delay:1200ms;}' +
+    '@keyframes pm-tour-ring-pulse{' +
+    '0%{transform:translate(-50%,-50%) scale(1);opacity:0.45;}' +
+    '8%{transform:translate(-50%,-50%) scale(1.4);opacity:1;}' +
+    '25%{transform:translate(-50%,-50%) scale(1);opacity:0.45;}' +
+    '100%{transform:translate(-50%,-50%) scale(1);opacity:0.45;}}' +
+    // A cue that throbs at someone who asked the OS for stillness is the
+    // page ignoring them. The rings stay, fully drawn, they just hold still.
+    '@media (prefers-reduced-motion:reduce){' +
+    '.pm-tour-ring{animation:none;opacity:1;}}';
   var firstProtectedAsked = false;
   var firstProtectedEl = null;
   var firstProtectedTimer = null;
@@ -2067,7 +2111,12 @@
     if (!el) { dismissFirstProtected(); return; }
     firstProtectedEl = el;
     var m = globalThis.PMMoments;
-    var visibleMs = m && m.FIRST_PROTECTED_VISIBLE_MS ? m.FIRST_PROTECTED_VISIBLE_MS : 20000;
+    // The card variant carries a drawing with two markers to find, so it
+    // gets the longer dwell. Still a dwell: a notice that waits forever
+    // becomes something the user has to deal with.
+    var visibleMs = step.image
+      ? (m && m.FIRST_PROTECTED_CARD_VISIBLE_MS ? m.FIRST_PROTECTED_CARD_VISIBLE_MS : 30000)
+      : (m && m.FIRST_PROTECTED_VISIBLE_MS ? m.FIRST_PROTECTED_VISIBLE_MS : 20000);
     firstProtectedTimer = setTimeout(dismissFirstProtected, visibleMs);
     TLOG(TAG, '[PM-CALLOUT] tour step ' + (firstProtectedIndex + 1) + '/' +
       firstProtectedSteps.length + ' (' + step.anchor + '), ' + step.lines.length + ' lines');
@@ -2083,7 +2132,7 @@
     var common =
       'z-index:2147483647;max-width:280px;background:#1d2f54;color:#f3e6c0;' +
       'font:12px/1.5 sans-serif;padding:10px 12px;border-radius:6px;' +
-      'border:1px solid #e8c46c;' +
+      'border:1px solid ' + CALLOUT_BORDER + ';' +
       'box-shadow:0 2px 12px rgba(0,0,0,0.45);pointer-events:auto;' +
       'user-select:none;';
 
@@ -2098,6 +2147,14 @@
       // player could never manage on a scrolled page.
       el.style.cssText = 'position:fixed;top:12px;right:12px;' + common;
       caretRight = 18;
+      if (step.image) {
+        // Wider than the 280px text box, because the drawing is the part
+        // that points and a 280px-wide menu is unreadable. Set after the
+        // shared string rather than by forking it: the shared string is what
+        // keeps the whole tour ONE interactive surface in pill_test.js.
+        el.style.maxWidth = (CALLOUT_IMAGE_MAX_PX + 26) + 'px';
+        ensureBadgeStyle(); // also carries the ring keyframes
+      }
     } else {
       var video = getVideo();
       parent = video ? video.closest('.html5-video-player') || video.parentElement : null;
@@ -2123,13 +2180,20 @@
     }
 
     var caret = document.createElement('div');
+    // Only the two sides that end up facing OUT are drawn; the two facing
+    // into the box are fill-on-fill, so the square reads as a triangle
+    // hanging off the edge rather than as a diamond stuck to it.
+    var caretHalf = CALLOUT_CARET_SIDE / 2;
     caret.style.cssText =
-      'position:absolute;top:-' + CALLOUT_CARET_PX + 'px;' +
-      (caretRight === null ? 'left:' + caretLeft + 'px;' : 'right:' + caretRight + 'px;') +
-      'width:0;height:0;' +
-      'border-left:' + CALLOUT_CARET_PX + 'px solid transparent;' +
-      'border-right:' + CALLOUT_CARET_PX + 'px solid transparent;' +
-      'border-bottom:' + CALLOUT_CARET_PX + 'px solid #e8c46c;';
+      'position:absolute;top:' + (-caretHalf - 0.5) + 'px;' +
+      (caretRight === null
+        ? 'left:' + (caretLeft + 8 - caretHalf) + 'px;'
+        : 'right:' + (caretRight + 8 - caretHalf) + 'px;') +
+      'width:' + CALLOUT_CARET_SIDE + 'px;height:' + CALLOUT_CARET_SIDE + 'px;' +
+      'background:' + CALLOUT_POINTER + ';' +
+      'border-left:1px solid ' + CALLOUT_BORDER + ';' +
+      'border-top:1px solid ' + CALLOUT_BORDER + ';' +
+      'transform:rotate(45deg);';
     el.appendChild(caret);
 
     for (var i = 0; i < step.lines.length; i++) {
@@ -2138,6 +2202,41 @@
       pEl.appendChild(document.createTextNode(step.lines[i]));
       el.appendChild(pEl);
     }
+    // The picture, for the unpinned branch only. Same file the onboarding
+    // Pin it step uses: a user who is being told to pin the icon here is
+    // exactly the user who did not do it there, and two drawings of one menu
+    // would be two things to keep true. It is a content script, so the file
+    // has to be web-accessible (manifest.json) and addressed through
+    // chrome.runtime.getURL; a relative path would resolve against
+    // youtube.com and quietly 404.
+    if (step.image) {
+      var figure = document.createElement('div');
+      figure.style.cssText =
+        'position:relative;margin:8px 0 10px;max-width:' + CALLOUT_IMAGE_MAX_PX + 'px;';
+      var img = document.createElement('img');
+      try { img.src = chrome.runtime.getURL(step.image); } catch (e) {}
+      img.alt = '';
+      img.style.cssText =
+        'display:block;width:100%;height:auto;border-radius:8px;' +
+        'border:1px solid ' + CALLOUT_BORDER + ';';
+      figure.appendChild(img);
+      // One ring per numbered marker, positioned as a PERCENTAGE of the
+      // image box (shared/moments.js computes them from the mockup's own
+      // coordinates), so they stay on their markers whatever width the box
+      // ends up at. They pulse 1 then 2 because the instructions are
+      // ordered and a pair of rings throbbing together says "look at both
+      // of these" rather than "this one, then that one".
+      var markers = step.markers || [];
+      for (var mi = 0; mi < markers.length; mi++) {
+        var ring = document.createElement('div');
+        ring.className = 'pm-tour-ring' + (mi === 1 ? ' pm-tour-ring--2' : '');
+        ring.style.left = markers[mi].x + '%';
+        ring.style.top = markers[mi].y + '%';
+        figure.appendChild(ring);
+      }
+      el.appendChild(figure);
+    }
+
     var btn = document.createElement('button');
     btn.type = 'button';
     btn.textContent = 'Got it';
@@ -2358,7 +2457,8 @@
         '.ytp-autohide .pm-badge{top:' + idleTop + 'px !important;}' +
         '.pm-first-protected--pill{top:' + (chromeTop + drop) + 'px !important;' +
         'transition:top 180ms cubic-bezier(0.4,0,0.2,1) !important;}' +
-        '.ytp-autohide .pm-first-protected--pill{top:' + (idleTop + drop) + 'px !important;}';
+        '.ytp-autohide .pm-first-protected--pill{top:' + (idleTop + drop) + 'px !important;}' +
+        TOUR_RING_CSS;
       (document.head || document.documentElement).appendChild(badgeStyleEl);
     } catch (e) {
       badgeStyleEl = null; // inline top remains, which is the safe offset

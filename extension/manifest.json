@@ -61,6 +61,7 @@
     {
       "resources": [
         "icons/icon32.png",
+        "onboarding/pin-menu.png",
         "models/*"
       ],
       "matches": [

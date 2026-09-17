@@ -15,6 +15,7 @@
 "use strict";
 
 const assert = require("assert");
+const fs = require("fs");
 const path = require("path");
 const { PMMomentsCore } = require(path.join(__dirname, "..", "shared", "moments.js"));
 
@@ -349,21 +350,96 @@ test("step 2 forks on pinned, and unknown reads as pinned", () => {
     { pinned: null, describes: true }
   ];
   cases.forEach(function (c) {
-    const text = M.firstProtectedSteps(c.pinned)[1].lines.join(" ");
+    const step = M.firstProtectedSteps(c.pinned)[1];
+    const text = step.lines.join(" ");
     if (c.describes) {
-      // Describes what the icon says. Makes no claim about their toolbar,
-      // which is the only variant that cannot be wrong when we do not know.
-      assert.ok(/toolbar/i.test(text), String(c.pinned));
+      // Describes what the icon already does for them. It makes no claim
+      // about their toolbar, which is the only variant that cannot be wrong
+      // when we do not know, and it asks them to keep a thing rather than to
+      // go and do one.
+      assert.ok(/Keep it pinned/.test(text), String(c.pinned));
       assert.ok(/count/i.test(text), String(c.pinned));
       assert.ok(!/puzzle-piece/i.test(text), String(c.pinned));
+      // No picture on this branch: they have the icon, there is nothing to
+      // find, and a menu drawing would be a diagram of a solved problem.
+      assert.strictEqual(step.image, undefined, String(c.pinned));
+      assert.strictEqual(step.markers, undefined, String(c.pinned));
     } else {
-      // Tells them how to get it. Advice to pin an already pinned icon
-      // teaches the user this extension does not know what it is looking at.
+      // Tells them how to get it, numbered, with the drawing that shows the
+      // two controls. Advice to pin an already pinned icon teaches the user
+      // this extension does not know what it is looking at.
       assert.ok(/puzzle-piece/i.test(text), String(c.pinned));
       assert.ok(/\bpin\b/i.test(text), String(c.pinned));
+      assert.ok(/1\./.test(text) && /2\./.test(text), "the two clicks are numbered");
     }
     assert.ok(!/review|rate|rating|star|store/i.test(text));
   });
+});
+
+test("the unpinned step carries the picture and both of its markers", () => {
+  // The card is the whole point of the unpinned branch: the sentence names
+  // a control, the drawing points at it. If the descriptor goes missing the
+  // renderer silently falls back to a text box that reads like the old one.
+  const step = M.firstProtectedSteps(false)[1];
+  assert.strictEqual(step.image, "onboarding/pin-menu.png");
+  assert.strictEqual(step.image, M.PIN_MENU_IMAGE);
+  assert.ok(Array.isArray(step.markers) && step.markers.length === 2);
+  step.markers.forEach(function (mk, i) {
+    assert.strictEqual(typeof mk.x, "number", "marker " + i);
+    assert.strictEqual(typeof mk.y, "number", "marker " + i);
+    // Inside the image box. A ring at 104% is a ring nobody sees, and it is
+    // the exact failure a percentage conversion produces when it is wrong.
+    assert.ok(mk.x > 0 && mk.x < 100, "x in range: " + mk.x);
+    assert.ok(mk.y > 0 && mk.y < 100, "y in range: " + mk.y);
+  });
+  // Marker 1 is the puzzle piece in the toolbar, marker 2 is the pin in the
+  // menu below it, so 2 is lower down the picture than 1. A swapped pair
+  // would still pass the range check above.
+  assert.ok(step.markers[1].y > step.markers[0].y, "2 sits below 1");
+});
+
+test("the marker percentages are derived from the mockup's own coordinates", () => {
+  // The conversion, not the answer: right/top pixels on a 760x430 drawing
+  // into the centre of each 30px circle as a percentage of the box.
+  const got = M.pinMenuMarkers();
+  const want = M.PIN_MENU_MARKER_PX.map(function (mk) {
+    return {
+      x: Math.round(((M.PIN_MENU_IMAGE_W - mk.rightPx - mk.sizePx / 2) / M.PIN_MENU_IMAGE_W) * 10000) / 100,
+      y: Math.round(((mk.topPx + mk.sizePx / 2) / M.PIN_MENU_IMAGE_H) * 10000) / 100
+    };
+  });
+  assert.deepStrictEqual(got, want);
+  // Pinned to the shipped values, so a stylesheet that hardcodes them and a
+  // drawing that moves cannot drift apart unnoticed.
+  assert.deepStrictEqual(got, [{ x: 78.29, y: 17.91 }, { x: 90.13, y: 69.53 }]);
+  // A fresh array each call: the renderer hands these to the DOM and a
+  // shared mutable one would be a marker that moves for the next caller.
+  assert.notStrictEqual(M.pinMenuMarkers(), got);
+});
+
+test("the onboarding stylesheet still agrees with the computed markers", () => {
+  // The onboarding page draws the same rings over the same drawing, but it
+  // is a stylesheet and cannot call a function. So the numbers are pasted,
+  // and this is what stops the paste from going stale.
+  const css = fs.readFileSync(
+    path.join(__dirname, "..", "onboarding", "onboarding.css"),
+    "utf8"
+  );
+  M.pinMenuMarkers().forEach(function (mk, i) {
+    assert.ok(
+      css.indexOf("left: " + mk.x + "%; top: " + mk.y + "%") > 0,
+      "ring " + (i + 1) + " at " + mk.x + "%/" + mk.y + "% is missing from onboarding.css"
+    );
+  });
+});
+
+test("the card gets a longer dwell than the text step, and still retires", () => {
+  // Two lines plus a drawing with two markers to find does not fit in the
+  // 20s a two-line box gets. Both are finite: a notice that waits forever
+  // stops being a notice and becomes something to deal with.
+  assert.ok(M.FIRST_PROTECTED_CARD_VISIBLE_MS > M.FIRST_PROTECTED_VISIBLE_MS);
+  assert.strictEqual(M.FIRST_PROTECTED_CARD_VISIBLE_MS, 30000);
+  assert.ok(M.FIRST_PROTECTED_CARD_VISIBLE_MS < 60000, "still retires itself");
 });
 
 test("both steps point up here, not at some other page", () => {

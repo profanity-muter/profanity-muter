@@ -252,6 +252,12 @@
   // helped by a callout pointing at the pill.
   var FIRST_PROTECTED_VISIBLE_MS = 20000;
 
+  // The unpinned step 2 is a card with a picture in it, and 20 seconds is
+  // barely enough to read two lines, let alone find both markers in a
+  // drawing. It still retires itself: a notice that waits forever is a
+  // notice the user has to deal with.
+  var FIRST_PROTECTED_CARD_VISIBLE_MS = 30000;
+
   function makeFirstProtectedRecord(now) {
     return { shownAt: typeof now === "number" ? now : Date.now() };
   }
@@ -295,6 +301,43 @@
   // what it is talking about. Unknown (getUserSettings missing or throwing)
   // resolves to the pinned copy: it makes no claim about their toolbar, so
   // it is the only variant that cannot be wrong.
+  // The Pin it picture, and where its two numbered markers sit (0.1.56,
+  // third pass). The onboarding step already carried this drawing; the tour's
+  // unpinned branch now carries the SAME file, because a user who never
+  // finished onboarding is exactly the user step 2 is talking to, and two
+  // drawings of one menu is two things to keep true.
+  //
+  // The marker coordinates are the ones in tools/pin-menu-mockup.html,
+  // verbatim: .num is a 30px circle positioned from the TOP and the RIGHT of
+  // a 760x430 drawing. Kept as those raw numbers rather than as the finished
+  // percentages so that moving a circle in the mockup is one edit here, and
+  // so the conversion is a function a node test can check rather than four
+  // magic percentages pasted into a stylesheet.
+  var PIN_MENU_IMAGE = "onboarding/pin-menu.png";
+  var PIN_MENU_IMAGE_W = 760;
+  var PIN_MENU_IMAGE_H = 430;
+  var PIN_MENU_MARKER_PX = [
+    { topPx: 62, rightPx: 150, sizePx: 30 },
+    { topPx: 284, rightPx: 60, sizePx: 30 }
+  ];
+
+  // Percentages of the image box, so a ring drawn on top stays on its marker
+  // at any rendered width. Rounded to 2dp: a stylesheet and a test both have
+  // to write the same literal, and full float noise makes that a trap.
+  function pinMenuMarkers() {
+    var out = [];
+    for (var i = 0; i < PIN_MENU_MARKER_PX.length; i++) {
+      var m = PIN_MENU_MARKER_PX[i];
+      var cx = PIN_MENU_IMAGE_W - m.rightPx - m.sizePx / 2;
+      var cy = m.topPx + m.sizePx / 2;
+      out.push({
+        x: Math.round((cx / PIN_MENU_IMAGE_W) * 10000) / 100,
+        y: Math.round((cy / PIN_MENU_IMAGE_H) * 10000) / 100
+      });
+    }
+    return out;
+  }
+
   function firstProtectedSteps(pinned) {
     return [
       {
@@ -304,12 +347,26 @@
           "It reads Protected while this video is being filtered."
         ]
       },
-      {
-        anchor: "toolbar",
-        lines: pinned === false
-          ? ["Pin it to keep it in view: click the puzzle-piece icon up here, then the pin next to Profanity Muter."]
-          : ["The toolbar icon up here shows the same status, plus a count of words muted."]
-      }
+      pinned === false
+        ? {
+            // The instruction card. Two lines and the picture, because
+            // "click the puzzle-piece icon" is still only a sentence to
+            // someone who has never seen that menu open: the drawing is the
+            // part that actually points. It gets the longer dwell below.
+            anchor: "toolbar",
+            lines: [
+              "Pin it to keep it in view:",
+              "1. Click the puzzle-piece icon up here. 2. Click the pin next to Profanity Muter."
+            ],
+            image: PIN_MENU_IMAGE,
+            markers: pinMenuMarkers()
+          }
+        : {
+            anchor: "toolbar",
+            lines: [
+              "Keep it pinned. The icon up here shows the status of every video, plus a count of words muted."
+            ]
+          }
     ];
   }
 
@@ -464,6 +521,12 @@
     isOnboarded: isOnboarded,
     shouldAutoOpenOnboarding: shouldAutoOpenOnboarding,
     FIRST_PROTECTED_VISIBLE_MS: FIRST_PROTECTED_VISIBLE_MS,
+    FIRST_PROTECTED_CARD_VISIBLE_MS: FIRST_PROTECTED_CARD_VISIBLE_MS,
+    PIN_MENU_IMAGE: PIN_MENU_IMAGE,
+    PIN_MENU_IMAGE_W: PIN_MENU_IMAGE_W,
+    PIN_MENU_IMAGE_H: PIN_MENU_IMAGE_H,
+    PIN_MENU_MARKER_PX: PIN_MENU_MARKER_PX,
+    pinMenuMarkers: pinMenuMarkers,
     makeFirstProtectedRecord: makeFirstProtectedRecord,
     firstProtectedAlreadyShown: firstProtectedAlreadyShown,
     shouldShowFirstProtected: shouldShowFirstProtected,

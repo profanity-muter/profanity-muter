@@ -591,6 +591,63 @@ test("a cold quote for nothing uncovered is still nothing", () => {
   assert.strictEqual(P.coldEstimateS(null), 0);
 });
 
+test("every pointer on the tour is ink, not gold", () => {
+  // 0.1.56, third pass. The caret and the border were #e8c46c, and the
+  // owner's read of the shipped capture was that the box had no caret: gold
+  // on a bright video frame is very nearly nothing. The box CONTENTS are
+  // unchanged (navy fill, cream text, cream button); only the parts that
+  // point moved to ink.
+  const src = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
+  assert.ok(src.indexOf("var CALLOUT_POINTER = '#1d2f54';") > 0, "the caret colour");
+  assert.ok(src.indexOf("var CALLOUT_BORDER = '#2b4478';") > 0, "the border colour");
+  assert.ok(
+    src.indexOf("'background:' + CALLOUT_POINTER") > 0,
+    "the caret must read the constant, not a literal"
+  );
+  // And it is a rotated square rather than a CSS border-triangle, because a
+  // triangle cannot carry an outline: the live capture caught a solid ink
+  // caret on a black video frame, invisible for exactly the reason the gold
+  // one was invisible on a bright one.
+  assert.ok(src.indexOf("transform:rotate(45deg);") > 0, "the caret is a rotated square");
+  assert.ok(
+    src.indexOf("'border-top:1px solid ' + CALLOUT_BORDER") > 0,
+    "the caret carries the box's own edge so it reads on any background"
+  );
+  // No gold left anywhere the tour draws an edge or a triangle.
+  const tour = src.slice(src.indexOf("function buildFirstProtectedBox"));
+  assert.strictEqual(tour.indexOf("#e8c46c"), -1, "gold is gone from the tour renderer");
+  // The fill and the type are deliberately untouched.
+  assert.ok(tour.indexOf("background:#1d2f54;color:#f3e6c0;") > 0, "the box contents stay");
+});
+
+test("the unpinned tour step renders the picture and its two rings", () => {
+  const src = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
+  // A content script cannot load a packaged file by relative path: the URL
+  // would resolve against youtube.com and 404 in silence, leaving a card
+  // with a hole in it. It has to go through getURL, and the file has to be
+  // web-accessible, which is what the manifest assertion below is for.
+  assert.ok(src.indexOf("chrome.runtime.getURL(step.image)") > 0, "getURL, not a relative path");
+  const manifest = JSON.parse(
+    fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8")
+  );
+  const entry = manifest.web_accessible_resources.find(function (r) {
+    return r.resources.indexOf("onboarding/pin-menu.png") !== -1;
+  });
+  assert.ok(entry, "pin-menu.png must be web-accessible or the card renders empty");
+  // Exposed to YouTube only, like everything else in that list: a file that
+  // any origin can fetch is a fingerprinting beacon for this extension.
+  assert.deepStrictEqual(entry.matches, ["https://www.youtube.com/*"]);
+  // The rings are positioned from the step's own marker percentages, so the
+  // geometry has exactly one definition (shared/moments.js).
+  assert.ok(src.indexOf("markers[mi].x + '%'") > 0 && src.indexOf("markers[mi].y + '%'") > 0);
+  assert.ok(src.indexOf("pm-tour-ring--2") > 0, "the second ring pulses after the first");
+  assert.ok(src.indexOf("animation-delay:1200ms") > 0, "1 then 2, not both at once");
+  assert.ok(
+    src.indexOf("@media (prefers-reduced-motion:reduce)") > 0,
+    "the rings hold still for anyone who asked the OS for stillness"
+  );
+});
+
 // ---- summary -------------------------------------------------------------
 
 console.log("pill_test.js: " + passed + "/" + (passed + failed) + " passed");
