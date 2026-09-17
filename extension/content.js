@@ -1973,9 +1973,15 @@
   // as the milestone pill, see shared/moments.js), and it is also the only
   // context that can answer "is the icon pinned?": chrome.action is not
   // exposed to content scripts at all.
+  // The caret is the whole point of the redesign, so its size is a named
+  // constant: the box's top offset is computed from it so the tip lands
+  // just under the badge however big the triangle gets.
+  var CALLOUT_CARET_PX = 8;
   var firstProtectedAsked = false;
   var firstProtectedEl = null;
   var firstProtectedTimer = null;
+  var firstProtectedSteps = null;
+  var firstProtectedIndex = 0;
 
   function maybeShowFirstProtected(presentedState) {
     if (firstProtectedAsked) return;
@@ -1992,7 +1998,7 @@
       });
       if (p && typeof p.then === 'function') {
         p.then(function (resp) {
-          if (resp && resp.show) showFirstProtectedCallout(resp.lines || []);
+          if (resp && resp.show) startFirstProtectedTour(resp.steps || []);
         }, function () {});
       }
     } catch (e) {}
@@ -2010,7 +2016,7 @@
     }
   }
 
-  function dismissFirstProtected() {
+  function removeFirstProtectedEl() {
     if (firstProtectedTimer) {
       clearTimeout(firstProtectedTimer);
       firstProtectedTimer = null;
@@ -2021,33 +2027,115 @@
     firstProtectedEl = null;
   }
 
-  function showFirstProtectedCallout(lines) {
-    if (firstProtectedEl || !lines.length) return;
-    if (isFullscreen()) return;
-    var video = getVideo();
-    var container = video ? video.closest('.html5-video-player') || video.parentElement : null;
-    if (!container) return;
-    var api = globalThis.PMPill;
-    var leftPx = api && api.BADGE_LEFT_PX ? api.BADGE_LEFT_PX : 12;
-    // Anchored directly beneath the pill's chrome-visible resting place, the
-    // same relationship the dev overlay already has to it, so the callout
-    // visibly belongs to the thing it is describing rather than floating.
-    var topPx = (api && api.BADGE_TOP_PX ? api.BADGE_TOP_PX : 56) + 26;
+  // Ends the whole tour, wherever it had got to. The latch was stamped when
+  // step 1 was handed out, so a tour abandoned at step 1 is simply over: an
+  // introduction that keeps coming back to finish itself is a nag.
+  function dismissFirstProtected() {
+    removeFirstProtectedEl();
+    firstProtectedSteps = null;
+    firstProtectedIndex = 0;
+  }
 
+  function startFirstProtectedTour(steps) {
+    if (!steps || !steps.length) return;
+    if (firstProtectedEl) return;
+    firstProtectedSteps = steps;
+    firstProtectedIndex = 0;
+    showFirstProtectedStep();
+  }
+
+  function advanceFirstProtected() {
+    if (!firstProtectedSteps) return;
+    firstProtectedIndex += 1;
+    if (firstProtectedIndex >= firstProtectedSteps.length) {
+      dismissFirstProtected();
+      return;
+    }
+    showFirstProtectedStep();
+  }
+
+  // One box per step, built and thrown away rather than re-positioned: the
+  // two anchors live in different coordinate systems (inside the player vs
+  // fixed to the viewport) and in different parents, so "move it" would be
+  // more code than "build the other one".
+  function showFirstProtectedStep() {
+    removeFirstProtectedEl();
+    if (isFullscreen()) { dismissFirstProtected(); return; }
+    var step = firstProtectedSteps && firstProtectedSteps[firstProtectedIndex];
+    if (!step || !step.lines || !step.lines.length) { dismissFirstProtected(); return; }
+    var el = buildFirstProtectedBox(step);
+    if (!el) { dismissFirstProtected(); return; }
+    firstProtectedEl = el;
+    var m = globalThis.PMMoments;
+    var visibleMs = m && m.FIRST_PROTECTED_VISIBLE_MS ? m.FIRST_PROTECTED_VISIBLE_MS : 20000;
+    firstProtectedTimer = setTimeout(dismissFirstProtected, visibleMs);
+    TLOG(TAG, '[PM-CALLOUT] tour step ' + (firstProtectedIndex + 1) + '/' +
+      firstProtectedSteps.length + ' (' + step.anchor + '), ' + step.lines.length + ' lines');
+  }
+
+  function buildFirstProtectedBox(step) {
     var el = document.createElement('div');
     el.className = 'pm-first-protected';
     // The navy/gold treatment the milestone pill and the onboarding page
-    // already use, so this reads as the same product speaking.
-    el.style.cssText =
-      'position:absolute;top:' + topPx + 'px;left:' + leftPx + 'px;z-index:2147483646;' +
-      'max-width:280px;background:#1d2f54;color:#f3e6c0;' +
+    // already use, so this reads as the same product speaking. Everything
+    // that is not position lives in this one string, which is also why both
+    // steps count as ONE interactive surface in pill_test.js.
+    var common =
+      'z-index:2147483647;max-width:280px;background:#1d2f54;color:#f3e6c0;' +
       'font:12px/1.5 sans-serif;padding:10px 12px;border-radius:6px;' +
+      'border:1px solid #e8c46c;' +
       'box-shadow:0 2px 12px rgba(0,0,0,0.45);pointer-events:auto;' +
       'user-select:none;';
-    for (var i = 0; i < lines.length; i++) {
+
+    var caretLeft = null, caretRight = null;
+    var parent = null;
+    if (step.anchor === 'toolbar') {
+      // Fixed to the VIEWPORT, not to the player. The thing this step points
+      // at is the browser's own toolbar, which is off the top of the page
+      // entirely, so the closest this page can get is its own top-right corner, with
+      // a caret aimed at it. Fixed also puts it above YouTube's masthead
+      // rather than under it, which an absolutely positioned box inside the
+      // player could never manage on a scrolled page.
+      el.style.cssText = 'position:fixed;top:12px;right:12px;' + common;
+      caretRight = 18;
+    } else {
+      var video = getVideo();
+      parent = video ? video.closest('.html5-video-player') || video.parentElement : null;
+      if (!parent) return null;
+      var api = globalThis.PMPill;
+      var leftPx = api && api.BADGE_LEFT_PX ? api.BADGE_LEFT_PX : 12;
+      var pillTop = api && api.BADGE_TOP_PX ? api.BADGE_TOP_PX : 56;
+      var pillH = api && api.BADGE_HEIGHT_PX ? api.BADGE_HEIGHT_PX : 22;
+      // The caret's tip sits 2px under the badge's bottom edge, computed
+      // from the badge's own geometry. The first build left a 26px gap and
+      // no caret, and it read as a random box that happened to be nearby:
+      // the box has to look like it is hanging off the badge, not parked
+      // beside it.
+      var topPx = pillTop + pillH + CALLOUT_CARET_PX + 2;
+      el.style.cssText = 'position:absolute;top:' + topPx + 'px;left:' + leftPx + 'px;' + common;
+      // The inline top is the safe default; the class lets the box follow the
+      // badge up into the corner when the player chrome autohides. Same
+      // arrangement, and the same reason, as .pm-badge itself.
+      el.className += ' pm-first-protected--pill';
+      ensureBadgeStyle();
+      // Under the badge's left end, where the word "Protected" starts.
+      caretLeft = 14;
+    }
+
+    var caret = document.createElement('div');
+    caret.style.cssText =
+      'position:absolute;top:-' + CALLOUT_CARET_PX + 'px;' +
+      (caretRight === null ? 'left:' + caretLeft + 'px;' : 'right:' + caretRight + 'px;') +
+      'width:0;height:0;' +
+      'border-left:' + CALLOUT_CARET_PX + 'px solid transparent;' +
+      'border-right:' + CALLOUT_CARET_PX + 'px solid transparent;' +
+      'border-bottom:' + CALLOUT_CARET_PX + 'px solid #e8c46c;';
+    el.appendChild(caret);
+
+    for (var i = 0; i < step.lines.length; i++) {
       var pEl = document.createElement('p');
       pEl.style.cssText = 'margin:0 0 6px;';
-      pEl.appendChild(document.createTextNode(lines[i]));
+      pEl.appendChild(document.createTextNode(step.lines[i]));
       el.appendChild(pEl);
     }
     var btn = document.createElement('button');
@@ -2061,31 +2149,38 @@
       // video as a side effect of dismissing a notice about it.
       ev.stopPropagation();
       ev.preventDefault();
-      dismissFirstProtected();
+      advanceFirstProtected();
     });
     el.appendChild(btn);
-    // The callout itself must not eat clicks meant for the video around it.
+    // The box itself must not eat clicks meant for the video around it.
     el.addEventListener('click', function (ev) { ev.stopPropagation(); });
 
-    if (getComputedStyle(container).position === 'static') {
-      container.style.position = 'relative';
+    if (step.anchor === 'toolbar') {
+      (document.body || document.documentElement).appendChild(el);
+      return el;
     }
-    container.appendChild(el);
-    firstProtectedEl = el;
-    var m = globalThis.PMMoments;
-    var visibleMs = m && m.FIRST_PROTECTED_VISIBLE_MS ? m.FIRST_PROTECTED_VISIBLE_MS : 20000;
-    firstProtectedTimer = setTimeout(dismissFirstProtected, visibleMs);
-    TLOG(TAG, '[PM-CALLOUT] first protected: ' + lines.length + ' lines');
+    if (getComputedStyle(parent).position === 'static') {
+      parent.style.position = 'relative';
+    }
+    parent.appendChild(el);
+    return el;
   }
 
-  // Theater mode is a resize and the callout rides the player, so it needs no
-  // handling. Fullscreen genuinely reparents and takes the screen over, so the
-  // callout leaves rather than sitting on top of it.
+  // Theater mode is a resize and step 1 rides the player, so it needs no
+  // handling. Fullscreen genuinely reparents and takes the screen over, so
+  // the tour leaves rather than sitting on top of it.
   ['fullscreenchange', 'webkitfullscreenchange'].forEach(function (evt) {
     document.addEventListener(evt, function () {
       if (isFullscreen()) dismissFirstProtected();
     }, true);
   });
+
+  // A navigation is a different video and, for the toolbar step, a page whose
+  // body is about to be rebuilt underneath a fixed box that would otherwise
+  // outlive everything it was explaining.
+  document.addEventListener('yt-navigate-start', function () {
+    dismissFirstProtected();
+  }, true);
 
   function renderStatusPill() {
     var settings = currentSettings();
@@ -2248,10 +2343,22 @@
     var idleTop = (api && api.BADGE_TOP_IDLE_PX) || 12;
     try {
       badgeStyleEl = document.createElement('style');
+      // The tour's step 1 hangs off the badge, so it has to ride WITH it.
+      // The live capture caught this: the badge rode up to the idle offset
+      // the moment the player chrome faded and the box stayed put, leaving a
+      // 44px gap and a caret pointing at nothing, which is the exact failure
+      // the caret was added to fix. Same rule, same transition, offset by the
+      // badge's height plus the caret, so the two move as one object.
+      var api2 = globalThis.PMPill;
+      var badgeH = (api2 && api2.BADGE_HEIGHT_PX) || 22;
+      var drop = badgeH + CALLOUT_CARET_PX + 2;
       badgeStyleEl.textContent =
         '.pm-badge{top:' + chromeTop + 'px !important;' +
         'transition:top 180ms cubic-bezier(0.4,0,0.2,1) !important;}' +
-        '.ytp-autohide .pm-badge{top:' + idleTop + 'px !important;}';
+        '.ytp-autohide .pm-badge{top:' + idleTop + 'px !important;}' +
+        '.pm-first-protected--pill{top:' + (chromeTop + drop) + 'px !important;' +
+        'transition:top 180ms cubic-bezier(0.4,0,0.2,1) !important;}' +
+        '.ytp-autohide .pm-first-protected--pill{top:' + (idleTop + drop) + 'px !important;}';
       (document.head || document.documentElement).appendChild(badgeStyleEl);
     } catch (e) {
       badgeStyleEl = null; // inline top remains, which is the safe offset

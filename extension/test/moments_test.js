@@ -311,24 +311,92 @@ test("the callout respects the routine-status opt-out", () => {
   assert.strictEqual(M.shouldShowFirstProtected({ presented: "protected", showStatus: false }), false);
 });
 
-test("the callout names both surfaces and asks for nothing", () => {
-  const lines = M.firstProtectedLines(true);
-  assert.strictEqual(lines.length, 2);
-  assert.ok(/badge|status/i.test(lines[0]));
-  assert.ok(/toolbar/i.test(lines[1]) && /count/i.test(lines[1]));
-  assert.ok(!/review|rate|rating|star|store/i.test(lines.join(" ")));
+// ---- the two-step tour (0.1.56, second pass) -----------------------------
+//
+// Table-driven, because the tour IS a table: two steps, each with an anchor
+// and a copy variant, and the failure mode is a box that points at the wrong
+// thing, which no unit test catches unless the anchor is asserted.
+
+test("the tour is two steps, anchored at the pill then the toolbar", () => {
+  [true, false, undefined, null].forEach(function (pinned) {
+    const steps = M.firstProtectedSteps(pinned);
+    assert.strictEqual(steps.length, 2, String(pinned));
+    assert.deepStrictEqual(steps.map((s) => s.anchor), ["pill", "toolbar"], String(pinned));
+    steps.forEach(function (s) {
+      assert.ok(Array.isArray(s.lines) && s.lines.length > 0, s.anchor);
+    });
+  });
 });
 
-test("the pin line appears only when the icon is not pinned", () => {
-  // Advice to pin something already pinned teaches the user that this
-  // extension does not know what it is talking about.
-  assert.strictEqual(M.firstProtectedLines(false).length, 3);
-  assert.ok(/puzzle-piece/.test(M.firstProtectedLines(false)[2]));
-  assert.strictEqual(M.firstProtectedLines(true).length, 2);
-  // Unknown (getUserSettings unavailable) is treated as pinned: silence is
-  // better than wrong advice.
-  assert.strictEqual(M.firstProtectedLines(undefined).length, 2);
-  assert.strictEqual(M.firstProtectedLines(null).length, 2);
+test("step 1 names the thing it points at and asks for nothing", () => {
+  // The old single box said "This badge is your on-page status" while
+  // sitting 26px away from the badge with nothing joining them. The copy
+  // now names a label the user can read on screen.
+  const step = M.firstProtectedSteps(true)[0];
+  const text = step.lines.join(" ");
+  assert.ok(/label/i.test(text), text);
+  assert.ok(/on-page status/i.test(text), text);
+  assert.ok(/Protected/.test(text), text);
+  assert.ok(!/toolbar|pin/i.test(text), "step 1 must point at one thing only");
+  assert.ok(!/review|rate|rating|star|store/i.test(text));
+});
+
+test("step 2 forks on pinned, and unknown reads as pinned", () => {
+  const cases = [
+    { pinned: true, describes: true },
+    { pinned: false, describes: false },
+    { pinned: undefined, describes: true },
+    { pinned: null, describes: true }
+  ];
+  cases.forEach(function (c) {
+    const text = M.firstProtectedSteps(c.pinned)[1].lines.join(" ");
+    if (c.describes) {
+      // Describes what the icon says. Makes no claim about their toolbar,
+      // which is the only variant that cannot be wrong when we do not know.
+      assert.ok(/toolbar/i.test(text), String(c.pinned));
+      assert.ok(/count/i.test(text), String(c.pinned));
+      assert.ok(!/puzzle-piece/i.test(text), String(c.pinned));
+    } else {
+      // Tells them how to get it. Advice to pin an already pinned icon
+      // teaches the user this extension does not know what it is looking at.
+      assert.ok(/puzzle-piece/i.test(text), String(c.pinned));
+      assert.ok(/\bpin\b/i.test(text), String(c.pinned));
+    }
+    assert.ok(!/review|rate|rating|star|store/i.test(text));
+  });
+});
+
+test("both steps point up here, not at some other page", () => {
+  // "up here" is the whole gesture of step 2: it is rendered in the corner
+  // of the viewport nearest the toolbar, and the copy has to agree with the
+  // position or the box is back to being a random box.
+  [true, false].forEach(function (pinned) {
+    assert.ok(/up here/i.test(M.firstProtectedSteps(pinned)[1].lines.join(" ")), String(pinned));
+  });
+});
+
+test("firstProtectedLines has left this module", () => {
+  // The one-box version. A lingering export would be a second, stale answer
+  // to "what does the introduction say".
+  assert.strictEqual(typeof M.firstProtectedLines, "undefined");
+});
+
+// ---- the onboarding pin arrow (0.1.56, second pass) ----------------------
+
+test("the pin arrow shows only on the pin step, and only until it is pinned", () => {
+  const rows = [
+    { step: 4, pinStep: 4, pinned: undefined, want: true },  // not asked yet
+    { step: 4, pinStep: 4, pinned: false, want: true },      // asked, not pinned
+    { step: 4, pinStep: 4, pinned: true, want: false },      // done, stop pointing
+    { step: 1, pinStep: 4, pinned: false, want: false },
+    { step: 3, pinStep: 4, pinned: undefined, want: false },
+    { step: 5, pinStep: 4, pinned: false, want: false }
+  ];
+  rows.forEach(function (r) {
+    assert.strictEqual(M.shouldShowPinArrow(r), r.want, JSON.stringify(r));
+  });
+  assert.strictEqual(M.shouldShowPinArrow(), false);
+  assert.strictEqual(M.shouldShowPinArrow({}), false);
 });
 
 test("the callout latch is the same shape as the milestone latch", () => {

@@ -214,6 +214,43 @@ test("the badge clears YouTube's hover title band", () => {
   assert.strictEqual(P.BADGE_LEFT_PX, 12);
 });
 
+test("the tour's caret is computed from the badge's own geometry", () => {
+  // 0.1.56, second pass. The first callout used a hard-coded +26 and read as
+  // a box that happened to be near the badge rather than one hanging off it.
+  // The renderer now adds BADGE_HEIGHT_PX and the caret height, so a padding
+  // or font change moves the box with the badge instead of leaving a gap.
+  assert.strictEqual(typeof P.BADGE_HEIGHT_PX, "number");
+  assert.ok(P.BADGE_HEIGHT_PX > 0 && P.BADGE_HEIGHT_PX < 40, String(P.BADGE_HEIGHT_PX));
+  const src = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
+  assert.ok(
+    src.indexOf("pillTop + pillH + CALLOUT_CARET_PX") > 0,
+    "the box top must be derived, not a literal"
+  );
+  assert.strictEqual(src.indexOf("BADGE_TOP_PX ? api.BADGE_TOP_PX : 56) + 26"), -1);
+  // Step 1 hangs off the badge inside the player; step 2 is fixed to the
+  // viewport so YouTube's masthead cannot cover it and a scroll cannot
+  // carry it away from the toolbar it is pointing at.
+  assert.ok(src.indexOf("position:fixed;top:12px;right:12px;") > 0, "step 2 is viewport-fixed");
+  assert.ok(src.indexOf("z-index:2147483647") > 0, "the tour must outrank the masthead");
+});
+
+test("step 1 rides up with the badge when the player chrome autohides", () => {
+  // Caught in the live capture: the badge moves to BADGE_TOP_IDLE_PX under
+  // .ytp-autohide and the box stayed at the chrome-visible offset, opening a
+  // 44px gap with the caret pointing at empty picture. The box gets the same
+  // rule and the same transition so the two move as one object.
+  const src = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
+  assert.ok(src.indexOf(".pm-first-protected--pill{top:") > 0, "resting rule");
+  assert.ok(
+    src.indexOf(".ytp-autohide .pm-first-protected--pill{top:") > 0,
+    "the box must follow the badge into the corner"
+  );
+  // Both offsets are the badge offset plus one shared drop, so they can
+  // never drift apart by a hand edit to one of them.
+  assert.ok(src.indexOf("var drop = badgeH + CALLOUT_CARET_PX + 2;") > 0);
+  assert.ok(src.indexOf("(chromeTop + drop)") > 0 && src.indexOf("(idleTop + drop)") > 0);
+});
+
 test("the dev overlay is anchored below the badge, never overlapping it", () => {
   assert.ok(
     P.DEBUG_OVERLAY_TOP_PX > P.BADGE_TOP_PX,
@@ -257,28 +294,38 @@ test("content.js injects exactly one interactive on-player surface", () => {
   const src = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
   const interactive = src.match(/pointer-events:auto/g) || [];
   // Three, and only three: the badge, the dev overlay's Copy logs button,
-  // and (0.1.56) the once-per-install first-protected callout.
+  // and (0.1.56) the once-per-install first-protected tour.
+  //
+  // The tour is TWO steps but ONE literal: both boxes are built by
+  // buildFirstProtectedBox out of a single shared style string, which is
+  // what keeps this a count of surfaces rather than a count of steps.
   //
   // The Copy logs button is gated behind pm_debugOverlay, is off by default,
-  // and needs a real gesture for clipboard access. The callout is shown once
-  // in the life of an install, latched in chrome.storage.sync, carries a
-  // "Got it" button and removes itself after 20 seconds. Neither is a
+  // and needs a real gesture for clipboard access. The tour is shown once in
+  // the life of an install, latched in chrome.storage.sync, carries a "Got
+  // it" button on each step and removes itself after 20 seconds. Neither is a
   // ROUTINE surface, which is what this guard is counting.
   assert.strictEqual(
     interactive.length,
     3,
-    "badge + dev-only Copy logs button + one-time first-protected callout"
+    "badge + dev-only Copy logs button + one-time first-protected tour"
   );
-  // The callout must stop its own clicks rather than passing them to the
+  // The tour must stop its own clicks rather than passing them to the
   // player: dismissing a notice about the video should never pause it.
   assert.ok(
-    src.indexOf("function showFirstProtectedCallout") > 0,
-    "the callout is the third interactive surface"
+    src.indexOf("function buildFirstProtectedBox") > 0,
+    "the tour is the third interactive surface"
   );
   assert.ok(
     src.indexOf("dismissFirstProtected") > 0,
-    "the callout must be dismissable and self-retiring"
+    "the tour must be dismissable and self-retiring"
   );
+  assert.ok(
+    src.indexOf("function advanceFirstProtected") > 0,
+    "Got it on step 1 must advance rather than end the tour"
+  );
+  // The old one-box renderer must be gone, not sitting beside the tour.
+  assert.strictEqual(src.indexOf("function showFirstProtectedCallout"), -1);
   const badgeAt = src.indexOf("cursor:pointer;white-space:nowrap;");
   const copyLogsAt = src.indexOf("debugOverlayButtonEl.style.cssText");
   assert.ok(badgeAt > 0, "the badge must be the interactive routine surface");

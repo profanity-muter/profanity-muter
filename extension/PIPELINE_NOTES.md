@@ -3491,3 +3491,53 @@ left the module, so a stale second answer cannot survive. `pill_test.js`'s
 interactive-surface guard moves from two to three and now names the callout,
 which keeps it a real count rather than a number someone bumps. 503 tests
 across 18 files, from 478 across 17.
+
+**Second pass, same release.** The product owner read the shipped build and
+both new surfaces failed for the same reason: they described a place instead
+of pointing at one. The Pin it step said "the puzzle-piece icon in the Chrome
+toolbar", which is a sentence, not a location, to someone who has never
+pinned an extension. The callout named the pill and the toolbar in one
+paragraph and hung 26px below the pill with nothing joining them, which read
+as a random box that happened to be nearby.
+
+So: **the step gets a picture and an arrow.** `onboarding/pin-menu.png` is
+the Extensions menu open under the puzzle piece with our row highlighted and
+its pin ringed, the two controls numbered 1 and 2 to match the two
+instructions above it. It is a DRAWING, rendered by Playwright from
+`tools/pin-menu-mockup.html` (committed, with the re-render command in its
+head comment), not a screenshot. A real capture of that menu would carry
+other vendors' icons and names into a Chrome Web Store package, would go
+stale the next time Chrome restyles its own toolbar, and would clash with a
+page that has been image-free and ink-on-paper since it was written. The only
+real artwork in it is `icons/icon32.png`; the neighbours are grey circles
+called "Some extension". Alongside it, a fixed bouncing arrow at the
+top-right of the page, aimed slightly left of the corner because the puzzle
+piece sits left of the avatar and the three-dot menu. It is gone the instant
+the poll reports the icon pinned: advice that outlives its problem is noise.
+The rule is `shouldShowPinArrow` in shared/moments.js rather than an `if` in
+the page, so "does not appear once pinned" is a node test and not something
+only a screenshot can catch.
+
+**And the callout becomes a two-step tour.** One box that mentions two
+surfaces points at neither; the user has to work out which words go with
+which part of the screen, which is the job the box was supposed to do for
+them. `firstProtectedSteps(pinned)` now returns
+`[{anchor:"pill"},{anchor:"toolbar"}]` and the renderer puts each one where
+its subject actually is. Step 1 hangs off the badge with an upward gold caret
+whose tip sits 2px under it, computed from `BADGE_HEIGHT_PX` (new export) plus
+the caret rather than the old hard-coded +26, and it carries the badge's
+autohide rule so the two ride up into the corner together. That last part was
+caught only by the live capture: the badge moved when the player chrome faded
+and the box did not, opening a 44px gap with the caret pointing at empty
+picture, which is precisely the failure the caret was added to fix. Step 2 is
+fixed to the VIEWPORT at top-right with a caret at its top-right corner, not
+positioned inside the player, because the thing it points at is the browser's
+own toolbar: fixed also puts it above YouTube's masthead, which an absolutely
+positioned box in the player could never manage on a scrolled page. Its copy
+forks on `pinned`: describe the icon when it is there, say how to get it when
+it is not, and treat unknown as pinned, since the describing variant is the
+only one that cannot be wrong about a toolbar we cannot see. Both steps keep
+"Got it", the 20s self-retirement and the fullscreen exit, and the latch is
+still stamped when step 1 is handed out, so a tour abandoned halfway is
+simply over: an introduction that comes back to finish itself is a nag.
+513 tests across 18 files.

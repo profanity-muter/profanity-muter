@@ -1,0 +1,194 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Pin it mockup</title>
+<!--
+  tools/pin-menu-mockup.html  (0.1.56, second pass)
+
+  Source for onboarding/pin-menu.png, the picture in the "Pin it" step.
+
+  WHY THIS IS A DRAWING AND NOT A SCREENSHOT. A real screenshot of a Chrome
+  extensions menu carries whatever else is in that toolbar: other vendors'
+  icons and names, a profile photo, a browser's own UI as shipped. That is
+  third-party material inside a Chrome Web Store package, and it also dates
+  the moment Chrome changes its chrome. So the menu is redrawn from scratch,
+  the neighbours are generic grey placeholders, and the only real artwork in
+  it is our own icon. It is also a drawing that can be re-rendered in the
+  onboarding palette rather than clashing with it.
+
+  RE-RENDER (requires Playwright, e.g. the copy in ~/Desktop/niche-sites):
+
+    node -e "
+    import('/Users/nathanaeldesmond2026/Desktop/niche-sites/node_modules/playwright/index.mjs')
+    .then(async ({chromium}) => {
+      const b = await chromium.launch({channel:'chromium'});
+      const c = await b.newContext({viewport:{width:760,height:430},deviceScaleFactor:2});
+      const p = await c.newPage();
+      await p.setContent(require('fs').readFileSync('tools/pin-menu-mockup.html','utf8'));
+      await p.screenshot({path:'onboarding/pin-menu.png',clip:{x:0,y:0,width:760,height:430}});
+      await b.close();
+    })"
+
+  Palette is onboarding.css: ink #1d2f54, gold #e8c46c, paper #faf8f2.
+-->
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 760px; height: 430px; }
+  body {
+    background: #faf8f2;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    color: #1d2f54;
+    position: relative;
+    overflow: hidden;
+  }
+
+  /* ---- the browser window, top-right corner of ---- */
+  .win {
+    position: absolute;
+    top: 26px; left: 26px; right: 26px;
+    height: 118px;
+    background: #dee1e6;
+    border-radius: 12px 12px 0 0;
+    border: 1px solid #c7ccd4;
+    border-bottom: none;
+    overflow: hidden;
+  }
+  .tabrow { height: 40px; position: relative; }
+  .tab {
+    position: absolute; left: 14px; top: 8px;
+    width: 220px; height: 32px;
+    background: #fff; border-radius: 8px 8px 0 0;
+  }
+  .tab::after {
+    content: ""; position: absolute; left: 14px; top: 12px;
+    width: 120px; height: 8px; border-radius: 4px; background: #d5d8de;
+  }
+  .toolbar {
+    height: 78px; background: #fff;
+    display: flex; align-items: center; gap: 12px;
+    padding: 0 18px;
+  }
+  .omni {
+    flex: 1; height: 40px; border-radius: 20px;
+    background: #f1f3f4;
+    position: relative;
+  }
+  .omni::after {
+    content: ""; position: absolute; left: 22px; top: 16px;
+    width: 46%; height: 8px; border-radius: 4px; background: #d5d8de;
+  }
+  .tbtn {
+    width: 40px; height: 40px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    flex: none;
+  }
+  .tbtn svg { width: 22px; height: 22px; fill: #5f6368; }
+  /* The puzzle piece is the control step i. names, so it is ringed in gold
+     and everything around it stays grey. */
+  .puzzle {
+    background: #fff8e6;
+    box-shadow: 0 0 0 3px #e8c46c;
+  }
+  .puzzle svg { fill: #1d2f54; }
+  .avatar {
+    width: 34px; height: 34px; border-radius: 50%;
+    background: #b9bfce; flex: none;
+  }
+  .dots { display: flex; flex-direction: column; gap: 3px; }
+  .dots i { width: 4px; height: 4px; border-radius: 50%; background: #5f6368; }
+
+  /* ---- the Extensions dropdown ---- */
+  .menu {
+    position: absolute;
+    top: 150px; right: 92px;
+    width: 340px;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 10px 30px rgba(29,47,84,0.22), 0 2px 6px rgba(29,47,84,0.12);
+    border: 1px solid #e4dfd2;
+    padding: 10px 0 8px;
+  }
+  .menu::before {
+    content: ""; position: absolute; top: -8px; right: 28px;
+    width: 16px; height: 16px; background: #fff;
+    border-left: 1px solid #e4dfd2; border-top: 1px solid #e4dfd2;
+    transform: rotate(45deg);
+  }
+  .menu h3 {
+    font-size: 14px; font-weight: 600; color: #1d2f54;
+    padding: 6px 16px 10px;
+  }
+  .row {
+    display: flex; align-items: center; gap: 12px;
+    padding: 9px 14px;
+  }
+  .row .dot { width: 24px; height: 24px; border-radius: 50%; background: #d5d8de; flex: none; }
+  .row .name { flex: 1; font-size: 13.5px; color: #56617e; }
+  .row .pin svg { width: 18px; height: 18px; fill: #b9bfce; }
+  .row .pin { width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center; flex: none; }
+
+  /* Our row: the one the user is looking for, so it is the only one with
+     ink-coloured type and a raised background. */
+  .row--ours {
+    background: #f4f1e7;
+    border-top: 1px solid #efe9db;
+    border-bottom: 1px solid #efe9db;
+  }
+  .row--ours .name { color: #1d2f54; font-weight: 600; }
+  .row--ours img { width: 24px; height: 24px; border-radius: 5px; flex: none; }
+  .row--ours .pin {
+    background: #fff8e6;
+    box-shadow: 0 0 0 3px #e8c46c;
+  }
+  .row--ours .pin svg { fill: #1d2f54; }
+
+  /* ---- the two numbered callouts, matching i. and ii. ---- */
+  .num {
+    position: absolute;
+    width: 30px; height: 30px; border-radius: 50%;
+    background: #1d2f54; color: #e8c46c;
+    font-size: 16px; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+    box-shadow: 0 2px 8px rgba(29,47,84,0.35);
+  }
+  .num--1 { top: 62px; right: 150px; }
+  /* Level with the Profanity Muter row, just outside the menu, so it reads
+     as pointing at that row's pin rather than at the row below it. */
+  .num--2 { top: 284px; right: 60px; }
+</style>
+
+<div class="win">
+  <div class="tabrow"><div class="tab"></div></div>
+  <div class="toolbar">
+    <div class="omni"></div>
+    <div class="tbtn puzzle">
+      <svg viewBox="0 0 24 24"><path d="M20.5 11H19V7a2 2 0 0 0-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4a2 2 0 0 0-2 2v3.8h1.5a2.7 2.7 0 0 1 0 5.4H2V20a2 2 0 0 0 2 2h3.8v-1.5a2.7 2.7 0 0 1 5.4 0V22H17a2 2 0 0 0 2-2v-4h1.5a2.5 2.5 0 0 0 0-5z"/></svg>
+    </div>
+    <div class="avatar"></div>
+    <div class="tbtn"><div class="dots"><i></i><i></i><i></i></div></div>
+  </div>
+</div>
+
+<div class="menu">
+  <h3>Extensions</h3>
+  <div class="row">
+    <div class="dot"></div><div class="name">Some extension</div>
+    <div class="pin"><svg viewBox="0 0 24 24"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg></div>
+  </div>
+  <div class="row">
+    <div class="dot"></div><div class="name">Another extension</div>
+    <div class="pin"><svg viewBox="0 0 24 24"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg></div>
+  </div>
+  <div class="row row--ours">
+    <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAGO0lEQVR4nJVXW2wVRRj+ZmbPnXNOaYtAsHiLRINBI0EjAYKC4oMxIaYRKUZNiDypLzVNFEIIRhMf9MVgEDGGS43yJF6CCRBKA7VPGgHlBWLUFKEUaHsuey47Y/6d3bOze7YlTrJn5+zO/Jfv//5//mXo7RU4csRZtmrL4+W6s91x5GolZUEpMMw06I3C/xgSjDHFuDUlBBsupK33fzl9cIR0u0ruf6z3pUZD7JdARsqmpzmqnzQy7/c2o22RtpZ84lxAMGVnknzr7z9/dZgtXdO3ojTdGJFKCUjpgDER7FYAY+3emgjEzWd7L+Hq4II5c+dknuDVSn23AjOUh62OhVrdZj7bewYBKEcpJkq2vZtLB2uk01TeixhXZxvKuOKezziElI5qNuRqrpTKMGZqYp5eHzvZvp3NoJwBnJl4z+oDU1BZHrtK+YqjbIqGhbUuTpIUUK1HPI8FQpF2d3BTSHiH+SzkeptySwBlW6PxQI8F5TpgWhATWtcCBq5CC3zYTKNioPTmnElwLjEx5eCu+Rxf9Hdif383MikGRypPTJwjQWJaplRa666nt15wopvIOSXhel1rKNh1oG9dFgMvFjG/g+PPaw4SYoaMCAkjQfAN0MrrTYVaXYFz5sFockAhlRBIJvTeyYrEgrkC2/sK2Lgqh1JFYqri+6UpFi6YWocfHddRMG0A/Wk0FRZ1cdw1X8CR/oJAAmMMl680MDYhITjDkw+n8MHWuejpFrg55YBxhqQVBpvkCK4gFYULaDr0X1dT5UFs6VgqVGoSy5dksLe/CxM3muAsCImLg+u1g10HJjF4soRtz3Xi7jsErt50kEwQYmHYHQfIZoHJskIuzVG2JYo55pLVEkHycW0pQyEn8ONoFYeOTXsClRvjSk3BrimUawrFnMD2LUUs6LQwWZZuyIRfOz2uCcEwXVXoW5/DyY8WYP3yNP4Zb2LzU1mc+ngh1j2aRskmFPU2K4iQgqOAgc8nceaCjQ0rsli62HKVkmN0bFVsiY6cQM88S8NpEUphhpPhBPdkyUHPPIEPt3Zi5YNJvPx03iVnqeK4sny0rKC4EGkICeC1DQUUcwQVIOk504jocChNUI/F0fJB8c5nOb4eqiJhTeC9VzvwyjN5TJUl3twzgaHfaijkOKQkQ3mQbLSfFF6fVDg6Usai7gS6CsKFNJpLKqY4ttcJzaHWc5dPmoD+sR5Q0RvkbToJfPpdCc/vuIr9x6ZxeawRUu4r1TXBQ8M3xGM7ebtpbRp73upCtabw5U9TyGU4Dgx0Y+2yNMpVqcMAow74UmiWTTNc/tfByqUZ3LdQoNbQgt0TIohYK6d1NQ0goDUE89/jTQzsu4Fvhqq4dMXB25uKmJPVVZLgUcqrA2YwSRhZZ9eAvd9P4Z3NHejK81ZdSCX0JJ1k7pzSjRjtAsB0+uWzDIeOV3D0bNXNljvnCQyerOCH0aqbhvkMhyMJBW4aECBBoUglgW/P2hi5cA1LehItJXQfu+7g4PESHron6TL9Vkm6UWVkgXfOEJ/sukI2xSAl3Hu1BiSE19Z5PlvtbNJ3Ymk+wzBVVThzvhaiYS7NMHyuho07x/Hu5jw2rprjplfTbx08tMhYP2R0p5rROii9kPIIdVt3YixtsjjcuOWNi0Yhy3Gr5OCNT26if+8NVOoKxayXrgZRQ9w1HvgnBQ8rN5EI/hGE5uXX+YTFUMxxHD5RRu+ucQyft12IG02zGeWGn0Fetg77xY+8oIiN4e43ehK2G2YOinepSinMcO9CC5fGmsFh1lLly/RaJw9l3hJOh3yo/zNLnKnc9yjwhsoykYzGH381IspNB1hbOLiu5eZCGaM0vqsJhGq+0CyTnG1d0OT6RnLOmG20CYZ3/j1GWKtrDpdps1CFYTfh1yuphnIGm3PBRhm3iL5O2Gs/JGZv6Ecs2q6b8JpGt5NP559yOBNMWHyUZzOJHe7ZTB9t8I2I+wL0QxOF1hzRgytmvaIvMC6o7cvnkjv5udOHh1Mp8boQVpPzhNB1ParE9zamg26D29wX7UwVGLcE6UqnxLZfTx0c4vSJfPHs4L58JvVsIsFPWIKX3U9p7/j027JgHn3mX3RemP/N9/rsEUKUEpY4UchZGy6ODH5Guv8D+5LJfir5RrsAAAAASUVORK5CYII=" alt="">
+    <div class="name">Profanity Muter</div>
+    <div class="pin"><svg viewBox="0 0 24 24"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg></div>
+  </div>
+  <div class="row">
+    <div class="dot"></div><div class="name">Some extension</div>
+    <div class="pin"><svg viewBox="0 0 24 24"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg></div>
+  </div>
+</div>
+
+<div class="num num--1">1</div>
+<div class="num num--2">2</div>

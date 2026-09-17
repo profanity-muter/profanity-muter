@@ -612,11 +612,12 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
         { pm_firstProtectedSeen: m1.makeFirstProtectedRecord(Date.now()) },
         function () {
           // getUserSettings is Chrome 91+ and can be absent or throw in a
-          // stripped build. Unknown resolves to "pinned", because
-          // firstProtectedLines then omits the pin advice: silence beats
-          // telling someone to pin an icon they already pinned.
+          // stripped build. Unknown resolves to "pinned", because step 2 of
+          // the tour then describes the toolbar icon rather than telling
+          // someone to pin an icon they may already have pinned: the
+          // describing variant is the only one that cannot be wrong.
           var done = function (pinned) {
-            sendResponse({ show: true, lines: m1.firstProtectedLines(pinned) });
+            sendResponse({ show: true, steps: m1.firstProtectedSteps(pinned) });
           };
           try {
             var p = chrome.action.getUserSettings();

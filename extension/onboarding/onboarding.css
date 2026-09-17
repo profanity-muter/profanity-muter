@@ -821,3 +821,77 @@ input:focus-visible {
 .ob-pin-state--pinned {
   color: #1e8e3e;
 }
+
+/* The Pin it picture (0.1.56, second pass). Rendered by us from
+   tools/pin-menu-mockup.html, not screenshotted: a real capture of a Chrome
+   extensions menu would carry other vendors' icons and names into a Chrome
+   Web Store package, and would go stale the next time Chrome restyles its
+   own toolbar. Same rounded corner and hairline as every other raised
+   surface on this page, so it reads as part of the step rather than pasted
+   into it. */
+.ob-figure {
+  margin: 18px 0 0;
+}
+
+.ob-figure img {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid var(--hairline);
+  border-radius: 10px;
+  background: var(--paper);
+}
+
+/* The bouncing arrow. Fixed to the VIEWPORT because the thing it points at
+   is the browser's own toolbar, which is not on the page at all: the closest
+   this document can get is its own top-right corner. `right` is 96px rather
+   than 0 because the puzzle piece sits to the LEFT of the profile avatar and
+   the three-dot menu, so aiming at the actual corner would aim at the wrong
+   control. */
+.ob-pin-arrow {
+  position: fixed;
+  top: 8px;
+  right: 96px;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  pointer-events: none;
+  animation: ob-pin-bounce 1.4s ease-in-out infinite;
+}
+
+.ob-pin-arrow-mark {
+  width: 22px;
+  height: 31px;
+  fill: var(--ink);
+  stroke: var(--gold);
+  stroke-width: 1.5;
+}
+
+.ob-pin-arrow-label {
+  background: var(--ink);
+  color: var(--gold);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1;
+  padding: 6px 9px;
+  border-radius: 5px;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(29, 47, 84, 0.3);
+}
+
+@keyframes ob-pin-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(7px); }
+}
+
+/* A cue that jumps is the point, but a cue that jumps at someone who has
+   asked the OS for stillness is just the page ignoring them. It still shows,
+   it just holds still. */
+@media (prefers-reduced-motion: reduce) {
+  .ob-pin-arrow {
+    animation: none;
+  }
+}

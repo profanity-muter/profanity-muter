@@ -232,13 +232,14 @@
   // reviewPromptEligibility below; it is simply rendered where it always
   // did its real work, in the popup.
 
-  // ---- first-protected callout (0.1.56) ----------------------------------
+  // ---- first-protected tour (0.1.56) -------------------------------------
   //
   // The other half of the same field observation. The pill is small, sits
   // in a corner of a player full of YouTube's own chrome, and says
   // "Protected" to someone who has never been told there is a pill. So the
-  // first time filtering actually starts after install, the pill gets one
-  // callout pointing at itself and at the toolbar icon.
+  // first time filtering actually starts after install, the user gets a
+  // two-step tour: one box pointing at the pill, then one pointing up at
+  // the toolbar. See firstProtectedSteps below for why it is two.
   //
   // ONE TIME, EVER, latched in chrome.storage.sync (pm_firstProtectedSeen
   // {shownAt}), the same store and the same shape as pm_milestoneShown. Sync
@@ -270,23 +271,69 @@
     return state.presented === "protected";
   }
 
-  // The callout's copy, as lines. Plain statements of where to look, no
-  // adjectives and no ask.
+  // The tour's copy, as an ordered list of steps (0.1.56, second pass).
   //
-  // The pin line is conditional because advice to pin something already
-  // pinned is noise that teaches the user this extension does not know what
-  // it is talking about. Chrome does not let an extension pin itself, so
-  // this is the only lever there is: chrome.action.getUserSettings() says
-  // whether it worked, and the line appears only when it has not.
-  function firstProtectedLines(pinned) {
-    var lines = [
-      "This badge is your on-page status.",
-      "The toolbar icon shows the same thing, plus a count of words muted."
+  // The first build was ONE box of three lines sitting under the pill,
+  // naming the pill and the toolbar in the same breath. The product owner
+  // read it as "a random box": a paragraph that mentions two surfaces
+  // points at neither, and the user has to guess which words go with which
+  // part of the screen. So it is two steps, each one aimed at exactly one
+  // thing, and each one rendered where that thing actually is: step 1 hangs
+  // off the pill with a caret touching it, step 2 sits up in the corner of
+  // the viewport under the browser toolbar.
+  //
+  // `anchor` is the contract between this model and the renderer: "pill" is
+  // positioned against shared/pill.js's BADGE_* geometry inside the player,
+  // "toolbar" is fixed to the top-right of the viewport. Naming the anchor
+  // here rather than inferring it from the index means a later third step
+  // cannot silently inherit the wrong position.
+  //
+  // Step 2's copy forks on `pinned` because the two audiences need opposite
+  // things. A user who pinned the icon needs to be told what it says; a user
+  // who has not needs to be told how to get it, and telling someone to pin
+  // an icon they already pinned teaches them this extension does not know
+  // what it is talking about. Unknown (getUserSettings missing or throwing)
+  // resolves to the pinned copy: it makes no claim about their toolbar, so
+  // it is the only variant that cannot be wrong.
+  function firstProtectedSteps(pinned) {
+    return [
+      {
+        anchor: "pill",
+        lines: [
+          "That label is your on-page status.",
+          "It reads Protected while this video is being filtered."
+        ]
+      },
+      {
+        anchor: "toolbar",
+        lines: pinned === false
+          ? ["Pin it to keep it in view: click the puzzle-piece icon up here, then the pin next to Profanity Muter."]
+          : ["The toolbar icon up here shows the same status, plus a count of words muted."]
+      }
     ];
-    if (pinned === false) {
-      lines.push("Pin it from the puzzle-piece menu to keep it in view.");
-    }
-    return lines;
+  }
+
+  // ---- onboarding pin arrow (0.1.56, second pass) ------------------------
+  //
+  // The Pin it step says "the puzzle-piece icon in the Chrome toolbar", and
+  // a user who has never pinned an extension does not know which of the
+  // things up there that is. So the step also throws a bouncing arrow at the
+  // top-right of the page, roughly under where the puzzle piece sits.
+  //
+  // Pure, because the interesting part is when it must NOT show: it is
+  // advice, and advice that outlives its problem is noise. It goes the
+  // instant the poll reports the icon pinned, and it never appears on any
+  // other step. Unknown pinned-ness (the API is missing) still shows it,
+  // which is the opposite of the callout's rule and deliberately so: here
+  // the arrow only says where a menu is, which is true either way.
+  function shouldShowPinArrow(state) {
+    state = state || {};
+    // Both numbers, explicitly: a caller that has not wired up the step
+    // numbers yet would otherwise match undefined against undefined and show
+    // a fixed-position arrow on every page that loads this file.
+    if (typeof state.step !== "number" || typeof state.pinStep !== "number") return false;
+    if (state.step !== state.pinStep) return false;
+    return state.pinned !== true;
   }
 
   // ---- milestone pill -----------------------------------------------------
@@ -420,7 +467,8 @@
     makeFirstProtectedRecord: makeFirstProtectedRecord,
     firstProtectedAlreadyShown: firstProtectedAlreadyShown,
     shouldShowFirstProtected: shouldShowFirstProtected,
-    firstProtectedLines: firstProtectedLines,
+    firstProtectedSteps: firstProtectedSteps,
+    shouldShowPinArrow: shouldShowPinArrow,
     MILESTONE_VISIBLE_MS: MILESTONE_VISIBLE_MS,
     makeMilestoneRecord: makeMilestoneRecord,
     milestoneAlreadyShown: milestoneAlreadyShown,

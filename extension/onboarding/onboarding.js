@@ -65,6 +65,7 @@
   var lockSetStatusEl = document.getElementById("ob-lock-set-status");
 
   var pinStateEl = document.getElementById("ob-pin-state");
+  var pinArrowEl = document.getElementById("ob-pin-arrow");
 
   var ackCheckEl = document.getElementById("ob-ack-check");
   var reportProblemEl = document.getElementById("ob-report-problem");
@@ -362,6 +363,7 @@
     show(nextEl, step < TOTAL_STEPS);
     show(finishEl, step === TOTAL_STEPS);
     setPinPolling(step === PIN_STEP);
+    renderPinArrow();
     window.scrollTo(0, 0);
   }
 
@@ -379,6 +381,21 @@
   // rendering when the API is missing (Chrome older than 91, or a stripped
   // build), where we genuinely do not know.
   var pinPollTimer = null;
+  // undefined until a call answers. Deliberately three-valued: "we have not
+  // asked yet" is not the same as "not pinned", and the arrow rule below
+  // treats only a confirmed true as a reason to stop pointing.
+  var pinned;
+
+  // The arrow's visibility is one rule and it lives in shared/moments.js, so
+  // it is a node test rather than something only a screenshot can catch.
+  function renderPinArrow() {
+    if (!pinArrowEl) return;
+    var M = globalThis.PMMoments;
+    var visible = M && M.shouldShowPinArrow
+      ? M.shouldShowPinArrow({ step: step, pinStep: PIN_STEP, pinned: pinned })
+      : step === PIN_STEP && pinned !== true;
+    show(pinArrowEl, visible);
+  }
 
   function setPinPolling(on) {
     if (!on) {
@@ -393,10 +410,15 @@
     pinPollTimer = window.setInterval(checkPinned, PIN_POLL_MS);
   }
 
-  function renderPinned(pinned) {
+  function renderPinned(isPinned) {
+    pinned = !!isPinned;
+    // The arrow goes the moment the answer arrives, in the same call that
+    // turns the line green, so the page never congratulates the user with
+    // one hand while still pointing at the menu with the other.
+    renderPinArrow();
     if (!pinStateEl) return;
     pinStateEl.textContent = pinned ? "Pinned \u2713" : "";
-    pinStateEl.classList.toggle("ob-pin-state--pinned", !!pinned);
+    pinStateEl.classList.toggle("ob-pin-state--pinned", pinned);
     // Once it is pinned there is nothing left to watch for, and a poll that
     // outlives its question is just a timer nobody owns.
     if (pinned) setPinPolling(false);

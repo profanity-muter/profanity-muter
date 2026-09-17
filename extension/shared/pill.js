@@ -165,6 +165,12 @@
   var BADGE_TOP_PX = 56;
   var BADGE_TOP_IDLE_PX = 12;
   var BADGE_LEFT_PX = 12;
+  // The badge's own height, derived rather than measured: 11px text at 1.4
+  // line-height inside 3px of vertical padding, rounded up. Exported so the
+  // first-protected tour can hang its caret off the BOTTOM of the badge
+  // without hard-coding a number that a padding change would silently
+  // falsify, which is exactly how the old callout ended up floating.
+  var BADGE_HEIGHT_PX = 22;
   // The dev overlay is anchored directly beneath, so the two can never
   // overlap regardless of badge width.
   var DEBUG_OVERLAY_TOP_PX = 86;
@@ -373,6 +379,7 @@
     BADGE_TOP_PX: BADGE_TOP_PX,
     BADGE_TOP_IDLE_PX: BADGE_TOP_IDLE_PX,
     BADGE_LEFT_PX: BADGE_LEFT_PX,
+    BADGE_HEIGHT_PX: BADGE_HEIGHT_PX,
     DEBUG_OVERLAY_TOP_PX: DEBUG_OVERLAY_TOP_PX,
     OPEN_UI_MESSAGE_TYPE: OPEN_UI_MESSAGE_TYPE,
     openUiMessage: openUiMessage,
