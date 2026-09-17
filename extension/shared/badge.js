@@ -38,7 +38,11 @@
   // concern and this module has no business knowing the manifest's layout.
   // background.js turns these names into the path objects.
   var ICON_COLOR = "color";
-  var ICON_GREY = "grey";
+  // The "off" set is the colour icon at 35% opacity, not a greyscale one. The
+  // owner compared both on a real toolbar (2026-09-17): greyscale reads as a
+  // different icon, faded reads as this icon switched off, which is the
+  // message. Rendered by tools/fade-icons.mjs from icons/icon*.png.
+  var ICON_OFF = "off";
 
   // ---- badge text and colour ---------------------------------------------
   //
@@ -126,13 +130,13 @@
     // the common case across a browser full of tabs, and it is also the
     // default the action starts in.
     if (state.isWatchPage !== true || state.enabled === false || state.presented === OFF_STATE) {
-      return { text: "", color: null, iconSet: ICON_GREY };
+      return { text: "", color: null, iconSet: ICON_OFF };
     }
 
     // Documented limits: grey, silent, same as not being on a video at all,
     // because from the filter's point of view that is what it is.
     if (isLimitState(state.presented)) {
-      return { text: "", color: null, iconSet: ICON_GREY };
+      return { text: "", color: null, iconSet: ICON_OFF };
     }
 
     if (state.presented === PROTECTED_STATE) {
@@ -155,7 +159,7 @@
 
   var PMBadgeCore = {
     ICON_COLOR: ICON_COLOR,
-    ICON_GREY: ICON_GREY,
+    ICON_OFF: ICON_OFF,
     MAX_BADGE_CHARS: MAX_BADGE_CHARS,
     COUNT_CAP: COUNT_CAP,
     COUNT_CAP_TEXT: COUNT_CAP_TEXT,

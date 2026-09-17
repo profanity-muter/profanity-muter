@@ -59,46 +59,46 @@ const TABLE = [
     iconSet: B.ICON_COLOR
   },
   {
-    label: "not a YouTube watch page: silent and grey",
+    label: "not a YouTube watch page: silent and faded",
     state: { isWatchPage: false, enabled: true },
     text: "",
     color: null,
-    iconSet: B.ICON_GREY
+    iconSet: B.ICON_OFF
   },
   {
-    label: "no state reported at all: silent and grey",
+    label: "no state reported at all: silent and faded",
     state: {},
     text: "",
     color: null,
-    iconSet: B.ICON_GREY
+    iconSet: B.ICON_OFF
   },
   {
-    label: "extension disabled: silent and grey",
+    label: "extension disabled: silent and faded",
     state: watching({ enabled: false, presented: "off" }),
     text: "",
     color: null,
-    iconSet: B.ICON_GREY
+    iconSet: B.ICON_OFF
   },
   {
-    label: "the pill says off: silent and grey",
+    label: "the pill says off: silent and faded",
     state: watching({ presented: "off" }),
     text: "",
     color: null,
-    iconSet: B.ICON_GREY
+    iconSet: B.ICON_OFF
   },
   {
-    label: "documented limit, Shorts: silent and grey",
+    label: "documented limit, Shorts: silent and faded",
     state: watching({ presented: "shorts" }),
     text: "",
     color: null,
-    iconSet: B.ICON_GREY
+    iconSet: B.ICON_OFF
   },
   {
-    label: "documented limit, livestream: silent and grey",
+    label: "documented limit, livestream: silent and faded",
     state: watching({ presented: "live" }),
     text: "",
     color: null,
-    iconSet: B.ICON_GREY
+    iconSet: B.ICON_OFF
   },
   {
     label: "analyzing: amber ellipsis",
@@ -187,7 +187,7 @@ test("badgeState never returns undefined for any shape", () => {
   [undefined, null, {}, { presented: 7 }, { isWatchPage: "yes" }].forEach(function (s) {
     const d = B.badgeState(s);
     assert.strictEqual(typeof d.text, "string");
-    assert.ok(d.iconSet === B.ICON_COLOR || d.iconSet === B.ICON_GREY);
+    assert.ok(d.iconSet === B.ICON_COLOR || d.iconSet === B.ICON_OFF);
   });
 });
 
@@ -226,12 +226,12 @@ test("green means protected and nothing else means green", () => {
   assert.ok(greens.length >= 5, "the green rows are actually covered");
 });
 
-test("a grey icon is always silent, and a badge always rides a colour icon", () => {
+test("a faded icon is always silent, and a badge always rides a colour icon", () => {
   // Text on a greyed-out icon would be the extension talking about a tab it
   // is not working on.
   TABLE.forEach(function (row) {
     const d = B.badgeState(row.state);
-    if (d.iconSet === B.ICON_GREY) {
+    if (d.iconSet === B.ICON_OFF) {
       assert.strictEqual(d.text, "", row.label);
       assert.strictEqual(d.color, null, row.label);
     } else {

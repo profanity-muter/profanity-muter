@@ -257,8 +257,8 @@ chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
 // review nudge, which was the one global thing this badge carried, moved into
 // the popup in 0.1.56: see shared/moments.js.
 //
-// The action's DEFAULT icon (no tabId) is set grey once at startup, so every
-// tab a content script never touches, which is most of the browser, is grey
+// The action's DEFAULT icon (no tabId) is set to the faded set once at startup,
+// so every tab a content script never touches, which is most of the browser, is faded
 // without any message traffic at all. Per-tab overrides paint the YouTube
 // tabs on top of that.
 var unhealthyTabs = new Set();
@@ -266,7 +266,7 @@ var badgeStateByTabId = new Map(); // tabId -> {presented, mutedCount, enabled, 
 
 var ICON_PATHS = {
   color: { 16: 'icons/icon16.png', 32: 'icons/icon32.png', 48: 'icons/icon48.png', 128: 'icons/icon128.png' },
-  grey: { 16: 'icons/grey/icon16.png', 32: 'icons/grey/icon32.png', 48: 'icons/grey/icon48.png', 128: 'icons/grey/icon128.png' }
+  off: { 16: 'icons/off/icon16.png', 32: 'icons/off/icon32.png', 48: 'icons/off/icon48.png', 128: 'icons/off/icon128.png' }
 };
 
 function moments() {
@@ -296,7 +296,7 @@ function applyTabBadge(tabId) {
     if (decision.color) {
       chrome.action.setBadgeBackgroundColor({ tabId: tabId, color: decision.color });
     }
-    chrome.action.setIcon({ tabId: tabId, path: ICON_PATHS[decision.iconSet] || ICON_PATHS.grey });
+    chrome.action.setIcon({ tabId: tabId, path: ICON_PATHS[decision.iconSet] || ICON_PATHS.off });
   } catch (e) {
     // A tab closed between the message and this call throws; harmless.
   }
@@ -315,7 +315,7 @@ function resetTabBadge(tabId) {
 
 // Grey by default, everywhere, before any tab has said anything.
 try {
-  chrome.action.setIcon({ path: ICON_PATHS.grey });
+  chrome.action.setIcon({ path: ICON_PATHS.off });
 } catch (e) {}
 
 // Read what the review gate needs and decide. Cheap, and only called when

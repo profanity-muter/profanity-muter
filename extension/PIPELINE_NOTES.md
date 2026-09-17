@@ -3541,3 +3541,10 @@ only one that cannot be wrong about a toolbar we cannot see. Both steps keep
 still stamped when step 1 is handed out, so a tour abandoned halfway is
 simply over: an introduction that comes back to finish itself is a nag.
 513 tests across 18 files.
+
+**Off icon, second cut (same day).** The first render of the "not filtering
+here" icon was greyscale. Side by side on a toolbar the owner's read was that
+greyscale looks like a different extension, while the same colour icon at 35%
+opacity looks like this extension switched off, which is the message. The set
+is now `icons/off/` (colour, alpha 0.35), rendered by `tools/fade-icons.mjs`;
+`badge.js` calls the set `ICON_OFF`. Nothing else in the decision table moved.
