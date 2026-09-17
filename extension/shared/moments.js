@@ -307,18 +307,30 @@
   // finished onboarding is exactly the user step 2 is talking to, and two
   // drawings of one menu is two things to keep true.
   //
-  // The marker coordinates are the ones in tools/pin-menu-mockup.html,
-  // verbatim: .num is a 30px circle positioned from the TOP and the RIGHT of
-  // a 760x430 drawing. Kept as those raw numbers rather than as the finished
-  // percentages so that moving a circle in the mockup is one edit here, and
-  // so the conversion is a function a node test can check rather than four
-  // magic percentages pasted into a stylesheet.
+  // The marker coordinates are boxes in tools/pin-menu-mockup.html, measured
+  // from the rendered drawing: the puzzle-piece button in the toolbar and the
+  // pin control on the Profanity Muter row, each positioned from the TOP and
+  // the RIGHT of a 520x430 canvas. They are the CONTROLS, not the numbered
+  // discs beside them: a ring on the disc is a ring on the label, and the
+  // user is being sent to the thing the label points at.
+  //
+  // The canvas was 760 wide until this pass. The onboarding column renders
+  // the picture at about 500px, so a 760px drawing was being shrunk by a
+  // third, which put every hairline on a fractional pixel and dropped the
+  // menu's labels to around 7px. Nothing about the file was ever compressed;
+  // it was the display size. Cropping the drawing to the part the step is
+  // about brought it back to roughly 1:1.
+  //
+  // Kept as raw numbers rather than as the finished percentages so that
+  // moving a control in the mockup is one edit here, and so the conversion is
+  // a function a node test can check rather than four magic percentages
+  // pasted into a stylesheet.
   var PIN_MENU_IMAGE = "onboarding/pin-menu.png";
-  var PIN_MENU_IMAGE_W = 760;
+  var PIN_MENU_IMAGE_W = 520;
   var PIN_MENU_IMAGE_H = 430;
   var PIN_MENU_MARKER_PX = [
-    { topPx: 62, rightPx: 150, sizePx: 30 },
-    { topPx: 284, rightPx: 60, sizePx: 30 }
+    { topPx: 86, rightPx: 143, sizePx: 40 },
+    { topPx: 297, rightPx: 107, sizePx: 28 }
   ];
 
   // Percentages of the image box, so a ring drawn on top stays on its marker

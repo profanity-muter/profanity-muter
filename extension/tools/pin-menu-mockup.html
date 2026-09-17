@@ -2,9 +2,22 @@
 <meta charset="utf-8">
 <title>Pin it mockup</title>
 <!--
-  tools/pin-menu-mockup.html  (0.1.56, second pass)
+  tools/pin-menu-mockup.html  (0.1.56, fourth pass)
 
   Source for onboarding/pin-menu.png, the picture in the "Pin it" step.
+
+  WHY THE CANVAS IS 520 WIDE AND NOT 760. The first cut drew the whole
+  browser window, most of which was empty omnibox on the left, and the
+  onboarding column is about 500px: a 760px drawing squeezed into 500px is
+  every hairline landing on a fractional pixel and 11px labels rendering at
+  7px, which reads as a bad JPEG even though nothing was ever compressed.
+  The drawing is now cropped to the part the step is about, the right end of
+  the toolbar plus the open menu, so the displayed picture is close to 1:1
+  with what was drawn. The window itself still starts off-canvas at
+  left:-214px, which keeps every distance from the RIGHT edge exactly what it
+  was; the crop moved the frame, not the furniture. Rendered at
+  deviceScaleFactor 3 and with type at 14px and up, so the picture survives
+  the tour card too, where it is shown narrower still.
 
   WHY THIS IS A DRAWING AND NOT A SCREENSHOT. A real screenshot of a Chrome
   extensions menu carries whatever else is in that toolbar: other vendors'
@@ -15,16 +28,17 @@
   it is our own icon. It is also a drawing that can be re-rendered in the
   onboarding palette rather than clashing with it.
 
-  RE-RENDER (requires Playwright, e.g. the copy in ~/Desktop/niche-sites):
+  RE-RENDER (requires Playwright with browsers installed, e.g. the copy in
+  ~/Desktop/niche-sites; run from the extension directory):
 
     node -e "
     import('/Users/nathanaeldesmond2026/Desktop/niche-sites/node_modules/playwright/index.mjs')
     .then(async ({chromium}) => {
       const b = await chromium.launch({channel:'chromium'});
-      const c = await b.newContext({viewport:{width:760,height:430},deviceScaleFactor:2});
+      const c = await b.newContext({viewport:{width:520,height:430},deviceScaleFactor:3});
       const p = await c.newPage();
       await p.setContent(require('fs').readFileSync('tools/pin-menu-mockup.html','utf8'));
-      await p.screenshot({path:'onboarding/pin-menu.png',clip:{x:0,y:0,width:760,height:430}});
+      await p.screenshot({path:'onboarding/pin-menu.png',clip:{x:0,y:0,width:520,height:430}});
       await b.close();
     })"
 
@@ -32,7 +46,7 @@
 -->
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { width: 760px; height: 430px; }
+  html, body { width: 520px; height: 430px; }
   body {
     background: #faf8f2;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
@@ -44,11 +58,13 @@
   /* ---- the browser window, top-right corner of ---- */
   .win {
     position: absolute;
-    top: 26px; left: 26px; right: 26px;
+    /* Off the left edge on purpose: see the crop note at the top. Every
+       offset that matters is measured from the right. */
+    top: 26px; left: -214px; right: 26px;
     height: 118px;
     background: #dee1e6;
     border-radius: 12px 12px 0 0;
-    border: 1px solid #c7ccd4;
+    border: 1.5px solid #c7ccd4;
     border-bottom: none;
     overflow: hidden;
   }
@@ -104,17 +120,17 @@
     background: #fff;
     border-radius: 12px;
     box-shadow: 0 10px 30px rgba(29,47,84,0.22), 0 2px 6px rgba(29,47,84,0.12);
-    border: 1px solid #e4dfd2;
+    border: 1.5px solid #e4dfd2;
     padding: 10px 0 8px;
   }
   .menu::before {
-    content: ""; position: absolute; top: -8px; right: 28px;
+    content: ""; position: absolute; top: -8px; right: 63px;
     width: 16px; height: 16px; background: #fff;
-    border-left: 1px solid #e4dfd2; border-top: 1px solid #e4dfd2;
+    border-left: 1.5px solid #e4dfd2; border-top: 1.5px solid #e4dfd2;
     transform: rotate(45deg);
   }
   .menu h3 {
-    font-size: 14px; font-weight: 600; color: #1d2f54;
+    font-size: 15px; font-weight: 600; color: #1d2f54;
     padding: 6px 16px 10px;
   }
   .row {
@@ -122,7 +138,7 @@
     padding: 9px 14px;
   }
   .row .dot { width: 24px; height: 24px; border-radius: 50%; background: #d5d8de; flex: none; }
-  .row .name { flex: 1; font-size: 13.5px; color: #56617e; }
+  .row .name { flex: 1; font-size: 14px; color: #56617e; }
   .row .pin svg { width: 18px; height: 18px; fill: #b9bfce; }
   .row .pin { width: 28px; height: 28px; border-radius: 50%;
     display: flex; align-items: center; justify-content: center; flex: none; }
@@ -131,8 +147,8 @@
      ink-coloured type and a raised background. */
   .row--ours {
     background: #f4f1e7;
-    border-top: 1px solid #efe9db;
-    border-bottom: 1px solid #efe9db;
+    border-top: 1.5px solid #efe9db;
+    border-bottom: 1.5px solid #efe9db;
   }
   .row--ours .name { color: #1d2f54; font-weight: 600; }
   .row--ours img { width: 24px; height: 24px; border-radius: 5px; flex: none; }
@@ -142,7 +158,20 @@
   }
   .row--ours .pin svg { fill: #1d2f54; }
 
-  /* ---- the two numbered callouts, matching i. and ii. ---- */
+  /* ---- the two numbered callouts, matching i. and ii. ----
+
+     These discs are LABELS, not targets. They sit beside the control they
+     number, never on top of it, because a solid navy disc centred on the
+     puzzle piece hides the one shape the user is being sent to find. The
+     targets are the two gold-ringed controls, .puzzle and .row--ours .pin,
+     and their boxes are what PIN_MENU_MARKER_PX in shared/moments.js
+     carries, so the pulsing ring the onboarding step draws over this picture
+     lands on the control rather than on the number.
+
+     Boxes as rendered at 520x430 (measured, not guessed):
+       .puzzle           40x40 at top 86,  right 143
+       .row--ours .pin   28x28 at top 297, right 107
+     Move either control and those two lines in moments.js move with it. */
   .num {
     position: absolute;
     width: 30px; height: 30px; border-radius: 50%;
@@ -151,10 +180,11 @@
     display: flex; align-items: center; justify-content: center;
     box-shadow: 0 2px 8px rgba(29,47,84,0.35);
   }
-  .num--1 { top: 62px; right: 150px; }
+  /* Left of the puzzle piece, on the empty end of the omnibox. */
+  .num--1 { top: 91px; right: 188px; }
   /* Level with the Profanity Muter row, just outside the menu, so it reads
      as pointing at that row's pin rather than at the row below it. */
-  .num--2 { top: 284px; right: 60px; }
+  .num--2 { top: 296px; right: 46px; }
 </style>
 
 <div class="win">

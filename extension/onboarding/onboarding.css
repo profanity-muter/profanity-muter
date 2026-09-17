@@ -955,8 +955,8 @@ input:focus-visible {
   animation: ob-figure-ring-pulse 2400ms ease-in-out infinite;
 }
 
-.ob-figure-ring--1 { left: 78.29%; top: 17.91%; }
-.ob-figure-ring--2 { left: 90.13%; top: 69.53%; animation-delay: 1200ms; }
+.ob-figure-ring--1 { left: 68.65%; top: 24.65%; }
+.ob-figure-ring--2 { left: 76.73%; top: 72.33%; animation-delay: 1200ms; }
 
 @keyframes ob-figure-ring-pulse {
   0% { transform: translate(-50%, -50%) scale(1); opacity: 0.45; }
@@ -1019,6 +1019,18 @@ input:focus-visible {
   border-radius: 5px;
   white-space: nowrap;
   box-shadow: 0 2px 8px rgba(29, 47, 84, 0.3);
+}
+
+/* The puzzle shape, inline in the chip. The label names a control the user
+   has never had a reason to look at, so it shows the shape rather than
+   trusting the words to summon it. Bigger than the label's own 11.5px on
+   purpose: it is the part being recognised, not read. currentColor carries
+   the chip's cream, so there is no second colour to keep in step. */
+.ob-glyph--chip {
+  width: 14px;
+  height: 14px;
+  vertical-align: -3px;
+  margin-right: 3px;
 }
 
 @keyframes ob-pin-bounce {

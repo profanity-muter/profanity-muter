@@ -330,7 +330,7 @@
           <span class="ob-badge-slot">
             <img src="../icons/off/icon32.png" alt="" width="32" height="32" />
           </span>
-          <span class="ob-badge-cap">Not on YouTube</span>
+          <span class="ob-badge-cap">Off</span>
         </li>
         <li class="ob-badge-item">
           <span class="ob-badge-slot">
@@ -374,7 +374,7 @@
              checks the stylesheet still agrees with it. The content script's
              copy of this card uses the identical rule. -->
         <div class="ob-figure-frame">
-          <img src="pin-menu.png" width="760" height="430"
+          <img src="pin-menu.png" width="520" height="430"
                alt="The top-right of a Chrome window. The puzzle-piece icon in the toolbar is ringed and marked 1. Below it the Extensions menu is open, listing several extensions; the Profanity Muter row is highlighted and its pin control is ringed and marked 2." />
           <span class="ob-figure-ring ob-figure-ring--1" aria-hidden="true"></span>
           <span class="ob-figure-ring ob-figure-ring--2" aria-hidden="true"></span>
@@ -409,7 +409,12 @@
         <path class="ob-pin-arrow-head" d="M50 0 39 14h7v9h8v-9h7z" />
         <path class="ob-pin-arrow-bar" d="M2 20v10h96V20" />
       </svg>
-      <span class="ob-pin-arrow-label">The puzzle piece is up here on the right</span>
+      <!-- The glyph is inline in the label for the same reason it is inline
+           in instruction i. above: "the puzzle piece" is a name, and a name
+           is no use to someone who has never picked that shape out of a
+           toolbar. Same path, same currentColor, so it comes out cream on
+           the navy chip without a second asset to keep in step. -->
+      <span class="ob-pin-arrow-label">The <svg class="ob-glyph ob-glyph--chip" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11H19V7a2 2 0 0 0-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4a2 2 0 0 0-2 2v3.8h1.5a2.7 2.7 0 0 1 0 5.4H2V20a2 2 0 0 0 2 2h3.8v-1.5a2.7 2.7 0 0 1 5.4 0V22H17a2 2 0 0 0 2-2v-4h1.5a2.5 2.5 0 0 0 0-5z"/></svg>puzzle piece is up here on the right</span>
     </div>
 
     <!-- ===== 5. Acknowledgment ===== -->

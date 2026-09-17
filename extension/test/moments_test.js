@@ -399,8 +399,8 @@ test("the unpinned step carries the picture and both of its markers", () => {
 });
 
 test("the marker percentages are derived from the mockup's own coordinates", () => {
-  // The conversion, not the answer: right/top pixels on a 760x430 drawing
-  // into the centre of each 30px circle as a percentage of the box.
+  // The conversion, not the answer: right/top pixels on a 520x430 drawing
+  // into the centre of each marker box as a percentage of the picture.
   const got = M.pinMenuMarkers();
   const want = M.PIN_MENU_MARKER_PX.map(function (mk) {
     return {
@@ -411,7 +411,7 @@ test("the marker percentages are derived from the mockup's own coordinates", () 
   assert.deepStrictEqual(got, want);
   // Pinned to the shipped values, so a stylesheet that hardcodes them and a
   // drawing that moves cannot drift apart unnoticed.
-  assert.deepStrictEqual(got, [{ x: 78.29, y: 17.91 }, { x: 90.13, y: 69.53 }]);
+  assert.deepStrictEqual(got, [{ x: 68.65, y: 24.65 }, { x: 76.73, y: 72.33 }]);
   // A fresh array each call: the renderer hands these to the DOM and a
   // shared mutable one would be a marker that moves for the next caller.
   assert.notStrictEqual(M.pinMenuMarkers(), got);

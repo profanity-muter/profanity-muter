@@ -3599,7 +3599,7 @@ every video, plus a count of words muted."
 
 **The Pin it step also shows what the icon is FOR, above the instructions.**
 Five 32px slots with Chrome-style badge overlays and captions: faded icon and
-no badge for "Not on YouTube", then Analyzing, Protected, 3 words muted, Needs
+no badge for "Off", then Analyzing, Protected, 3 words muted, Needs
 a look. "Pin this" is a chore until you have seen the payoff. Drawn in
 HTML/CSS with the real icon assets and the shipped constants from
 `shared/badge.js`, because Chrome composites badge text onto the icon at paint
@@ -3607,3 +3607,16 @@ time and there is no such image to ship; `badge_test.js` asserts the five
 captions, the three badge texts and the three colours are the ones this
 extension actually produces, so the row cannot quietly become an illustration
 of a product we do not have. 520 tests across 18 files, from 513.
+
+**The picture was re-cut because it was being shown at the wrong size, not
+because it was badly compressed:** a 760x430 drawing rendered into a 504px
+column is a two-thirds shrink, which put every hairline on a fractional pixel
+and took the menu's 13.5px labels down to about 9px, so the whole thing read
+as a bad upload, and the fix was to crop the canvas to 520x430, the right end
+of the toolbar plus the open menu, render at deviceScaleFactor 3 (1560x1290)
+and set the type at 14px and up, which puts the picture back at roughly 1:1
+with what was drawn. The markers moved with it and now sit on the two gold
+ringed CONTROLS rather than on the numbered discs beside them (68.65%/24.65%
+and 76.73%/72.33%), and the first badge caption went from "Not on YouTube" to
+"Off", because a caption under a faded icon is naming a state, and the state
+has a name.

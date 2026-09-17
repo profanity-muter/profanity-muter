@@ -276,7 +276,7 @@ test("the onboarding Pin it step shows the shipped badge states", () => {
     path.join(__dirname, "..", "onboarding", "onboarding.css"),
     "utf8"
   );
-  ["Not on YouTube", "Analyzing", "Protected", "3 words muted", "Needs a look"].forEach(
+  ["Off", "Analyzing", "Protected", "3 words muted", "Needs a look"].forEach(
     function (caption) {
       assert.ok(html.indexOf(">" + caption + "<") > 0, "caption missing: " + caption);
     }
