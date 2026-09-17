@@ -620,7 +620,7 @@ test("every pointer on the tour is ink, not gold", () => {
   assert.ok(tour.indexOf("background:#1d2f54;color:#f3e6c0;") > 0, "the box contents stay");
 });
 
-test("the unpinned tour step renders the picture and its two rings", () => {
+test("the unpinned tour step renders the picture at the size it was drawn", () => {
   const src = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
   // A content script cannot load a packaged file by relative path: the URL
   // would resolve against youtube.com and 404 in silence, leaving a card
@@ -637,15 +637,21 @@ test("the unpinned tour step renders the picture and its two rings", () => {
   // Exposed to YouTube only, like everything else in that list: a file that
   // any origin can fetch is a fingerprinting beacon for this extension.
   assert.deepStrictEqual(entry.matches, ["https://www.youtube.com/*"]);
-  // The rings are positioned from the step's own marker percentages, so the
-  // geometry has exactly one definition (shared/moments.js).
-  assert.ok(src.indexOf("markers[mi].x + '%'") > 0 && src.indexOf("markers[mi].y + '%'") > 0);
-  assert.ok(src.indexOf("pm-tour-ring--2") > 0, "the second ring pulses after the first");
-  assert.ok(src.indexOf("animation-delay:1200ms") > 0, "1 then 2, not both at once");
+  // 520 is the drawing's own width. It was 360, a 0.7 shrink that put every
+  // hairline of a line drawing between pixels, which is the same fuzz that
+  // got the onboarding copy re-cut; the card had to follow.
   assert.ok(
-    src.indexOf("@media (prefers-reduced-motion:reduce)") > 0,
-    "the rings hold still for anyone who asked the OS for stillness"
+    /var CALLOUT_IMAGE_MAX_PX = 520;/.test(src),
+    "the card shows the drawing at its native 520px"
   );
+  // And gives it back only when the window is narrower than the card, which
+  // is the one case where a soft picture beats one running off the screen.
+  assert.ok(src.indexOf("'px, 100vw - '") > 0, "the card caps itself to the viewport");
+  // Nothing is drawn on top of it. Two sets of circles competed with the
+  // drawing's own numbered discs and gold rings, so the overlay went.
+  const tour = src.slice(src.indexOf("function buildFirstProtectedBox"));
+  assert.strictEqual(tour.indexOf("step.markers"), -1, "no marker overlay in the renderer");
+  assert.strictEqual(src.indexOf("pm-tour-ring"), -1, "no ring class left in content.js");
 });
 
 // ---- summary -------------------------------------------------------------

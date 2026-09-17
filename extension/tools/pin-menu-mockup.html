@@ -163,15 +163,15 @@
      These discs are LABELS, not targets. They sit beside the control they
      number, never on top of it, because a solid navy disc centred on the
      puzzle piece hides the one shape the user is being sent to find. The
-     targets are the two gold-ringed controls, .puzzle and .row--ours .pin,
-     and their boxes are what PIN_MENU_MARKER_PX in shared/moments.js
-     carries, so the pulsing ring the onboarding step draws over this picture
-     lands on the control rather than on the number.
+     targets are the two gold-ringed controls, .puzzle and .row--ours .pin.
 
-     Boxes as rendered at 520x430 (measured, not guessed):
-       .puzzle           40x40 at top 86,  right 143
-       .row--ours .pin   28x28 at top 297, right 107
-     Move either control and those two lines in moments.js move with it. */
+     This drawing is the only thing that marks them. The onboarding step and
+     the tour card both used to pulse a ring over each control from
+     coordinates carried in shared/moments.js, and the owner read the live
+     capture as two competing sets of circles, so the overlays and the
+     coordinates went out together. Anything that has to be pointed at gets
+     its disc and its gold ring here, in the picture, where the numbering
+     already lives. */
   .num {
     position: absolute;
     width: 30px; height: 30px; border-radius: 50%;

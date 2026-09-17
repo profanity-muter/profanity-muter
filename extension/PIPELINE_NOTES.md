@@ -3620,3 +3620,16 @@ ringed CONTROLS rather than on the numbered discs beside them (68.65%/24.65%
 and 76.73%/72.33%), and the first badge caption went from "Not on YouTube" to
 "Off", because a caption under a faded icon is naming a state, and the state
 has a name.
+
+**Then the pulsing rings came out of both surfaces.** The drawing already
+numbers its two controls with discs and rings each of them in gold, so the
+navy circles thrown on top were a second set of markers competing with the
+ones that were already there, which is what the owner read off the live
+capture. And the tour card now shows the drawing at 520px, its native size,
+for the same reason the onboarding copy was re-cut: it was running at 362px,
+a 0.7 shrink that puts every hairline of a line drawing between pixels. The
+card is 546px wide, still pinned top-right, capped at the viewport minus a
+24px gutter so a narrow window scales the picture rather than losing it off
+the edge. The Pin it step also reordered: the five badge states go above the
+lede now, because "pin this" is a chore until you have seen what the icon
+will tell you. 521 tests across 18 files, from 520.

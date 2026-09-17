@@ -376,61 +376,72 @@ test("step 2 forks on pinned, and unknown reads as pinned", () => {
   });
 });
 
-test("the unpinned step carries the picture and both of its markers", () => {
+test("the unpinned step carries the picture", () => {
   // The card is the whole point of the unpinned branch: the sentence names
   // a control, the drawing points at it. If the descriptor goes missing the
   // renderer silently falls back to a text box that reads like the old one.
   const step = M.firstProtectedSteps(false)[1];
   assert.strictEqual(step.image, "onboarding/pin-menu.png");
   assert.strictEqual(step.image, M.PIN_MENU_IMAGE);
-  assert.ok(Array.isArray(step.markers) && step.markers.length === 2);
-  step.markers.forEach(function (mk, i) {
-    assert.strictEqual(typeof mk.x, "number", "marker " + i);
-    assert.strictEqual(typeof mk.y, "number", "marker " + i);
-    // Inside the image box. A ring at 104% is a ring nobody sees, and it is
-    // the exact failure a percentage conversion produces when it is wrong.
-    assert.ok(mk.x > 0 && mk.x < 100, "x in range: " + mk.x);
-    assert.ok(mk.y > 0 && mk.y < 100, "y in range: " + mk.y);
-  });
-  // Marker 1 is the puzzle piece in the toolbar, marker 2 is the pin in the
-  // menu below it, so 2 is lower down the picture than 1. A swapped pair
-  // would still pass the range check above.
-  assert.ok(step.markers[1].y > step.markers[0].y, "2 sits below 1");
 });
 
-test("the marker percentages are derived from the mockup's own coordinates", () => {
-  // The conversion, not the answer: right/top pixels on a 520x430 drawing
-  // into the centre of each marker box as a percentage of the picture.
-  const got = M.pinMenuMarkers();
-  const want = M.PIN_MENU_MARKER_PX.map(function (mk) {
-    return {
-      x: Math.round(((M.PIN_MENU_IMAGE_W - mk.rightPx - mk.sizePx / 2) / M.PIN_MENU_IMAGE_W) * 10000) / 100,
-      y: Math.round(((mk.topPx + mk.sizePx / 2) / M.PIN_MENU_IMAGE_H) * 10000) / 100
-    };
-  });
-  assert.deepStrictEqual(got, want);
-  // Pinned to the shipped values, so a stylesheet that hardcodes them and a
-  // drawing that moves cannot drift apart unnoticed.
-  assert.deepStrictEqual(got, [{ x: 68.65, y: 24.65 }, { x: 76.73, y: 72.33 }]);
-  // A fresh array each call: the renderer hands these to the DOM and a
-  // shared mutable one would be a marker that moves for the next caller.
-  assert.notStrictEqual(M.pinMenuMarkers(), got);
+test("nothing is layered over the picture any more", () => {
+  // The rings came out because the drawing already numbers and gold-rings
+  // its own two controls, and a second set of circles on top read as extra
+  // circles rather than as a cue. A descriptor field nobody renders is the
+  // way that quietly comes back.
+  const step = M.firstProtectedSteps(false)[1];
+  assert.strictEqual(step.markers, undefined, "no markers field on the step");
+  assert.strictEqual(typeof M.pinMenuMarkers, "undefined");
+  assert.strictEqual(typeof M.PIN_MENU_MARKER_PX, "undefined");
+  assert.strictEqual(typeof M.PIN_MENU_IMAGE_W, "undefined");
+  assert.strictEqual(typeof M.PIN_MENU_IMAGE_H, "undefined");
 });
 
-test("the onboarding stylesheet still agrees with the computed markers", () => {
-  // The onboarding page draws the same rings over the same drawing, but it
-  // is a stylesheet and cannot call a function. So the numbers are pasted,
-  // and this is what stops the paste from going stale.
-  const css = fs.readFileSync(
-    path.join(__dirname, "..", "onboarding", "onboarding.css"),
-    "utf8"
-  );
-  M.pinMenuMarkers().forEach(function (mk, i) {
-    assert.ok(
-      css.indexOf("left: " + mk.x + "%; top: " + mk.y + "%") > 0,
-      "ring " + (i + 1) + " at " + mk.x + "%/" + mk.y + "% is missing from onboarding.css"
+test("no ring class survives in the surfaces that drew them", () => {
+  // Deleted, not hidden. A rule left behind with nothing matching it is the
+  // thing a later pass reads as still in use and wires back up. Greps the
+  // three files that ever carried one.
+  const root = path.join(__dirname, "..");
+  [
+    "content.js",
+    path.join("onboarding", "onboarding.html"),
+    path.join("onboarding", "onboarding.css")
+  ].forEach(function (rel) {
+    const src = fs.readFileSync(path.join(root, rel), "utf8");
+    ["pm-tour-ring", "ob-figure-ring", "TOUR_RING_CSS", "ob-figure-frame"].forEach(
+      function (needle) {
+        assert.strictEqual(src.indexOf(needle), -1, needle + " is still in " + rel);
+      }
     );
   });
+});
+
+test("the Pin it step shows the payoff before the reason for it", () => {
+  // Order on the page, in the file: title, then the five badge states under
+  // "What the pinned icon tells you", then the paragraph explaining why the
+  // icon is hidden, then the two clicks. Asking someone to pin a thing before
+  // showing what it will tell them is asking for a chore.
+  const html = fs.readFileSync(
+    path.join(__dirname, "..", "onboarding", "onboarding.html"),
+    "utf8"
+  );
+  const step = html.slice(html.indexOf('id="ob-step-4"'), html.indexOf("</section>", html.indexOf('id="ob-step-4"')));
+  const order = [
+    ">Pin it<",
+    "What the pinned icon tells you",
+    "The toolbar icon is where you see the filter working",
+    "puzzle-piece icon</strong> in the Chrome toolbar",
+    "pin-menu.png",
+    'id="ob-pin-state"'
+  ].map(function (needle) {
+    const at = step.indexOf(needle);
+    assert.ok(at > 0, "missing from the Pin it step: " + needle);
+    return at;
+  });
+  for (let i = 1; i < order.length; i++) {
+    assert.ok(order[i] > order[i - 1], "out of order at position " + i);
+  }
 });
 
 test("the card gets a longer dwell than the text step, and still retires", () => {

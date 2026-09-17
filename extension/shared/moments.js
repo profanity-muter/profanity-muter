@@ -301,54 +301,19 @@
   // what it is talking about. Unknown (getUserSettings missing or throwing)
   // resolves to the pinned copy: it makes no claim about their toolbar, so
   // it is the only variant that cannot be wrong.
-  // The Pin it picture, and where its two numbered markers sit (0.1.56,
-  // third pass). The onboarding step already carried this drawing; the tour's
-  // unpinned branch now carries the SAME file, because a user who never
-  // finished onboarding is exactly the user step 2 is talking to, and two
-  // drawings of one menu is two things to keep true.
+  // The Pin it picture (0.1.56). The onboarding step already carried this
+  // drawing; the tour's unpinned branch carries the SAME file, because a user
+  // who never finished onboarding is exactly the user step 2 is talking to,
+  // and two drawings of one menu is two things to keep true.
   //
-  // The marker coordinates are boxes in tools/pin-menu-mockup.html, measured
-  // from the rendered drawing: the puzzle-piece button in the toolbar and the
-  // pin control on the Profanity Muter row, each positioned from the TOP and
-  // the RIGHT of a 520x430 canvas. They are the CONTROLS, not the numbered
-  // discs beside them: a ring on the disc is a ring on the label, and the
-  // user is being sent to the thing the label points at.
-  //
-  // The canvas was 760 wide until this pass. The onboarding column renders
-  // the picture at about 500px, so a 760px drawing was being shrunk by a
-  // third, which put every hairline on a fractional pixel and dropped the
-  // menu's labels to around 7px. Nothing about the file was ever compressed;
-  // it was the display size. Cropping the drawing to the part the step is
-  // about brought it back to roughly 1:1.
-  //
-  // Kept as raw numbers rather than as the finished percentages so that
-  // moving a control in the mockup is one edit here, and so the conversion is
-  // a function a node test can check rather than four magic percentages
-  // pasted into a stylesheet.
+  // The drawing does its own pointing. It numbers the two controls with discs
+  // 1 and 2 and rings each control in gold. Both surfaces used to pulse a
+  // second pair of circles on top of that, and the owner read the live
+  // capture as extra circles competing with the drawing's own markers, so the
+  // rings and every coordinate that placed them are gone. What the picture
+  // needs from the code is to be shown at the size it was drawn at, 520x430,
+  // which is why it was re-cut to that canvas in the first place.
   var PIN_MENU_IMAGE = "onboarding/pin-menu.png";
-  var PIN_MENU_IMAGE_W = 520;
-  var PIN_MENU_IMAGE_H = 430;
-  var PIN_MENU_MARKER_PX = [
-    { topPx: 86, rightPx: 143, sizePx: 40 },
-    { topPx: 297, rightPx: 107, sizePx: 28 }
-  ];
-
-  // Percentages of the image box, so a ring drawn on top stays on its marker
-  // at any rendered width. Rounded to 2dp: a stylesheet and a test both have
-  // to write the same literal, and full float noise makes that a trap.
-  function pinMenuMarkers() {
-    var out = [];
-    for (var i = 0; i < PIN_MENU_MARKER_PX.length; i++) {
-      var m = PIN_MENU_MARKER_PX[i];
-      var cx = PIN_MENU_IMAGE_W - m.rightPx - m.sizePx / 2;
-      var cy = m.topPx + m.sizePx / 2;
-      out.push({
-        x: Math.round((cx / PIN_MENU_IMAGE_W) * 10000) / 100,
-        y: Math.round((cy / PIN_MENU_IMAGE_H) * 10000) / 100
-      });
-    }
-    return out;
-  }
 
   function firstProtectedSteps(pinned) {
     return [
@@ -370,8 +335,7 @@
               "Pin it to keep it in view:",
               "1. Click the puzzle-piece icon up here. 2. Click the pin next to Profanity Muter."
             ],
-            image: PIN_MENU_IMAGE,
-            markers: pinMenuMarkers()
+            image: PIN_MENU_IMAGE
           }
         : {
             anchor: "toolbar",
@@ -535,10 +499,6 @@
     FIRST_PROTECTED_VISIBLE_MS: FIRST_PROTECTED_VISIBLE_MS,
     FIRST_PROTECTED_CARD_VISIBLE_MS: FIRST_PROTECTED_CARD_VISIBLE_MS,
     PIN_MENU_IMAGE: PIN_MENU_IMAGE,
-    PIN_MENU_IMAGE_W: PIN_MENU_IMAGE_W,
-    PIN_MENU_IMAGE_H: PIN_MENU_IMAGE_H,
-    PIN_MENU_MARKER_PX: PIN_MENU_MARKER_PX,
-    pinMenuMarkers: pinMenuMarkers,
     makeFirstProtectedRecord: makeFirstProtectedRecord,
     firstProtectedAlreadyShown: firstProtectedAlreadyShown,
     shouldShowFirstProtected: shouldShowFirstProtected,

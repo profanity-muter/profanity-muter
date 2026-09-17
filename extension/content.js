@@ -1996,31 +1996,19 @@
   // the diagonal the old triangle stood on: it pokes CALLOUT_CARET_PX above
   // the box, same as before.
   var CALLOUT_CARET_SIDE = Math.round(CALLOUT_CARET_PX * Math.SQRT2);
-  // The card's picture, at the width the drawing stops gaining detail.
-  var CALLOUT_IMAGE_MAX_PX = 360;
-  // The markers' rings. Same shape and the same 2.4s one-then-two loop as
-  // the onboarding page's (.ob-figure-ring in onboarding/onboarding.css);
-  // it cannot be a shared file because a content script cannot link a
-  // stylesheet into someone else's page, so the two are kept deliberately
-  // identical and the geometry they both use comes from one function in
-  // shared/moments.js. A paper halo under the ink ring so the ring survives
-  // the darker parts of the drawing it sits on.
-  var TOUR_RING_CSS =
-    '.pm-tour-ring{position:absolute;width:6.5%;aspect-ratio:1;' +
-    'border-radius:50%;border:2.5px solid ' + CALLOUT_POINTER + ';' +
-    'box-shadow:0 0 0 2px rgba(250,248,242,0.85);pointer-events:none;' +
-    'transform:translate(-50%,-50%);opacity:0.45;' +
-    'animation:pm-tour-ring-pulse 2400ms ease-in-out infinite;}' +
-    '.pm-tour-ring--2{animation-delay:1200ms;}' +
-    '@keyframes pm-tour-ring-pulse{' +
-    '0%{transform:translate(-50%,-50%) scale(1);opacity:0.45;}' +
-    '8%{transform:translate(-50%,-50%) scale(1.4);opacity:1;}' +
-    '25%{transform:translate(-50%,-50%) scale(1);opacity:0.45;}' +
-    '100%{transform:translate(-50%,-50%) scale(1);opacity:0.45;}}' +
-    // A cue that throbs at someone who asked the OS for stillness is the
-    // page ignoring them. The rings stay, fully drawn, they just hold still.
-    '@media (prefers-reduced-motion:reduce){' +
-    '.pm-tour-ring{animation:none;opacity:1;}}';
+  // The card's picture, shown at the size it was drawn at. It used to be
+  // scaled to 360px from a 520px drawing, and a 0.7 shrink of a line drawing
+  // puts every hairline between pixels: the same fuzz that got the onboarding
+  // copy re-cut. So the card is as wide as the drawing plus its padding and
+  // the image runs at 1:1, and only a narrow window makes it give any of that
+  // back.
+  var CALLOUT_IMAGE_MAX_PX = 520;
+  // Card padding, both sides, plus the 1px border on each edge of the image.
+  var CALLOUT_IMAGE_CHROME_PX = 26 + 2;
+  // The viewport gutter a narrow window keeps. Below that the image scales
+  // down, which is the one case where a soft picture beats one running off
+  // the screen.
+  var CALLOUT_IMAGE_VIEWPORT_GUTTER_PX = 24;
   var firstProtectedAsked = false;
   var firstProtectedEl = null;
   var firstProtectedTimer = null;
@@ -2149,11 +2137,14 @@
       caretRight = 18;
       if (step.image) {
         // Wider than the 280px text box, because the drawing is the part
-        // that points and a 280px-wide menu is unreadable. Set after the
-        // shared string rather than by forking it: the shared string is what
-        // keeps the whole tour ONE interactive surface in pill_test.js.
-        el.style.maxWidth = (CALLOUT_IMAGE_MAX_PX + 26) + 'px';
-        ensureBadgeStyle(); // also carries the ring keyframes
+        // that points and a 280px-wide menu is unreadable. min() rather than
+        // a flat width so the card still fits a window narrower than the
+        // drawing. Set after the shared string rather than by forking it:
+        // the shared string is what keeps the whole tour ONE interactive
+        // surface in pill_test.js.
+        el.style.maxWidth = 'min(' + (CALLOUT_IMAGE_MAX_PX + CALLOUT_IMAGE_CHROME_PX) +
+          'px, 100vw - ' + CALLOUT_IMAGE_VIEWPORT_GUTTER_PX + 'px)';
+        ensureBadgeStyle();
       }
     } else {
       var video = getVideo();
@@ -2212,7 +2203,7 @@
     if (step.image) {
       var figure = document.createElement('div');
       figure.style.cssText =
-        'position:relative;margin:8px 0 10px;max-width:' + CALLOUT_IMAGE_MAX_PX + 'px;';
+        'margin:8px 0 10px;max-width:' + CALLOUT_IMAGE_MAX_PX + 'px;';
       var img = document.createElement('img');
       try { img.src = chrome.runtime.getURL(step.image); } catch (e) {}
       img.alt = '';
@@ -2220,20 +2211,6 @@
         'display:block;width:100%;height:auto;border-radius:8px;' +
         'border:1px solid ' + CALLOUT_BORDER + ';';
       figure.appendChild(img);
-      // One ring per numbered marker, positioned as a PERCENTAGE of the
-      // image box (shared/moments.js computes them from the mockup's own
-      // coordinates), so they stay on their markers whatever width the box
-      // ends up at. They pulse 1 then 2 because the instructions are
-      // ordered and a pair of rings throbbing together says "look at both
-      // of these" rather than "this one, then that one".
-      var markers = step.markers || [];
-      for (var mi = 0; mi < markers.length; mi++) {
-        var ring = document.createElement('div');
-        ring.className = 'pm-tour-ring' + (mi === 1 ? ' pm-tour-ring--2' : '');
-        ring.style.left = markers[mi].x + '%';
-        ring.style.top = markers[mi].y + '%';
-        figure.appendChild(ring);
-      }
       el.appendChild(figure);
     }
 
@@ -2457,8 +2434,7 @@
         '.ytp-autohide .pm-badge{top:' + idleTop + 'px !important;}' +
         '.pm-first-protected--pill{top:' + (chromeTop + drop) + 'px !important;' +
         'transition:top 180ms cubic-bezier(0.4,0,0.2,1) !important;}' +
-        '.ytp-autohide .pm-first-protected--pill{top:' + (idleTop + drop) + 'px !important;}' +
-        TOUR_RING_CSS;
+        '.ytp-autohide .pm-first-protected--pill{top:' + (idleTop + drop) + 'px !important;}';
       (document.head || document.documentElement).appendChild(badgeStyleEl);
     } catch (e) {
       badgeStyleEl = null; // inline top remains, which is the safe offset

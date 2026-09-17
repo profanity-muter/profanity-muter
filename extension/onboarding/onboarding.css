@@ -836,6 +836,12 @@ input:focus-visible {
   color: var(--ink);
 }
 
+/* The row sits directly above the lede on the Pin it step, so the gap between
+   the two lives here rather than on a paragraph every other step also uses. */
+.ob-badge-row + .ob-lede {
+  margin-top: 22px;
+}
+
 .ob-badge-row {
   display: flex;
   flex-wrap: wrap; /* two rows on a narrow window rather than a squeeze */
@@ -908,14 +914,11 @@ input:focus-visible {
   margin: 18px 0 0;
 }
 
-/* The frame exists only to be the rings' positioning context: the rings are
-   placed as percentages of the picture, so whatever they are inside has to
-   be exactly the picture's box and nothing else. */
-.ob-figure-frame {
-  position: relative;
-  display: block;
-}
-
+/* No wrapper between the figure and the picture. The only thing the old
+   frame did was give the pulsing rings a positioning context, and those went
+   out: the drawing numbers and rings its own two controls, and a second set
+   of circles on top competed with them. The border and the rounding were
+   always on the image itself. */
 .ob-figure img {
   display: block;
   width: 100%;
@@ -926,44 +929,6 @@ input:focus-visible {
   background: var(--paper);
 }
 
-
-/* The two pulsing markers (0.1.56, third pass). The drawing already numbers
-   the two controls, but a still number is something you find after you have
-   read the whole picture; a ring that lights up 1, then 2, walks the eye
-   through the two clicks in the order the instructions give them.
-
-   The percentages are PMMoments.pinMenuMarkers(), computed from the marker
-   coordinates in tools/pin-menu-mockup.html. test/moments_test.js asserts
-   this file still carries the numbers that function returns, so moving a
-   marker in the drawing cannot quietly leave a ring floating in white space.
-   content.js draws the identical ring over the identical picture in the
-   unpinned branch of the first-protected tour; it cannot share this file,
-   because a content script cannot link a stylesheet into YouTube's page. */
-.ob-figure-ring {
-  position: absolute;
-  width: 6.5%;
-  aspect-ratio: 1;
-  border-radius: 50%;
-  /* Literal ink, NOT var(--ink): the drawing underneath is a fixed light
-     image in every theme, so a ring that flipped to the dark-mode ink would
-     be cream drawn on cream. */
-  border: 2.5px solid #1d2f54;
-  box-shadow: 0 0 0 2px rgba(250, 248, 242, 0.85);
-  transform: translate(-50%, -50%);
-  opacity: 0.45;
-  pointer-events: none;
-  animation: ob-figure-ring-pulse 2400ms ease-in-out infinite;
-}
-
-.ob-figure-ring--1 { left: 68.65%; top: 24.65%; }
-.ob-figure-ring--2 { left: 76.73%; top: 72.33%; animation-delay: 1200ms; }
-
-@keyframes ob-figure-ring-pulse {
-  0% { transform: translate(-50%, -50%) scale(1); opacity: 0.45; }
-  8% { transform: translate(-50%, -50%) scale(1.4); opacity: 1; }
-  25% { transform: translate(-50%, -50%) scale(1); opacity: 0.45; }
-  100% { transform: translate(-50%, -50%) scale(1); opacity: 0.45; }
-}
 
 /* The bouncing bracket. Fixed to the VIEWPORT because the thing it points at
    is the browser's own toolbar, which is not on the page at all: the closest
@@ -1044,12 +1009,5 @@ input:focus-visible {
 @media (prefers-reduced-motion: reduce) {
   .ob-pin-arrow {
     animation: none;
-  }
-
-  /* Fully drawn, just still. Hiding them would take the cue away from the
-     one user who most needs a static picture to work on its own. */
-  .ob-figure-ring {
-    animation: none;
-    opacity: 1;
   }
 }

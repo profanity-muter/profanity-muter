@@ -314,16 +314,13 @@
          than leaving the user to wonder. -->
     <section class="ob-step pm-hidden" id="ob-step-4" aria-hidden="true">
       <h2 class="ob-step-title">Pin it</h2>
-      <p class="ob-lede">
-        The toolbar icon is where you see the filter working. Chrome hides new
-        extensions behind a menu until you pin them.
-      </p>
-      <!-- What the icon is FOR, before the instructions for getting it.
-           "Pin this" with no picture of the payoff is a chore; the five
-           states are the payoff, and they are the shipped constants from
-           shared/badge.js rather than an illustrator's idea of them. Drawn
-           in HTML: Chrome composites the badge onto the icon at paint time,
-           so there is no such image to ship even if we wanted one. -->
+      <!-- What the icon is FOR, above everything else on this step, title
+           excepted. "Pin this" with no picture of the payoff is a chore, so
+           the payoff goes first and the reason and the instructions follow
+           it. The five states are the shipped constants from shared/badge.js
+           rather than an illustrator's idea of them. Drawn in HTML: Chrome
+           composites the badge onto the icon at paint time, so there is no
+           such image to ship even if we wanted one. -->
       <p class="ob-badge-row-title">What the pinned icon tells you</p>
       <ul class="ob-badge-row">
         <li class="ob-badge-item">
@@ -361,24 +358,23 @@
           <span class="ob-badge-cap">Needs a look</span>
         </li>
       </ul>
+      <p class="ob-lede">
+        The toolbar icon is where you see the filter working. Chrome hides new
+        extensions behind a menu until you pin them.
+      </p>
       <ol class="ob-list ob-list--inline">
         <li>Click the <strong><svg class="ob-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 11H19V7a2 2 0 0 0-2-2h-4V3.5a2.5 2.5 0 0 0-5 0V5H4a2 2 0 0 0-2 2v3.8h1.5a2.7 2.7 0 0 1 0 5.4H2V20a2 2 0 0 0 2 2h3.8v-1.5a2.7 2.7 0 0 1 5.4 0V22H17a2 2 0 0 0 2-2v-4h1.5a2.5 2.5 0 0 0 0-5z"/></svg>puzzle-piece icon</strong> in the Chrome toolbar.</li>
         <li>Click the <strong><svg class="ob-glyph" viewBox="0 0 24 24" aria-hidden="true"><path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/></svg>pin</strong> next to Profanity Muter.</li>
       </ol>
       <figure class="ob-figure">
-        <!-- The rings pulse 1 then 2 over the drawing's own numbered
-             markers. Their positions are percentages of the image box, so
-             they hold at any width; the numbers come from
-             PMMoments.pinMenuMarkers(), which derives them from the marker
-             coordinates in tools/pin-menu-mockup.html, and a node test
-             checks the stylesheet still agrees with it. The content script's
-             copy of this card uses the identical rule. -->
-        <div class="ob-figure-frame">
-          <img src="pin-menu.png" width="520" height="430"
-               alt="The top-right of a Chrome window. The puzzle-piece icon in the toolbar is ringed and marked 1. Below it the Extensions menu is open, listing several extensions; the Profanity Muter row is highlighted and its pin control is ringed and marked 2." />
-          <span class="ob-figure-ring ob-figure-ring--1" aria-hidden="true"></span>
-          <span class="ob-figure-ring ob-figure-ring--2" aria-hidden="true"></span>
-        </div>
+        <!-- No overlay on this picture. The drawing numbers its own two
+             controls and rings each of them in gold; a second set of circles
+             pulsed on top read as extra circles competing with the markers
+             that were already there. Shown at 520 wide, the size it was drawn
+             at, because shrinking a line drawing is what made it look badly
+             compressed the first time round. -->
+        <img src="pin-menu.png" width="520" height="430"
+             alt="The top-right of a Chrome window. The puzzle-piece icon in the toolbar is ringed and marked 1. Below it the Extensions menu is open, listing several extensions; the Profanity Muter row is highlighted and its pin control is ringed and marked 2." />
       </figure>
       <p class="ob-pin-state" id="ob-pin-state" role="status" aria-live="polite"></p>
       <p class="pm-hint">
