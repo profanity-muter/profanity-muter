@@ -3327,3 +3327,25 @@ stage that can wedge a resource shared across tabs, was the only one without.
 - **Tests** pin the budget (floor, cold allowance, rtf scaling, monotonic in
   audio seconds, the ceiling) and guard that the serialized inference call is
   still wrapped, since an unwrapped one is invisible until it wedges a user.
+
+## 0.1.55: "for fuck's sake" played uncensored
+
+User report, 2026-09-17. The phrase played at the default (strict) level. The
+viewer added it as a custom word and it skipped, which confirmed the pipeline
+was fine and the word list was the gap.
+
+Two gaps, reproduced against the matcher in isolation before touching anything:
+
+- **Possessive `'s`.** `normalizeToken` kept a trailing apostrophe-s inside the
+  token, so "fuck's" never reduced to "fuck" and the stemmer never saw the base
+  word. Whisper spells the phrase "for fuck's sake" almost every time, so this
+  was the common path, not an edge. Fix: strip a trailing `'s` or `’s` in
+  `normalizeToken`. Innocent possessives ("boss's", "class's", "let's") are
+  pinned as non-matches.
+- **Run-together spellings.** "fucksake" and "fuckssake" had no entry and
+  substring matching is off by design, so they were whole unknown tokens. Added
+  both to the core list.
+
+Still not caught, deliberately: "fck", "fuk", "fkn", "fuking". Whisper does
+not emit those from speech, and adding leetspeak roots widens the innocent
+false-positive surface for nothing measurable.

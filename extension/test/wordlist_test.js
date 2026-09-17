@@ -456,6 +456,33 @@ test("STORAGE_KEYS covers pm_allowWords", () => {
   assert.notStrictEqual(PMWordlistCore.STORAGE_KEYS.indexOf("pm_allowWords"), -1);
 });
 
+// ---- "for fuck's sake" (user report, 2026-09-17) ---------------------------
+// A viewer heard the phrase play uncensored at the default level. Two gaps:
+// the possessive "'s" kept "fuck's" from reducing to "fuck", and the
+// run-together spellings had no entry.
+
+test("possessive 's is stripped so fuck's matches at every level", () => {
+  for (const level of ["standard", "strict"]) {
+    const list = tierWordlist(level);
+    assert.ok(matches(list, "for fuck's sake"), level + ": straight apostrophe");
+    assert.ok(matches(list, "for fuck\u2019s sake"), level + ": curly apostrophe");
+  }
+});
+
+test("run-together fucksake / fuckssake are caught", () => {
+  const list = tierWordlist("strict");
+  assert.ok(matches(list, "fucksake"));
+  assert.ok(matches(list, "fuckssake"));
+  assert.ok(matches(list, "fucks sake"));
+});
+
+test("possessive stripping does not flag innocent words", () => {
+  const list = tierWordlist("strict");
+  for (const w of ["it's", "let's", "class's", "boss's", "mass's", "james's"]) {
+    assert.ok(!matches(list, w), w + " should pass");
+  }
+});
+
 // ---- summary -------------------------------------------------------------
 
 console.log("wordlist_test.js: " + passed + "/" + (passed + failed) + " passed");

@@ -221,7 +221,7 @@
     "dumbfuck", "dyke", "effing", "fag", "faggot", "fellatio", "flippin",
     "flipping", "freaken", "freaking",
     "fricken", "frickin", "fricking", "friggen", "friggin", "fuck", "fucker", "fuckface",
-    "fuckhead", "fucking", "fuckwit", "gangbang", "god damn", "goddam",
+    "fuckhead", "fucking", "fucksake", "fuckssake", "fuckwit", "gangbang", "god damn", "goddam",
     "goddamn", "goddamnit", "gook", "gosh", "handjob", "heck", "hell",
     "holy shit", "horseshit", "jackass", "jackoff", "jerkoff",
     "gism", "jesus christ", "jism", "jiz", "jizz", "kike", "motherfucker", "nigga", "nigger",
@@ -548,7 +548,12 @@
     return s
       .replace(/^[^\p{L}\p{N}'*]+/u, "")
       .replace(/[^\p{L}\p{N}'*]+$/u, "")
-      .replace(/'+$/, "");
+      .replace(/'+$/, "")
+      // Possessive "'s" (straight or curly apostrophe) is dropped so that
+      // "fuck's" (as in Whisper's usual "for fuck's sake") reduces to
+      // "fuck". Without this the apostrophe kept the token whole and the
+      // stemmer never saw the base word, so the phrase played uncensored.
+      .replace(/['\u2019]s$/, "");
   }
 
   // Return the set of "stems" for a normalized word: the word itself,
