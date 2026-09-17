@@ -264,6 +264,9 @@
 
   function newSession(videoId) {
     sessionInstanceSeq++;
+    // A new video means the toolbar's per-tab state is stale in every field,
+    // including the count. Told, not inferred: see resetBadgeState.
+    try { resetBadgeState(); } catch (e) {}
     return {
       instanceId: sessionInstanceSeq,
       videoId: videoId,
@@ -1871,6 +1874,219 @@
     return withTrace({ kind: 'buffering' }); // brief in-between window (recent < x < stalled) - still assume progress, avoid label flicker
   }
 
+  // ---- toolbar badge reporting (0.1.56) -----------------------------------
+  //
+  // Field observation, 2026-09-17: a new user watched a video with the filter
+  // running and could not tell whether she was protected. The pill said
+  // "Protected" and she never found it; the toolbar said nothing, because
+  // until this release the toolbar only spoke when something was wrong.
+  //
+  // So the presented pill state and the per-video muted count are posted to
+  // the service worker, which paints the toolbar from shared/badge.js. The
+  // count is the SAME session.mutedCount the pill's own " . N muted" suffix
+  // uses and the same one the Activity dashboard's per-video accounting is
+  // built from. A second counter would eventually disagree with the first,
+  // and the disagreement would show up on two surfaces at once.
+  //
+  // renderStatusPill runs at 2Hz as a backstop, so this dedupes hard: a
+  // state transition posts immediately (it is what the user is waiting for),
+  // and a count change is debounced, because a burst of mutes in one noisy
+  // sentence is one piece of news, not five.
+  var BADGE_COUNT_DEBOUNCE_MS = 400;
+  var lastBadgeSent = null; // {presented, mutedCount, enabled, isWatchPage}
+  var badgeCountTimer = null;
+
+  // A watch page is where filtering can happen at all. Shorts and every other
+  // YouTube surface resolve to grey through this, which is the plain truth:
+  // there is nothing here for the extension to do.
+  function isWatchPage() {
+    try {
+      return location.pathname === '/watch';
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function postBadgeState(payload) {
+    try {
+      var p = chrome.runtime.sendMessage(Object.assign({ type: 'pm-badge-state' }, payload));
+      if (p && typeof p.catch === 'function') p.catch(function () {});
+    } catch (e) {
+      // Orphaned content script, or the SW asleep mid-send. The badge is a
+      // convenience and is never worth throwing into the pipeline for.
+    }
+  }
+
+  function reportBadgeState(presentedState, enabled) {
+    var next = {
+      presented: presentedState || null,
+      mutedCount: session ? session.mutedCount || 0 : 0,
+      enabled: enabled !== false,
+      isWatchPage: isWatchPage()
+    };
+    var prev = lastBadgeSent;
+    var stateChanged = !prev ||
+      prev.presented !== next.presented ||
+      prev.enabled !== next.enabled ||
+      prev.isWatchPage !== next.isWatchPage;
+    var countChanged = !prev || prev.mutedCount !== next.mutedCount;
+    if (!stateChanged && !countChanged) return;
+    lastBadgeSent = next;
+    if (stateChanged) {
+      if (badgeCountTimer) {
+        clearTimeout(badgeCountTimer);
+        badgeCountTimer = null;
+      }
+      postBadgeState(next);
+      return;
+    }
+    // Count only. Coalesce, and send the value that is current when the
+    // timer fires rather than the one that armed it.
+    if (badgeCountTimer) return;
+    badgeCountTimer = setTimeout(function () {
+      badgeCountTimer = null;
+      postBadgeState(lastBadgeSent);
+    }, BADGE_COUNT_DEBOUNCE_MS);
+  }
+
+  // A new video is a new question. Told explicitly rather than inferred,
+  // because the alternative is a stale "protected, 12 muted" sitting on the
+  // toolbar of a tab that has moved on.
+  function resetBadgeState() {
+    lastBadgeSent = null;
+    if (badgeCountTimer) {
+      clearTimeout(badgeCountTimer);
+      badgeCountTimer = null;
+    }
+    postBadgeState({ reset: true, presented: null, mutedCount: 0, isWatchPage: isWatchPage() });
+  }
+
+  // ---- first-protected callout (0.1.56) -----------------------------------
+  //
+  // The other half of the same observation: the pill is small, it sits in a
+  // corner of a player covered in YouTube's own chrome, and it says
+  // "Protected" to someone who has never been told there is a pill. Once per
+  // install, the first time filtering actually starts, it gets one callout
+  // that points at itself and at the toolbar.
+  //
+  // The service worker owns the decision and the one-shot latch (same pattern
+  // as the milestone pill, see shared/moments.js), and it is also the only
+  // context that can answer "is the icon pinned?": chrome.action is not
+  // exposed to content scripts at all.
+  var firstProtectedAsked = false;
+  var firstProtectedEl = null;
+  var firstProtectedTimer = null;
+
+  function maybeShowFirstProtected(presentedState) {
+    if (firstProtectedAsked) return;
+    if (presentedState !== 'protected') return;
+    if (!statusSettings.showStatus) return; // routine status opt-out
+    // Asked at most once per page, whatever the answer: a "no" is permanent
+    // (the latch), and a dropped message is not worth retrying twice a second.
+    firstProtectedAsked = true;
+    try {
+      var p = chrome.runtime.sendMessage({
+        type: 'pm-first-protected-check',
+        presented: presentedState,
+        showStatus: statusSettings.showStatus
+      });
+      if (p && typeof p.then === 'function') {
+        p.then(function (resp) {
+          if (resp && resp.show) showFirstProtectedCallout(resp.lines || []);
+        }, function () {});
+      }
+    } catch (e) {}
+  }
+
+  // Hidden in fullscreen rather than repositioned. Fullscreen is the one mode
+  // where the viewer has deliberately asked for nothing but the picture, and
+  // a panel of explanatory text over it would be the extension talking over
+  // the thing it exists to serve. The pill is still there when they come out.
+  function isFullscreen() {
+    try {
+      return !!(document.fullscreenElement || document.webkitFullscreenElement);
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function dismissFirstProtected() {
+    if (firstProtectedTimer) {
+      clearTimeout(firstProtectedTimer);
+      firstProtectedTimer = null;
+    }
+    if (firstProtectedEl && firstProtectedEl.parentElement) {
+      firstProtectedEl.parentElement.removeChild(firstProtectedEl);
+    }
+    firstProtectedEl = null;
+  }
+
+  function showFirstProtectedCallout(lines) {
+    if (firstProtectedEl || !lines.length) return;
+    if (isFullscreen()) return;
+    var video = getVideo();
+    var container = video ? video.closest('.html5-video-player') || video.parentElement : null;
+    if (!container) return;
+    var api = globalThis.PMPill;
+    var leftPx = api && api.BADGE_LEFT_PX ? api.BADGE_LEFT_PX : 12;
+    // Anchored directly beneath the pill's chrome-visible resting place, the
+    // same relationship the dev overlay already has to it, so the callout
+    // visibly belongs to the thing it is describing rather than floating.
+    var topPx = (api && api.BADGE_TOP_PX ? api.BADGE_TOP_PX : 56) + 26;
+
+    var el = document.createElement('div');
+    el.className = 'pm-first-protected';
+    // The navy/gold treatment the milestone pill and the onboarding page
+    // already use, so this reads as the same product speaking.
+    el.style.cssText =
+      'position:absolute;top:' + topPx + 'px;left:' + leftPx + 'px;z-index:2147483646;' +
+      'max-width:280px;background:#1d2f54;color:#f3e6c0;' +
+      'font:12px/1.5 sans-serif;padding:10px 12px;border-radius:6px;' +
+      'box-shadow:0 2px 12px rgba(0,0,0,0.45);pointer-events:auto;' +
+      'user-select:none;';
+    for (var i = 0; i < lines.length; i++) {
+      var pEl = document.createElement('p');
+      pEl.style.cssText = 'margin:0 0 6px;';
+      pEl.appendChild(document.createTextNode(lines[i]));
+      el.appendChild(pEl);
+    }
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.textContent = 'Got it';
+    btn.style.cssText =
+      'margin-top:2px;background:#f3e6c0;color:#1d2f54;border:0;border-radius:4px;' +
+      'font:600 12px/1 sans-serif;padding:6px 12px;cursor:pointer;';
+    btn.addEventListener('click', function (ev) {
+      // Stop the click reaching the player underneath, which would pause the
+      // video as a side effect of dismissing a notice about it.
+      ev.stopPropagation();
+      ev.preventDefault();
+      dismissFirstProtected();
+    });
+    el.appendChild(btn);
+    // The callout itself must not eat clicks meant for the video around it.
+    el.addEventListener('click', function (ev) { ev.stopPropagation(); });
+
+    if (getComputedStyle(container).position === 'static') {
+      container.style.position = 'relative';
+    }
+    container.appendChild(el);
+    firstProtectedEl = el;
+    var m = globalThis.PMMoments;
+    var visibleMs = m && m.FIRST_PROTECTED_VISIBLE_MS ? m.FIRST_PROTECTED_VISIBLE_MS : 20000;
+    firstProtectedTimer = setTimeout(dismissFirstProtected, visibleMs);
+    TLOG(TAG, '[PM-CALLOUT] first protected: ' + lines.length + ' lines');
+  }
+
+  // Theater mode is a resize and the callout rides the player, so it needs no
+  // handling. Fullscreen genuinely reparents and takes the screen over, so the
+  // callout leaves rather than sitting on top of it.
+  ['fullscreenchange', 'webkitfullscreenchange'].forEach(function (evt) {
+    document.addEventListener(evt, function () {
+      if (isFullscreen()) dismissFirstProtected();
+    }, true);
+  });
+
   function renderStatusPill() {
     var settings = currentSettings();
     // Compute the state FIRST, before any early return (0.1.34). The pill's
@@ -1894,6 +2110,12 @@
         })
       : null;
     lastPresentedLabel = presented ? presented.label : null;
+    // 0.1.56: the toolbar is now a second rendering of THIS value, not an
+    // independent guess at it. Reported here, right where the presentation
+    // is decided and before any of the early returns below, so a pill that
+    // is suppressed (pm_showStatus off) still keeps the toolbar truthful.
+    reportBadgeState(presented ? presented.presented : null, settings.enabled);
+    maybeShowFirstProtected(presented ? presented.presented : null);
     // Traced on CHANGE only, so a paste reconstructs the pill's history
     // without a line per tick. See tracePillState.
     tracePillState(status);

@@ -24,11 +24,12 @@
         <h1 class="ob-title">Profanity Muter</h1>
       </div>
       <p class="ob-subtitle">Set up profanity filtering for YouTube&trade; in about two minutes.</p>
-      <div class="ob-dots" id="ob-dots" role="progressbar" aria-label="Setup progress" aria-valuemin="1" aria-valuemax="4" aria-valuenow="1">
+      <div class="ob-dots" id="ob-dots" role="progressbar" aria-label="Setup progress" aria-valuemin="1" aria-valuemax="5" aria-valuenow="1">
         <span class="ob-dot" data-step="1"></span>
         <span class="ob-dot" data-step="2"></span>
         <span class="ob-dot" data-step="3"></span>
         <span class="ob-dot" data-step="4"></span>
+        <span class="ob-dot" data-step="5"></span>
       </div>
     </header>
 
@@ -299,8 +300,37 @@
       </div>
     </section>
 
-    <!-- ===== 4. Acknowledgment ===== -->
+    <!-- ===== 4. Pin it =====
+         Added 0.1.56 after a new user finished this flow, started a video,
+         and could not tell whether she was protected. She had never pinned
+         the icon, so the surface that now reports live status was behind the
+         puzzle-piece menu where she never looked.
+
+         Chrome does not let an extension pin itself, at all, so this step is
+         instructions and nothing else. What it CAN do is notice when the
+         user has done it: chrome.action.getUserSettings() reports isOnToolbar,
+         polled once a second while this step is on screen, so following the
+         instructions produces a visible "Pinned" the moment it works rather
+         than leaving the user to wonder. -->
     <section class="ob-step pm-hidden" id="ob-step-4" aria-hidden="true">
+      <h2 class="ob-step-title">Pin it</h2>
+      <p class="ob-lede">
+        The toolbar icon is where you see the filter working. Chrome hides new
+        extensions behind a menu until you pin them.
+      </p>
+      <ol class="ob-list">
+        <li>Click the <strong>puzzle-piece icon</strong> in the Chrome toolbar.</li>
+        <li>Click the <strong>pin</strong> next to Profanity Muter.</li>
+      </ol>
+      <p class="ob-pin-state" id="ob-pin-state" role="status" aria-live="polite"></p>
+      <p class="pm-hint">
+        Once pinned: green with a count of words muted while a video is
+        protected, grey when you are not on a YouTube video.
+      </p>
+    </section>
+
+    <!-- ===== 5. Acknowledgment ===== -->
+    <section class="ob-step pm-hidden" id="ob-step-5" aria-hidden="true">
       <h2 class="ob-step-title">One last thing</h2>
       <p class="ob-lede">
         We'd rather you go in with the right expectation than be
@@ -331,7 +361,7 @@
       </p>
     </section>
 
-    <!-- ===== 5. Done =====
+    <!-- ===== 6. Done =====
          A real completion state rather than a line of small print under a
          screen still titled "One last thing". Finishing setup is the one
          genuinely good moment in this flow and should look like one:
@@ -344,7 +374,7 @@
          a useful thing to show. Hiding the header also resolves the stale
          subtitle rule (a CSS :has() on the rail's aria-valuenow) instead
          of leaving it to resolve something that no longer applies. -->
-    <section class="ob-step pm-hidden" id="ob-step-5" aria-hidden="true">
+    <section class="ob-step pm-hidden" id="ob-step-6" aria-hidden="true">
       <h2 class="ob-done-title">You're all set.</h2>
       <p class="ob-done-lede">
         Filtering starts automatically on the next video you watch.

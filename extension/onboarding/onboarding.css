@@ -102,7 +102,8 @@ body {
 .ob-dots[aria-valuenow="1"] .ob-dot:nth-child(1),
 .ob-dots[aria-valuenow="2"] .ob-dot:nth-child(2),
 .ob-dots[aria-valuenow="3"] .ob-dot:nth-child(3),
-.ob-dots[aria-valuenow="4"] .ob-dot:nth-child(4) {
+.ob-dots[aria-valuenow="4"] .ob-dot:nth-child(4),
+.ob-dots[aria-valuenow="5"] .ob-dot:nth-child(5) {
   background: var(--ink);
   height: 3px;
 }
@@ -783,4 +784,22 @@ input:focus-visible {
   background: #eef2fb;
   color: var(--ink);
   border: 1.5px solid var(--ink);
+}
+
+
+/* ---- Pin it (0.1.56) ------------------------------------------------- */
+
+/* The live pin confirmation. Blank until chrome.action.getUserSettings()
+   answers, so the step never claims anything it has not checked; it turns
+   green only on a real isOnToolbar. Same weight as .pm-hint so an
+   unconfirmed step does not look like it is missing something. */
+.ob-pin-state {
+  margin: 14px 0 0;
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 18px;
+}
+
+.ob-pin-state--pinned {
+  color: #1e8e3e;
 }

@@ -13,11 +13,12 @@
 // shared/moments.js is a plain script attaching globalThis.PMMoments;
 // importScripts is how an MV3 service worker loads one. Used for the badge
 // and milestone decisions so the SW and the popup cannot disagree about
-// what "eligible" means (0.1.33).
+// what "eligible" means (0.1.33). shared/badge.js joined the list in 0.1.56,
+// when the badge became a live mirror of the on-player pill.
 try {
-  importScripts('shared/moments.js', 'shared/pill.js', 'shared/active_tab.js');
+  importScripts('shared/moments.js', 'shared/badge.js', 'shared/pill.js', 'shared/active_tab.js');
 } catch (e) {
-  console.warn('[PM-BG] could not load shared/moments.js:', String(e));
+  console.warn('[PM-BG] could not load a shared module:', String(e));
 }
 
 var portsByTabId = new Map(); // tabId -> chrome.runtime.Port
@@ -239,49 +240,87 @@ ensureOffscreenDocument();
 chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
 
 
-// ---- toolbar badge + milestone (0.1.33) ------------------------------------
+// ---- toolbar badge + milestone (0.1.33, rewritten 0.1.56) ------------------
 //
 // The only surface this extension owns that a user sees without opening
-// anything, and it needs no permission. See shared/moments.js badgeDecision
-// for the priority rule: health outranks the review nudge always, and
-// documented limits (livestream, Shorts) never badge at all.
+// anything, and it needs no permission.
 //
-// Health is PER TAB, so it uses setBadgeText's tabId form: a broken filter in
-// one tab must not mark every other tab. The review nudge is global, being a
-// property of the install rather than of any page.
+// Until 0.1.56 it spoke ONLY when something was wrong. Field observation,
+// 2026-09-17: a new user finished onboarding, started a video, and could not
+// tell whether she was protected, because "protected" was rendered as an
+// absence. So the badge now mirrors what the on-player pill presents, with
+// the decision table in shared/badge.js and only the plumbing here.
+//
+// Everything is PER TAB. Two tabs can legitimately be in different states at
+// the same moment (one protected, one a Short, one broken), and a badge that
+// showed one tab's state on all of them would be worse than no badge. The
+// review nudge, which was the one global thing this badge carried, moved into
+// the popup in 0.1.56: see shared/moments.js.
+//
+// The action's DEFAULT icon (no tabId) is set grey once at startup, so every
+// tab a content script never touches, which is most of the browser, is grey
+// without any message traffic at all. Per-tab overrides paint the YouTube
+// tabs on top of that.
 var unhealthyTabs = new Set();
-var reviewNudgeActive = false;
+var badgeStateByTabId = new Map(); // tabId -> {presented, mutedCount, enabled, isWatchPage}
+
+var ICON_PATHS = {
+  color: { 16: 'icons/icon16.png', 32: 'icons/icon32.png', 48: 'icons/icon48.png', 128: 'icons/icon128.png' },
+  grey: { 16: 'icons/grey/icon16.png', 32: 'icons/grey/icon32.png', 48: 'icons/grey/icon48.png', 128: 'icons/grey/icon128.png' }
+};
 
 function moments() {
   return typeof PMMoments !== 'undefined' ? PMMoments : null;
 }
 
-function applyTabBadge(tabId, healthStatus) {
-  var m = moments();
-  if (!m || tabId == null) return;
-  var decision = m.badgeDecision({ healthStatus: healthStatus });
+function badgeApi() {
+  return typeof PMBadge !== 'undefined' ? PMBadge : null;
+}
+
+// Paint one tab from whatever we currently know about it. Called on every
+// state message, on every health transition, and on nothing else: there is
+// no polling here, because every input arrives as an event.
+function applyTabBadge(tabId) {
+  var api = badgeApi();
+  if (!api || tabId == null) return;
+  var known = badgeStateByTabId.get(tabId) || {};
+  var decision = api.badgeState({
+    healthStatus: unhealthyTabs.has(tabId) ? 'unhealthy' : null,
+    presented: known.presented,
+    mutedCount: known.mutedCount,
+    enabled: known.enabled,
+    isWatchPage: known.isWatchPage
+  });
   try {
     chrome.action.setBadgeText({ tabId: tabId, text: decision.text });
     if (decision.color) {
       chrome.action.setBadgeBackgroundColor({ tabId: tabId, color: decision.color });
     }
+    chrome.action.setIcon({ tabId: tabId, path: ICON_PATHS[decision.iconSet] || ICON_PATHS.grey });
   } catch (e) {
     // A tab closed between the message and this call throws; harmless.
   }
 }
 
-function applyGlobalBadge() {
-  var m = moments();
-  if (!m) return;
-  var decision = m.badgeDecision({ reviewEligible: reviewNudgeActive });
-  try {
-    chrome.action.setBadgeText({ text: decision.text });
-    if (decision.color) chrome.action.setBadgeBackgroundColor({ color: decision.color });
-  } catch (e) {}
+// A tab has navigated, or its content script has started a fresh session.
+// Forgetting the old state rather than carrying it forward matters: a stale
+// "protected, 12 muted" left on a tab that is now a Short is the badge
+// lying, and lying quietly is exactly what this release is fixing.
+function resetTabBadge(tabId) {
+  if (tabId == null) return;
+  badgeStateByTabId.delete(tabId);
+  unhealthyTabs.delete(tabId);
+  applyTabBadge(tabId);
 }
 
-// Read what the review gate needs and decide. Cheap, and only called on a
-// stats/settings change or the daily alarm, never in a loop.
+// Grey by default, everywhere, before any tab has said anything.
+try {
+  chrome.action.setIcon({ path: ICON_PATHS.grey });
+} catch (e) {}
+
+// Read what the review gate needs and decide. Cheap, and only called when
+// the milestone pill asks, never in a loop. It no longer drives any badge
+// (0.1.56): the review ask renders as a strip at the top of the popup.
 function refreshReviewNudge(cb) {
   var m = moments();
   if (!m) return;
@@ -299,41 +338,32 @@ function refreshReviewNudge(cb) {
           reviewPrompt: syncItems && syncItems.pm_reviewPrompt,
           now: Date.now()
         });
-        reviewNudgeActive = verdict.eligible;
-        applyGlobalBadge();
         if (cb) cb(verdict, syncItems || {}, stats);
       });
     }
   );
 }
 
-// Recompute when the inputs actually change rather than polling: pm_stats is
-// written by content.js as it mutes, and the sync keys change when the popup
-// or onboarding writes them.
-chrome.storage.onChanged.addListener(function (changes, area) {
-  if (area === 'local' && changes.pm_stats) refreshReviewNudge();
-  if (area === 'sync' && (changes.pm_reviewPrompt || changes.pm_ackNotPerfect || changes.pm_installedAt)) {
-    refreshReviewNudge();
-  }
-});
-
-// A slow safety net for the one input that changes with no event at all: the
-// 7-day install age. Twice a day is plenty for a gate measured in days.
+// A tab starting to load is the one navigation signal available without the
+// "tabs" permission: the event fires for every tab, and only url/title are
+// withheld. That is all this needs, since the point is to forget, not to
+// learn anything about where the tab went.
 try {
-  chrome.alarms.create('pm-review-check', { periodInMinutes: 60 * 12 });
-  chrome.alarms.onAlarm.addListener(function (alarm) {
-    if (alarm && alarm.name === 'pm-review-check') refreshReviewNudge();
+  chrome.tabs.onUpdated.addListener(function (tabId, changeInfo) {
+    if (changeInfo && changeInfo.status === 'loading') resetTabBadge(tabId);
   });
-} catch (e) {
-  // No alarms permission: the storage listener above still covers the common
-  // cases, so this degrades rather than breaks.
-}
+} catch (e) {}
 
 chrome.tabs.onRemoved.addListener(function (tabId) {
+  badgeStateByTabId.delete(tabId);
   unhealthyTabs.delete(tabId);
 });
 
-refreshReviewNudge();
+// 0.1.56: the storage listener and the twice-daily alarm that used to keep
+// the review nudge's badge current are gone with the badge. Nothing watches
+// review eligibility on a clock any more; it is computed on demand, when the
+// popup opens or when the milestone pill asks. The "alarms" permission left
+// the manifest with them, since nothing else in the extension used it.
 
 // 0.1.37: every rung reports its outcome back to the tab that asked, so a
 // field log distinguishes "the user opened settings three times" from "the
@@ -528,9 +558,79 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     if (healthTabId != null) {
       if (msg.status === 'unhealthy') unhealthyTabs.add(healthTabId);
       else unhealthyTabs.delete(healthTabId);
-      applyTabBadge(healthTabId, msg.status);
+      applyTabBadge(healthTabId);
     }
     return;
+  }
+  // The live badge state from a tab's pill (0.1.56). content.js posts this on
+  // every presented-state transition and on a debounced muted-count change,
+  // so the toolbar and the pill are two renderings of one fact rather than
+  // two independent guesses at it.
+  if (msg.type === 'pm-badge-state') {
+    var badgeTabId = sender && sender.tab ? sender.tab.id : null;
+    if (badgeTabId == null) return;
+    if (msg.reset === true) {
+      // A fresh pill init (new video, new session). Drop the old state
+      // rather than merging into it.
+      badgeStateByTabId.delete(badgeTabId);
+    }
+    var prior = badgeStateByTabId.get(badgeTabId) || {};
+    badgeStateByTabId.set(badgeTabId, {
+      presented: msg.presented !== undefined ? msg.presented : prior.presented,
+      mutedCount: msg.mutedCount !== undefined ? msg.mutedCount : prior.mutedCount,
+      enabled: msg.enabled !== undefined ? msg.enabled : prior.enabled,
+      isWatchPage: msg.isWatchPage !== undefined ? msg.isWatchPage : prior.isWatchPage
+    });
+    applyTabBadge(badgeTabId);
+    return;
+  }
+  // The one-time first-protected callout (0.1.56). The SW owns it for the
+  // same reason it owns the milestone latch: it is the only context that can
+  // read the latch and stamp it without the popup being open, and it is the
+  // only context that can answer "is the icon pinned?" at all, since
+  // chrome.action is not exposed to content scripts.
+  if (msg.type === 'pm-first-protected-check') {
+    var m1 = moments();
+    if (!m1) return;
+    chrome.storage.sync.get(['pm_firstProtectedSeen'], function (items) {
+      if (chrome.runtime.lastError) {
+        sendResponse({ show: false });
+        return;
+      }
+      var show = m1.shouldShowFirstProtected({
+        presented: msg.presented,
+        record: items && items.pm_firstProtectedSeen,
+        showStatus: msg.showStatus !== false
+      });
+      if (!show) {
+        sendResponse({ show: false });
+        return;
+      }
+      // Stamp the latch as it is handed out, so two tabs reaching Protected
+      // at the same moment cannot both show it.
+      chrome.storage.sync.set(
+        { pm_firstProtectedSeen: m1.makeFirstProtectedRecord(Date.now()) },
+        function () {
+          // getUserSettings is Chrome 91+ and can be absent or throw in a
+          // stripped build. Unknown resolves to "pinned", because
+          // firstProtectedLines then omits the pin advice: silence beats
+          // telling someone to pin an icon they already pinned.
+          var done = function (pinned) {
+            sendResponse({ show: true, lines: m1.firstProtectedLines(pinned) });
+          };
+          try {
+            var p = chrome.action.getUserSettings();
+            if (p && typeof p.then === 'function') {
+              p.then(function (s0) { done(s0 && s0.isOnToolbar === false ? false : true); },
+                     function () { done(true); });
+              return;
+            }
+          } catch (e) {}
+          done(true);
+        }
+      );
+    });
+    return true; // async response
   }
   // A content script asking whether to show the one-shot milestone pill. The
   // SW owns the decision because it is the only context that sees both the

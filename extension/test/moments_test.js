@@ -269,43 +269,82 @@ test("no incentive is promised anywhere in the review or share copy", () => {
   });
 });
 
-// ---- toolbar badge (0.1.33) ---------------------------------------------
+// ---- first-protected callout (0.1.56) -----------------------------------
 //
-// One badge, two things that might want it, so the priority IS the design.
+// The introduction fires exactly once per install, on the state the user
+// actually read, and obeys the routine-status opt-out. Every one of those is
+// invisible until the day it fires on someone else's machine, which is why
+// it is a pure predicate with the latch passed in.
 
-test("badgeDecision: an unhealthy tab badges, per tab", () => {
-  const d = M.badgeDecision({ healthStatus: "unhealthy", healthReason: "no-audio-intercepted" });
-  assert.strictEqual(d.text, M.BADGE_HEALTH_TEXT);
-  assert.strictEqual(d.color, M.BADGE_HEALTH_COLOR);
-  assert.strictEqual(d.scope, "tab");
+test("the callout fires the first time the pill presents Protected", () => {
+  assert.strictEqual(M.shouldShowFirstProtected({ presented: "protected", showStatus: true }), true);
 });
 
-test("badgeDecision: health OUTRANKS the review nudge", () => {
-  // A review nudge on top of a broken filter would be useless and insulting.
-  const d = M.badgeDecision({ healthStatus: "unhealthy", reviewEligible: true });
-  assert.strictEqual(d.text, M.BADGE_HEALTH_TEXT);
-  assert.strictEqual(d.scope, "tab");
+test("the callout never fires twice", () => {
+  const latch = M.makeFirstProtectedRecord(NOW);
+  assert.strictEqual(
+    M.shouldShowFirstProtected({ presented: "protected", showStatus: true, record: latch }),
+    false
+  );
+  assert.strictEqual(M.firstProtectedAlreadyShown(latch), true);
+  assert.strictEqual(M.firstProtectedAlreadyShown(undefined), false);
+  assert.strictEqual(M.firstProtectedAlreadyShown({}), false);
 });
 
-test("badgeDecision: documented limits never badge", () => {
-  // A permanent mark for "this is a Short" would train users to ignore the
-  // badge, costing exactly the signal the health case depends on.
-  ["unsupported", "pending", "ok", null, undefined].forEach(function (status) {
-    assert.strictEqual(M.badgeDecision({ healthStatus: status }).text, "", String(status));
-  });
+test("the callout waits for Protected, not for any other presented state", () => {
+  // The copy promises "this is where it says Protected", so it may only
+  // appear while that word is on screen.
+  ["analyzing", "needs-play", "other-tab", "shorts", "live", "off", null, undefined].forEach(
+    function (presented) {
+      assert.strictEqual(
+        M.shouldShowFirstProtected({ presented: presented, showStatus: true }),
+        false,
+        String(presented)
+      );
+    }
+  );
+  assert.strictEqual(M.shouldShowFirstProtected({}), false);
 });
 
-test("badgeDecision: the review nudge is global and quiet", () => {
-  const d = M.badgeDecision({ reviewEligible: true });
-  assert.strictEqual(d.text, M.BADGE_REVIEW_TEXT);
-  assert.strictEqual(d.color, M.BADGE_REVIEW_COLOR);
-  assert.strictEqual(d.scope, "global");
+test("the callout respects the routine-status opt-out", () => {
+  // Pointing at a pill the user has switched off helps nobody.
+  assert.strictEqual(M.shouldShowFirstProtected({ presented: "protected", showStatus: false }), false);
 });
 
-test("badgeDecision: nothing to say means an empty badge", () => {
-  assert.strictEqual(M.badgeDecision({}).text, "");
-  assert.strictEqual(M.badgeDecision().text, "");
-  assert.strictEqual(M.badgeDecision({ reviewEligible: false }).text, "");
+test("the callout names both surfaces and asks for nothing", () => {
+  const lines = M.firstProtectedLines(true);
+  assert.strictEqual(lines.length, 2);
+  assert.ok(/badge|status/i.test(lines[0]));
+  assert.ok(/toolbar/i.test(lines[1]) && /count/i.test(lines[1]));
+  assert.ok(!/review|rate|rating|star|store/i.test(lines.join(" ")));
+});
+
+test("the pin line appears only when the icon is not pinned", () => {
+  // Advice to pin something already pinned teaches the user that this
+  // extension does not know what it is talking about.
+  assert.strictEqual(M.firstProtectedLines(false).length, 3);
+  assert.ok(/puzzle-piece/.test(M.firstProtectedLines(false)[2]));
+  assert.strictEqual(M.firstProtectedLines(true).length, 2);
+  // Unknown (getUserSettings unavailable) is treated as pinned: silence is
+  // better than wrong advice.
+  assert.strictEqual(M.firstProtectedLines(undefined).length, 2);
+  assert.strictEqual(M.firstProtectedLines(null).length, 2);
+});
+
+test("the callout latch is the same shape as the milestone latch", () => {
+  // One shape for one-time sync latches, so a support paste of storage
+  // reads the same way for both.
+  assert.deepStrictEqual(Object.keys(M.makeFirstProtectedRecord(NOW)), ["shownAt"]);
+  assert.strictEqual(M.makeFirstProtectedRecord(NOW).shownAt, NOW);
+});
+
+test("badgeDecision has left this module", () => {
+  // 0.1.56: the badge became a mirror of the pill and moved to
+  // shared/badge.js, and the review nudge left the badge entirely. A
+  // lingering export here would be a second, stale answer to the same
+  // question.
+  assert.strictEqual(typeof M.badgeDecision, "undefined");
+  assert.strictEqual(typeof M.BADGE_REVIEW_TEXT, "undefined");
 });
 
 // ---- milestone pill (0.1.33) --------------------------------------------
@@ -351,10 +390,10 @@ test("the milestone reuses the review milestone rather than inventing one", () =
   assert.strictEqual(M.shouldShowMilestone({ eligible: v.eligible, showStatus: true }), true);
 });
 
-test("acting on the completion ask silences the badge and the pill too", () => {
+test("acting on the completion ask silences the popup strip and the pill too", () => {
   const record = M.completionReviewOutcome(true, NOW);
   const v = M.reviewPromptEligibility(eligibleInput({ reviewPrompt: record }));
-  assert.strictEqual(M.badgeDecision({ reviewEligible: v.eligible }).text, "");
+  assert.strictEqual(v.eligible, false);
   assert.strictEqual(M.shouldShowMilestone({ eligible: v.eligible, showStatus: true }), false);
 });
 

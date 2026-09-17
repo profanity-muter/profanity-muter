@@ -3,11 +3,18 @@
 // genuine install (see its second onInstalled listener), and re-openable
 // any time from the popup's "Setup guide" link.
 //
-// Four steps: how it works -> what it won't do -> guided setup ->
-// acknowledgment. The middle two are the load-bearing ones. Step 2 exists
-// as a full step rather than fine print because a parent who installs this
+// Five steps: how it works -> what it won't do -> guided setup -> pin it ->
+// acknowledgment. Steps 2 and 5 are the load-bearing ones. Step 2 exists as a
+// full step rather than fine print because a parent who installs this
 // believing it is airtight has been misled by us even if we never said so,
-// and step 4 makes them say that back before finishing.
+// and step 5 makes them say that back before finishing.
+//
+// Step 4 ("Pin it") was added in 0.1.56, after a new user finished this flow,
+// started a video, and could not tell whether she was protected. The toolbar
+// icon now reports live status (shared/badge.js), and an unpinned icon is
+// behind a menu nobody opens. Chrome does not let an extension pin itself, so
+// the step is instructions plus a live confirmation read from
+// chrome.action.getUserSettings().
 //
 // Storage: writes the SAME chrome.storage.sync keys as the popup
 // (pm_catchupMode, pm_strictness, pm_additionalWords, pm_lock), through the
@@ -22,12 +29,18 @@
 (function () {
   "use strict";
 
-  // Four navigable setup steps, plus a fifth DONE view reached only by
+  // Five navigable setup steps, plus a sixth DONE view reached only by
   // finishing (never by Next/Back), which is why the rail and the nav both
-  // hide there rather than the rail growing a fifth station: setup is over,
+  // hide there rather than the rail growing another station: setup is over,
   // so progress through it has stopped being a useful thing to show.
-  var TOTAL_STEPS = 4;
-  var DONE_STEP = 5;
+  var TOTAL_STEPS = 5;
+  var DONE_STEP = 6;
+  var PIN_STEP = 4;
+
+  // How often the pin step re-asks chrome whether the icon is pinned. One
+  // second is fast enough that clicking the pin feels acknowledged, and it
+  // only runs while that one step is on screen.
+  var PIN_POLL_MS = 1000;
 
   var dotsEl = document.getElementById("ob-dots");
   var backEl = document.getElementById("ob-back");
@@ -50,6 +63,8 @@
   var lockConfirmEl = document.getElementById("ob-lock-confirm");
   var lockSetEl = document.getElementById("ob-lock-set");
   var lockSetStatusEl = document.getElementById("ob-lock-set-status");
+
+  var pinStateEl = document.getElementById("ob-pin-state");
 
   var ackCheckEl = document.getElementById("ob-ack-check");
   var reportProblemEl = document.getElementById("ob-report-problem");
@@ -333,6 +348,7 @@
     show(headerEl, !done);
     show(navEl, !done);
     if (done) {
+      setPinPolling(false); // setup is over; nothing left to watch for
       window.scrollTo(0, 0);
       return;
     }
@@ -345,7 +361,61 @@
     backEl.disabled = step === 1;
     show(nextEl, step < TOTAL_STEPS);
     show(finishEl, step === TOTAL_STEPS);
+    setPinPolling(step === PIN_STEP);
     window.scrollTo(0, 0);
+  }
+
+  // ---- pin confirmation (0.1.56) -----------------------------------------
+  //
+  // chrome.action.getUserSettings() is the only way to learn whether the icon
+  // is pinned, and there is no event for it: Chrome fires nothing when a user
+  // pins an extension. So it is polled, but only while the pin step is
+  // actually visible, which is the whole of the time the answer matters.
+  //
+  // The line stays BLANK until a call succeeds and reports true. Not
+  // "Not pinned yet": the instructions above it already say what to do, and a
+  // page that scolds you for not having done the thing yet, one second after
+  // showing you how, is unpleasant for no gain. It is also the correct
+  // rendering when the API is missing (Chrome older than 91, or a stripped
+  // build), where we genuinely do not know.
+  var pinPollTimer = null;
+
+  function setPinPolling(on) {
+    if (!on) {
+      if (pinPollTimer) {
+        window.clearInterval(pinPollTimer);
+        pinPollTimer = null;
+      }
+      return;
+    }
+    if (pinPollTimer) return;
+    checkPinned();
+    pinPollTimer = window.setInterval(checkPinned, PIN_POLL_MS);
+  }
+
+  function renderPinned(pinned) {
+    if (!pinStateEl) return;
+    pinStateEl.textContent = pinned ? "Pinned \u2713" : "";
+    pinStateEl.classList.toggle("ob-pin-state--pinned", !!pinned);
+    // Once it is pinned there is nothing left to watch for, and a poll that
+    // outlives its question is just a timer nobody owns.
+    if (pinned) setPinPolling(false);
+  }
+
+  function checkPinned() {
+    try {
+      if (!chrome.action || typeof chrome.action.getUserSettings !== "function") {
+        setPinPolling(false);
+        return;
+      }
+      var p = chrome.action.getUserSettings();
+      if (!p || typeof p.then !== "function") return;
+      p.then(function (settings) {
+        renderPinned(!!(settings && settings.isOnToolbar));
+      }, function () {});
+    } catch (e) {
+      setPinPolling(false);
+    }
   }
 
   // Clamped to TOTAL_STEPS on purpose: Next and Back must never walk into

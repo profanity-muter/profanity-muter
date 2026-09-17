@@ -3371,3 +3371,123 @@ compound to its root, and the censored output for each shape.
 Still not caught, deliberately: "fck", "fuk", "fkn", "fuking". Whisper does
 not emit those from speech, and leetspeak roots widen the innocent surface
 for nothing measurable.
+
+## 0.1.56: "am I protected?" had no answer anyone could see
+
+Field observation, 2026-09-17. A new user finished onboarding, started a
+YouTube video, and could not tell whether the filter was on. Nothing was
+broken. Both surfaces were doing exactly what they were built to do, and
+that was the problem:
+
+* The on-player pill said **Protected**. She never found it. It is small by
+  design, it sits in the top-left of the player, and it shares that corner
+  with YouTube's own hover chrome. Nobody had ever told her it was there.
+* The toolbar badge said **nothing**, because since 0.1.33 it only spoke
+  when something was wrong: a per-tab health failure, or the global review
+  nudge. "Protected" was rendered as an absence. Reassurance you cannot see
+  is not reassurance.
+
+Four changes, one theme: the toolbar is now the answer, and the user is told
+where to look for it.
+
+**1. The badge became a live per-tab status mirror.** `shared/badge.js`
+(new) holds the whole decision as one pure function, `badgeState({presented,
+mutedCount, healthStatus, enabled, isWatchPage}) -> {text, color, iconSet}`.
+It reads the pill's PRESENTED state (`shared/pill.js` `present().presented`),
+not the internal kind, so the toolbar and the player are two renderings of
+one fact rather than two guesses at it. The table, in priority order:
+
+| situation | badge | colour | icon |
+| --- | --- | --- | --- |
+| health failure in this tab | `!` | red `#8a1f11` | colour |
+| not a watch page / disabled / pill says off | none | | grey |
+| Shorts, livestream (documented limits) | none | | grey |
+| protected, nothing muted yet | `ON` | green `#1E8E3E` | colour |
+| protected, N words muted | `N`, capped at `99+` | green | colour |
+| anything else on a watch page | `…` | amber `#D89B12` | colour |
+
+The last row is the one that matters most. It is a FALLTHROUGH, not a list:
+analyzing, needs-play, other-tab, a state nobody has invented yet, and a
+watch page whose pill has not spoken all land on amber. A new pill state can
+no longer produce a blank toolbar, which is the exact failure this release
+exists to fix. Health keeps the priority it has had since 0.1.33, and the
+test replays every row of the table with a health failure laid over it
+rather than trusting the branch order.
+
+Grey is a real second icon set (`icons/grey/icon*.png`, the shipped icons
+desaturated with `sips --matchTo 'Generic Gray Profile.icc'`), applied with
+`chrome.action.setIcon`'s tabId form. The action's DEFAULT icon is set grey
+once at startup, so the whole browser is grey without a single message; the
+YouTube tabs paint over it. Text never rides a grey icon and a grey icon is
+never silent-with-a-badge; the test asserts both directions.
+
+The count is `session.mutedCount`, the SAME per-video counter the pill's own
+" . N muted" suffix uses and the same signal the Activity dashboard's video
+accounting is built on. A second counter would eventually disagree with the
+first, on two surfaces at once. `content.js` posts a state transition
+immediately and debounces a count change by 400ms, because a burst of mutes
+in one noisy sentence is one piece of news, not five. Per-tab state is
+dropped on `tabs.onRemoved`, on `tabs.onUpdated` status=loading (the one
+navigation signal available without the `tabs` permission), and on a fresh
+`newSession`: a stale "protected, 12 muted" on a tab that has moved on is
+the badge lying quietly, which is what we are fixing.
+
+**2. The review nudge left the badge.** It used to own a global `1`, which is
+the universal shape of "you have a message", spent on an ask the popup
+already rendered as a card, occupying the one glanceable channel this
+extension owns at exactly the moment a new user needed it to say
+"protected". It is now a strip at the top of the popup's Home view.
+Eligibility, the once-ever policy, dismissal and the storage key are all
+unchanged, so anyone who dismissed the old badge nudge never sees the strip
+either. `badgeDecision` and the `BADGE_*` constants are gone from
+`shared/moments.js`; the health case moved to `shared/badge.js` with the
+priority promise attached. The twice-daily `pm-review-check` alarm and the
+storage listener that fed the old global badge are gone with it, and the now
+unused `alarms` permission left the manifest.
+
+Health still outranks the strip. Health resolves through a message round trip
+to the active tab, so the two arrive in either order; both paths call
+`showReviewStripIfDue`, and the strip is only shown, and only STAMPED, when
+the health warning is not up. The residual race (health coming back unhealthy
+after the strip is on screen) resolves by hiding the strip with the latch
+spent, erring toward the policy promise of never asking twice.
+
+**3. Onboarding gained a "Pin it" step** (now step 4 of 5, before the
+acknowledgment). A toolbar icon that reports live status is worth nothing
+behind the puzzle-piece menu, and Chrome does not let an extension pin
+itself, so the step is instructions plus feedback:
+`chrome.action.getUserSettings().isOnToolbar`, polled once a second while
+that one step is visible, turning the line into "Pinned" the moment it
+works. The line stays BLANK until a call reports true, rather than saying
+"not pinned yet": the instructions directly above already say what to do,
+and scolding someone one second after showing them how is unpleasant for no
+gain. Blank is also the correct rendering where the API is missing.
+
+**4. A one-time first-protected callout.** The first time the pill actually
+presents Protected after install, it gets one navy/gold callout anchored
+beneath it saying the pill is the on-page status and the toolbar icon shows
+the same thing plus a count. When `getUserSettings` says the icon is NOT
+pinned it adds one line pointing at the puzzle-piece menu, and when it says
+pinned, or cannot answer, that line is omitted: advice to pin something
+already pinned teaches the user this extension does not know what it is
+talking about. One "Got it" button, self-retiring after 20 seconds, hidden
+in fullscreen (the one mode where the viewer has asked for nothing but the
+picture), and latched forever in `chrome.storage.sync` as
+`pm_firstProtectedSeen {shownAt}`, the same store and shape as
+`pm_milestoneShown`. Sync, not local: this is an introduction, and someone
+introduced on their laptop should not be introduced again on their desktop.
+The service worker owns the latch and the stamp, for the same reason it owns
+the milestone's, and because `chrome.action` is not reachable from a content
+script at all.
+
+**Tests.** A new `test/badge_test.js` (26) is table-driven, because the badge
+IS a table and its failure mode is silence: every row above plus the
+fallthrough row, the health-outranks-everything replay, the four-character
+budget, the grey-is-always-silent invariant, and "green means protected and
+nothing else means green". `test/moments_test.js` gains the callout gates
+(fires on the presented state, never twice, respects the routine-status
+opt-out, the conditional pin line) and asserts `badgeDecision` has actually
+left the module, so a stale second answer cannot survive. `pill_test.js`'s
+interactive-surface guard moves from two to three and now names the callout,
+which keeps it a real count rather than a number someone bumps. 503 tests
+across 18 files, from 478 across 17.

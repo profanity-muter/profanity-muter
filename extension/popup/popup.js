@@ -708,6 +708,27 @@
     // acknowledgment; keep it visible (footer link) and not gated.
   }
 
+  // 0.1.56: the review nudge lost its toolbar badge and became a strip at
+  // the top of Home. The badge now carries live per-tab protection status
+  // (shared/badge.js), and a global "1" reading as "you have a message" was
+  // spending the one glanceable channel the extension owns on an ask this
+  // popup already renders.
+  //
+  // Eligibility, dismissal and the storage key are all UNCHANGED:
+  // pm_reviewPrompt still means "already asked, never again", so anyone who
+  // dismissed the old badge nudge never sees this strip either.
+  //
+  // The health warning still outranks it, as it did on the badge. Health is
+  // resolved by a message round trip to the active tab, so the two arrive in
+  // whichever order they arrive; both paths call showReviewStripIfDue, and
+  // the strip is only ever shown, and only ever STAMPED, when health is not
+  // up. The residual race (health coming back unhealthy after the strip is
+  // already on screen) resolves by hiding the strip with the latch spent,
+  // which errs toward the policy promise of never asking twice.
+  var reviewEligible = false;
+  var reviewStripShown = false;
+  var healthWarningUp = false;
+
   function renderReviewPrompt(items) {
     var m = momentsApi(); if (!m) return;
     var verdict = m.reviewPromptEligibility({
@@ -717,10 +738,19 @@
       reviewPrompt: items && items.pm_reviewPrompt,
       now: Date.now()
     });
-    if (!verdict.eligible) return;
+    reviewEligible = verdict.eligible;
+    showReviewStripIfDue();
+  }
+
+  function showReviewStripIfDue() {
+    if (!reviewEligible || reviewStripShown) return;
+    if (healthWarningUp) {
+      hideReviewCard();
+      return;
+    }
+    reviewStripShown = true;
     reviewCardEl.classList.remove("pm-hidden");
     reviewCardEl.setAttribute("aria-hidden", "false");
-    try { chrome.action.setBadgeText({ text: "" }); } catch (e) {}
     markReviewPromptShown(false);
   }
 
@@ -731,6 +761,10 @@
     } catch (e) {}
   }
   function hideReviewCard() {
+    // Answered, or outranked. Either way it must not come back inside this
+    // popup session, so the eligibility that drives showReviewStripIfDue is
+    // cleared with the element.
+    reviewEligible = false;
     reviewCardEl.classList.add("pm-hidden");
     reviewCardEl.setAttribute("aria-hidden", "true");
   }
@@ -818,6 +852,8 @@
     var unhealthy = !!(health && health.status === "unhealthy" && health.message);
     healthEl.classList.toggle("pm-hidden", !unhealthy);
     healthEl.setAttribute("aria-hidden", unhealthy ? "false" : "true");
+    healthWarningUp = unhealthy;
+    showReviewStripIfDue();
     if (!unhealthy) return;
     healthMessageEl.textContent = health.message;
     healthDetailEl.textContent = health.detail || "";

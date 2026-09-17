@@ -42,13 +42,19 @@
         <button id="pm-health-report" class="pm-link-button" type="button">Report a problem</button>
       </section>
 
-      <!-- Finish-setup banner: shown until acknowledged. -->
-      <button id="pm-finish-setup" class="pm-banner pm-hidden" type="button" aria-hidden="true">
-        Finish setup - 1 minute
-      </button>
+      <!-- Review nudge strip (Chrome Web Store policy rules in
+           shared/moments.js). 0.1.56: this used to own a global "1" on the
+           toolbar badge as well. The badge is now a live per-tab status
+           mirror of the on-player pill, and a "1" that means "you have a
+           message" was spending the one glanceable channel this extension
+           owns on an ask the popup already renders. So the ask lives here
+           only, moved to the top of the view where it is actually seen.
 
-      <!-- Review prompt card (Chrome Web Store policy rules in shared/moments.js). -->
-      <section class="pm-row pm-row--review pm-hidden" id="pm-review-card" aria-hidden="true">
+           It sits BELOW the health warning in the DOM, and popup.js hides it
+           outright while that warning is up: a review ask stacked on a broken
+           filter would be both useless and insulting, and that priority has
+           held since the badge carried it. -->
+      <section class="pm-review-strip pm-hidden" id="pm-review-card" aria-hidden="true">
         <p class="pm-review-text">
           Is Profanity Muter doing its job? A review helps others find it.
         </p>
@@ -57,6 +63,12 @@
           <button id="pm-review-no" class="pm-link-button" type="button">No thanks</button>
         </div>
       </section>
+
+
+      <!-- Finish-setup banner: shown until acknowledged. -->
+      <button id="pm-finish-setup" class="pm-banner pm-hidden" type="button" aria-hidden="true">
+        Finish setup - 1 minute
+      </button>
 
       <!-- Relock bar: shown only while unlocked and a lock is set. -->
       <div id="pm-relock-bar" class="pm-relock-bar pm-hidden" aria-hidden="true">

@@ -213,48 +213,80 @@
     return value === true;
   }
 
-  // ---- toolbar badge (0.1.33) ---------------------------------------------
+  // ---- toolbar badge: moved out (0.1.56) ---------------------------------
   //
-  // The problem this solves: both things the extension needs to tell a user
-  // about (a broken filter, and the once-ever review ask) live inside the
-  // popup, and most users never open the popup. A badge is the only surface
-  // the extension owns that is visible without being asked for, and it
-  // needs no permission.
+  // badgeDecision used to live here and owned two things: the per-tab health
+  // "!" and a global "1" for the once-ever review nudge. Both are gone from
+  // this file.
   //
-  // ONE mechanism with a strict priority, because there is one badge and
-  // two things that might want it. Health always wins: "your filter is not
-  // working" is information the user needs, and a review nudge sitting on
-  // top of a broken filter would be both useless and insulting.
+  // The health case, plus the live protected/analyzing/grey states added in
+  // 0.1.56, now live in shared/badge.js, because the badge stopped being a
+  // two-case alert and became a mirror of the on-player pill. Health still
+  // outranks everything there; that promise moved with the code.
   //
-  // Deliberately NOT badged: livestream and Shorts. Those are documented
-  // limits with their own calm on-player notices, and a permanent mark on
-  // the toolbar for "this is a Short" would train users to ignore the
-  // badge, costing exactly the signal the health case depends on.
-  var BADGE_HEALTH_TEXT = "!";
-  var BADGE_HEALTH_COLOR = "#8a1f11"; // matches the warning pill and banner
-  var BADGE_REVIEW_TEXT = "1";
-  var BADGE_REVIEW_COLOR = "#1d2f54"; // brand navy, deliberately quiet
+  // The review nudge is off the badge entirely. A "1" on the toolbar is the
+  // universal shape of "you have a message", and spending it on an ask that
+  // the popup already renders as a card cost us the one glanceable channel
+  // the extension owns, at exactly the moment a new user needed it to say
+  // "protected". The ask is unchanged and still governed by
+  // reviewPromptEligibility below; it is simply rendered where it always
+  // did its real work, in the popup.
 
-  // Kept as a literal rather than importing shared/health.js: this module
-  // loads in contexts that do not load that one, and the string is part of
-  // the health module's stable public contract.
-  var STATUS_UNHEALTHY = "unhealthy";
+  // ---- first-protected callout (0.1.56) ----------------------------------
+  //
+  // The other half of the same field observation. The pill is small, sits
+  // in a corner of a player full of YouTube's own chrome, and says
+  // "Protected" to someone who has never been told there is a pill. So the
+  // first time filtering actually starts after install, the pill gets one
+  // callout pointing at itself and at the toolbar icon.
+  //
+  // ONE TIME, EVER, latched in chrome.storage.sync (pm_firstProtectedSeen
+  // {shownAt}), the same store and the same shape as pm_milestoneShown. Sync
+  // rather than local on purpose: this is an introduction, and someone who
+  // has already been introduced on their laptop should not be introduced
+  // again on their desktop.
+  //
+  // It is routine status, so pm_showStatus=false suppresses it, exactly like
+  // the milestone. Someone who has turned the pill off is not going to be
+  // helped by a callout pointing at the pill.
+  var FIRST_PROTECTED_VISIBLE_MS = 20000;
 
-  // badgeDecision(state) -> {text, color, scope}
-  //   scope "tab"    - applies to one tab (health is per tab)
-  //   scope "global" - applies to the whole action
-  //   text ""        - clear it
-  function badgeDecision(state) {
+  function makeFirstProtectedRecord(now) {
+    return { shownAt: typeof now === "number" ? now : Date.now() };
+  }
+
+  function firstProtectedAlreadyShown(record) {
+    return !!(record && typeof record === "object" && typeof record.shownAt === "number");
+  }
+
+  // The gate. `presented` is shared/pill.js present().presented, so the
+  // callout fires on the state the USER READ rather than on any internal
+  // kind: the promise it makes ("this is where it says Protected") is only
+  // true when the word Protected is actually on screen.
+  function shouldShowFirstProtected(state) {
     state = state || {};
-    // Only genuinely broken states badge. UNSUPPORTED is a limit, not a
-    // fault; PENDING and OK say nothing worth a badge.
-    if (state.healthStatus === STATUS_UNHEALTHY) {
-      return { text: BADGE_HEALTH_TEXT, color: BADGE_HEALTH_COLOR, scope: "tab" };
+    if (state.showStatus === false) return false; // routine status opt-out
+    if (firstProtectedAlreadyShown(state.record)) return false;
+    return state.presented === "protected";
+  }
+
+  // The callout's copy, as lines. Plain statements of where to look, no
+  // adjectives and no ask.
+  //
+  // The pin line is conditional because advice to pin something already
+  // pinned is noise that teaches the user this extension does not know what
+  // it is talking about. Chrome does not let an extension pin itself, so
+  // this is the only lever there is: chrome.action.getUserSettings() says
+  // whether it worked, and the line appears only when it has not.
+  function firstProtectedLines(pinned) {
+    var lines = [
+      "This badge is your on-page status.",
+      "The toolbar icon shows the same thing, plus a count of words muted."
+    ];
+    if (pinned === false) {
+      lines.push("Pin it from the puzzle-piece menu to keep it in view.");
     }
-    if (state.reviewEligible === true) {
-      return { text: BADGE_REVIEW_TEXT, color: BADGE_REVIEW_COLOR, scope: "global" };
-    }
-    return { text: "", color: null, scope: "tab" };
+    return lines;
   }
 
   // ---- milestone pill -----------------------------------------------------
@@ -384,11 +416,11 @@
     makeReviewPromptRecord: makeReviewPromptRecord,
     isOnboarded: isOnboarded,
     shouldAutoOpenOnboarding: shouldAutoOpenOnboarding,
-    BADGE_HEALTH_TEXT: BADGE_HEALTH_TEXT,
-    BADGE_HEALTH_COLOR: BADGE_HEALTH_COLOR,
-    BADGE_REVIEW_TEXT: BADGE_REVIEW_TEXT,
-    BADGE_REVIEW_COLOR: BADGE_REVIEW_COLOR,
-    badgeDecision: badgeDecision,
+    FIRST_PROTECTED_VISIBLE_MS: FIRST_PROTECTED_VISIBLE_MS,
+    makeFirstProtectedRecord: makeFirstProtectedRecord,
+    firstProtectedAlreadyShown: firstProtectedAlreadyShown,
+    shouldShowFirstProtected: shouldShowFirstProtected,
+    firstProtectedLines: firstProtectedLines,
     MILESTONE_VISIBLE_MS: MILESTONE_VISIBLE_MS,
     makeMilestoneRecord: makeMilestoneRecord,
     milestoneAlreadyShown: milestoneAlreadyShown,

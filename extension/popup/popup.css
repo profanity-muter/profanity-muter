@@ -553,7 +553,18 @@ body {
 }
 .pm-banner:hover { background: color-mix(in srgb, var(--pm-accent) 18%, transparent); }
 
-.pm-row--review { display: flex; flex-direction: column; gap: 10px; }
+/* The review nudge, as a strip at the top of Home rather than a row in the
+   middle of it (0.1.56). Full-bleed and tinted so it reads as a notice the
+   view is carrying, not as another setting; the quiet navy tint keeps it
+   below the health banner in loudness, which is the order they rank in. */
+.pm-review-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  background: rgba(29, 47, 84, 0.06);
+  border-bottom: 1px solid rgba(29, 47, 84, 0.14);
+}
 .pm-review-text { margin: 0; font-size: 13px; line-height: 1.45; }
 .pm-review-actions { display: flex; align-items: center; gap: 12px; }
 

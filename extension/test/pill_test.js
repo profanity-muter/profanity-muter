@@ -256,11 +256,29 @@ test("content.js injects exactly one interactive on-player surface", () => {
   // missing affordance this fixed.
   const src = fs.readFileSync(path.join(__dirname, "..", "content.js"), "utf8");
   const interactive = src.match(/pointer-events:auto/g) || [];
-  // Two, and only two: the badge, and the dev overlay's Copy logs button.
-  // The latter is gated behind pm_debugOverlay, is off by default, and
-  // needs a real gesture for clipboard access, so it is a deliberate
-  // exception rather than a second routine surface.
-  assert.strictEqual(interactive.length, 2, "badge + dev-only Copy logs button");
+  // Three, and only three: the badge, the dev overlay's Copy logs button,
+  // and (0.1.56) the once-per-install first-protected callout.
+  //
+  // The Copy logs button is gated behind pm_debugOverlay, is off by default,
+  // and needs a real gesture for clipboard access. The callout is shown once
+  // in the life of an install, latched in chrome.storage.sync, carries a
+  // "Got it" button and removes itself after 20 seconds. Neither is a
+  // ROUTINE surface, which is what this guard is counting.
+  assert.strictEqual(
+    interactive.length,
+    3,
+    "badge + dev-only Copy logs button + one-time first-protected callout"
+  );
+  // The callout must stop its own clicks rather than passing them to the
+  // player: dismissing a notice about the video should never pause it.
+  assert.ok(
+    src.indexOf("function showFirstProtectedCallout") > 0,
+    "the callout is the third interactive surface"
+  );
+  assert.ok(
+    src.indexOf("dismissFirstProtected") > 0,
+    "the callout must be dismissable and self-retiring"
+  );
   const badgeAt = src.indexOf("cursor:pointer;white-space:nowrap;");
   const copyLogsAt = src.indexOf("debugOverlayButtonEl.style.cssText");
   assert.ok(badgeAt > 0, "the badge must be the interactive routine surface");
