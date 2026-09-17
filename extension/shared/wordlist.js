@@ -221,7 +221,7 @@
     "dumbfuck", "dyke", "effing", "fag", "faggot", "fellatio", "flippin",
     "flipping", "freaken", "freaking",
     "fricken", "frickin", "fricking", "friggen", "friggin", "fuck", "fucker", "fuckface",
-    "fuckhead", "fucking", "fucksake", "fuckssake", "fuckwit", "gangbang", "god damn", "goddam",
+    "fuckhead", "fucking", "fuckwit", "gangbang", "god damn", "goddam",
     "goddamn", "goddamnit", "gook", "gosh", "handjob", "heck", "hell",
     "holy shit", "horseshit", "jackass", "jackoff", "jerkoff",
     "gism", "jesus christ", "jism", "jiz", "jizz", "kike", "motherfucker", "nigga", "nigger",
@@ -521,6 +521,11 @@
     "spicing",
     "spicy",
     "flip", "flipped", "flips",
+    // Innocent words that begin with a compound-prefix root (see
+    // compoundRoot). Verified by hand; each is a real caption risk.
+    "shitake",   // alternate spelling of shiitake, cooking content
+    "shitzu",    // common misspelling of shih tzu, dog content
+    "wankel",    // Wankel rotary engine, car content
   ]);
 
   // Strip leading/trailing punctuation/whitespace, lowercase. Asterisks
@@ -539,6 +544,14 @@
   // additionally strips combining diacritical marks via NFD
   // decomposition, so e.g. "coño"/"dios" match consistently regardless
   // of accents in the source text vs. the word-list entry.
+  // See normalizeToken. Anchored, one clitic only, apostrophe required, so
+  // plain words ending in these letters ("hell", "bird") are untouched.
+  var CLITIC_RE = /['\u2019](?:s|ll|d|re|ve|m)$/;
+
+  // Punctuation that glues two words into one whitespace token: hyphens,
+  // dashes, slashes, dots, underscores. "fuck-sake", "bull-shit", "shit/fuck".
+  var JOINER_RE = /[-_.\/\\\u2010-\u2015]+/;
+
   function normalizeToken(token, foldDiacritics) {
     if (typeof token !== "string") return "";
     var s = token.toLowerCase();
@@ -549,11 +562,60 @@
       .replace(/^[^\p{L}\p{N}'*]+/u, "")
       .replace(/[^\p{L}\p{N}'*]+$/u, "")
       .replace(/'+$/, "")
-      // Possessive "'s" (straight or curly apostrophe) is dropped so that
-      // "fuck's" (as in Whisper's usual "for fuck's sake") reduces to
-      // "fuck". Without this the apostrophe kept the token whole and the
-      // stemmer never saw the base word, so the phrase played uncensored.
-      .replace(/['\u2019]s$/, "");
+      // Trailing English clitics ('s 'll 'd 're 've 'm, straight or curly
+      // apostrophe) are dropped so "fuck's" / "shit'll" reduce to the base
+      // word. The apostrophe is a core character (it has to be, for
+      // "fuckin'" and "sh*t"-style tokens), so without this the clitic kept
+      // the token whole and the stemmer never saw the word in the list.
+      // Field report 2026-09-17: "for fuck's sake" played uncensored.
+      .replace(CLITIC_RE, "");
+  }
+
+  // Every spelling the matcher should try for one whitespace token: the
+  // token itself, then each joiner-separated segment on its own. All are
+  // already normalized. Order matters for attribution: the whole token
+  // first, so an exact list entry wins over its parts.
+  function surfaceForms(norm, matchConfig) {
+    var forms = [norm];
+    if (norm.indexOf("*") === -1 && JOINER_RE.test(norm)) {
+      var parts = norm.split(JOINER_RE);
+      for (var i = 0; i < parts.length; i++) {
+        var seg = normalizeToken(parts[i], matchConfig && matchConfig.foldDiacritics);
+        if (seg && forms.indexOf(seg) === -1) forms.push(seg);
+      }
+    }
+    return forms;
+  }
+
+  // Run-together compounds: a strong profanity glued to a neighbouring word
+  // with no separator at all ("fuckssake", "shitstorm", "bitchass",
+  // "absofuckinglutely"). General substring matching is off for English on
+  // purpose (see SAFE_WORDS: "class", "assassin", "Scunthorpe"), so this is
+  // the narrow, safe version of it. A root qualifies only if no innocent
+  // English word BEGINS with it, which is why the set is short and why it is
+  // a prefix rule rather than a contains rule ("mishit" and "swanky" contain
+  // roots but do not start with one). "fuckin" is the one infix allowed:
+  // nothing innocent contains it. Each rule is gated on the root itself
+  // still being in the active stem set, so the "none" level and an
+  // allow-listed root switch the compound rule off with it.
+  var COMPOUND_PREFIX_ROOTS = ["fuck", "shit", "cunt", "bitch", "twat", "wank", "motherfuck"];
+  var COMPOUND_INFIXES = [{ infix: "fuckin", root: "fuck" }];
+
+  // Returns the root the compound was attributed to, or null.
+  function compoundRoot(norm, stemSet, matchConfig) {
+    if (!matchConfig || matchConfig.stemming !== "en-suffix") return null;
+    if (norm.indexOf("*") !== -1) return null;
+    for (var i = 0; i < COMPOUND_PREFIX_ROOTS.length; i++) {
+      var root = COMPOUND_PREFIX_ROOTS[i];
+      if (norm.length > root.length && norm.slice(0, root.length) === root && stemSet.has(root)) {
+        return root;
+      }
+    }
+    for (var j = 0; j < COMPOUND_INFIXES.length; j++) {
+      var rule = COMPOUND_INFIXES[j];
+      if (norm.indexOf(rule.infix) !== -1 && stemSet.has(rule.root)) return rule.root;
+    }
+    return null;
   }
 
   // Return the set of "stems" for a normalized word: the word itself,
@@ -723,9 +785,19 @@
     matchConfig = matchConfig || EN_MATCH_CONFIG;
     var norm = normalizeToken(token, matchConfig.foldDiacritics);
     if (!norm) return null;
-    var stems = stemsOf(norm, matchConfig);
-    for (var i = 0; i < stems.length; i++) {
-      if (stemCategory.has(stems[i])) return stemCategory.get(stems[i]);
+    var forms = surfaceForms(norm, matchConfig);
+    for (var f = 0; f < forms.length; f++) {
+      var stems = stemsOf(forms[f], matchConfig);
+      for (var i = 0; i < stems.length; i++) {
+        if (stemCategory.has(stems[i])) return stemCategory.get(stems[i]);
+      }
+    }
+    // A compound attributes to its root ("shitstorm" -> "shit"). The stem
+    // set is what compoundRoot gates on, and every key of stemCategory is
+    // in it, so passing the category map's key set is equivalent here.
+    for (var g = 0; g < forms.length; g++) {
+      var root = compoundRoot(forms[g], stemCategory, matchConfig);
+      if (root && stemCategory.has(root)) return stemCategory.get(root);
     }
     return null;
   }
@@ -900,9 +972,15 @@
     if (matchConfig.wildcards && tokenHasWildcard(norm)) {
       return isProfaneWildcard(norm, stemSet);
     }
-    var stems = stemsOf(norm, matchConfig);
-    for (var i = 0; i < stems.length; i++) {
-      if (stemSet.has(stems[i])) return true;
+    var forms = surfaceForms(norm, matchConfig);
+    for (var f = 0; f < forms.length; f++) {
+      var form = forms[f];
+      if (matchConfig.stemming === "en-suffix" && SAFE_WORDS.has(form)) continue;
+      var stems = stemsOf(form, matchConfig);
+      for (var i = 0; i < stems.length; i++) {
+        if (stemSet.has(stems[i])) return true;
+      }
+      if (compoundRoot(form, stemSet, matchConfig)) return true;
     }
     return false;
   }

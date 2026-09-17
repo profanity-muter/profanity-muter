@@ -456,31 +456,83 @@ test("STORAGE_KEYS covers pm_allowWords", () => {
   assert.notStrictEqual(PMWordlistCore.STORAGE_KEYS.indexOf("pm_allowWords"), -1);
 });
 
-// ---- "for fuck's sake" (user report, 2026-09-17) ---------------------------
-// A viewer heard the phrase play uncensored at the default level. Two gaps:
-// the possessive "'s" kept "fuck's" from reducing to "fuck", and the
-// run-together spellings had no entry.
+// ---- hidden base words (user report, 2026-09-17) ---------------------------
+// A viewer heard "for fuck's sake" play uncensored at the default level.
+// The word was in the list; the surface token hid it. Three ways that
+// happens, each pinned here as a class, not a spelling:
+//   1. a trailing clitic     fuck's  shit'll
+//   2. a punctuation joiner  fuck-sake  bull-shit  shit/fuck
+//   3. a run-together        fuckssake  shitstorm  absofuckinglutely
 
-test("possessive 's is stripped so fuck's matches at every level", () => {
-  for (const level of ["standard", "strict"]) {
-    const list = tierWordlist(level);
-    assert.ok(matches(list, "for fuck's sake"), level + ": straight apostrophe");
-    assert.ok(matches(list, "for fuck\u2019s sake"), level + ": curly apostrophe");
+const STRICT = tierWordlist("strict");
+const STANDARD = tierWordlist("standard");
+
+test("clitics: the base word is found through 's 'll 'd 're 've 'm", () => {
+  const cases = ["fuck's", "fuck\u2019s", "shit'll", "bitch'd", "fuck're", "shit've", "cunt'm",
+                 "for fuck's sake", "for fuck\u2019s sake"];
+  for (const c of cases) {
+    assert.ok(matches(STRICT, c), "strict: " + c);
+    assert.ok(matches(STANDARD, c), "standard: " + c);
   }
 });
 
-test("run-together fucksake / fuckssake are caught", () => {
-  const list = tierWordlist("strict");
-  assert.ok(matches(list, "fucksake"));
-  assert.ok(matches(list, "fuckssake"));
-  assert.ok(matches(list, "fucks sake"));
+test("joiners: each segment of a hyphen/slash/dot/underscore token is checked", () => {
+  for (const c of ["fuck-sake", "bull-shit", "shit/fuck", "fuck_you", "fuck.you", "holy\u2013shit", "fucks-sake"]) {
+    assert.ok(matches(STRICT, c), c);
+  }
 });
 
-test("possessive stripping does not flag innocent words", () => {
-  const list = tierWordlist("strict");
-  for (const w of ["it's", "let's", "class's", "boss's", "mass's", "james's"]) {
-    assert.ok(!matches(list, w), w + " should pass");
+test("run-together: a strong root glued to a neighbour is caught", () => {
+  for (const c of ["fuckssake", "fucksake", "fuckinghell", "shitstorm", "shitshow", "bitchass",
+                   "cuntface", "wankstain", "twatwaffles", "absofuckinglutely", "unfuckingbelievable",
+                   "motherfuckers"]) {
+    assert.ok(matches(STRICT, c), c);
   }
+});
+
+test("run-together is a prefix rule, not a contains rule", () => {
+  // These CONTAIN a root but do not begin with one, and must pass.
+  for (const c of ["scunthorpe", "mishit", "swanky", "swankier", "assassin", "bassist", "cockpit",
+                   "hello", "damnation", "shiitake", "classic", "shitake", "shitzu", "wankel"]) {
+    assert.ok(!matches(STRICT, c), c + " should pass");
+  }
+});
+
+test("clitic and joiner handling does not flag innocent words", () => {
+  for (const c of ["it's", "let's", "class's", "boss's", "mass's", "james's", "we'll", "they're",
+                   "t-shirt", "e-mail", "re-do", "x-ray", "well-being", "co-op", "3.5", "a/b"]) {
+    assert.ok(!matches(STRICT, c), c + " should pass");
+  }
+});
+
+test("the compound rule follows the list: allow-listing the root switches it off", () => {
+  const r = resolveSettingsFromStorage({ pm_strictness: "strict", pm_allowWords: ["shit"] });
+  assert.ok(!matches(r.wordlist, "shitstorm"), "shitstorm passes once shit is allowed");
+  assert.ok(matches(r.wordlist, "fuckssake"), "other roots unaffected");
+  const none = tierWordlist("none");
+  assert.ok(!matches(none, "fuckssake"), "level none catches nothing");
+});
+
+test("compounds and joined forms attribute to the right entry", () => {
+  const catMaps = {
+    stem: PMWordlistCore.buildStemCategory(STRICT, EN_MATCH_CONFIG, PMWordlistCore.categoryOfWord),
+    phrase: PMWordlistCore.buildPhraseCategory(STRICT, EN_MATCH_CONFIG, PMWordlistCore.categoryOfWord)
+  };
+  const find = (t) => PMWordlistCore.findMatchesCore(t.split(/\s+/),
+    buildStemSet(STRICT, EN_MATCH_CONFIG), PMWordlistCore.buildPhraseIndex(STRICT, EN_MATCH_CONFIG),
+    EN_MATCH_CONFIG, catMaps);
+  assert.strictEqual(find("shitstorm")[0].word, "shit");
+  assert.strictEqual(find("fuck's")[0].word, "fuck");
+  assert.strictEqual(find("bull-shit")[0].word, "shit");
+});
+
+test("censorText masks the whole joined or compound token", () => {
+  const stems = buildStemSet(STRICT, EN_MATCH_CONFIG);
+  const phrases = PMWordlistCore.buildPhraseList(STRICT, EN_MATCH_CONFIG);
+  const c = (t) => PMWordlistCore.censorTextCore(t, stems, phrases, EN_MATCH_CONFIG);
+  assert.strictEqual(c("oh for fuck's sake"), "oh for f***** sake");
+  assert.strictEqual(c("what a shitstorm"), "what a s********");
+  assert.strictEqual(c("nice t-shirt"), "nice t-shirt");
 });
 
 // ---- summary -------------------------------------------------------------

@@ -3328,24 +3328,46 @@ stage that can wedge a resource shared across tabs, was the only one without.
   audio seconds, the ceiling) and guard that the serialized inference call is
   still wrapped, since an unwrapped one is invisible until it wedges a user.
 
-## 0.1.55: "for fuck's sake" played uncensored
+## 0.1.55: hidden base words ("for fuck's sake" played uncensored)
 
 User report, 2026-09-17. The phrase played at the default (strict) level. The
 viewer added it as a custom word and it skipped, which confirmed the pipeline
-was fine and the word list was the gap.
+was fine and the matcher was the gap. Reproduced against the matcher in
+isolation before touching anything: `fuck's` missed, `fucks sake` hit.
 
-Two gaps, reproduced against the matcher in isolation before touching anything:
+The narrow fix would be one more list entry. The bug is a class, not a
+spelling: **the base word is in the list, but the surface token carries extra
+material that hides it.** Three sub-types, all fixed in `isProfaneCore` so
+every caller (audio pipeline, caption censoring, attribution) gets the same
+answer:
 
-- **Possessive `'s`.** `normalizeToken` kept a trailing apostrophe-s inside the
-  token, so "fuck's" never reduced to "fuck" and the stemmer never saw the base
-  word. Whisper spells the phrase "for fuck's sake" almost every time, so this
-  was the common path, not an edge. Fix: strip a trailing `'s` or `’s` in
-  `normalizeToken`. Innocent possessives ("boss's", "class's", "let's") are
-  pinned as non-matches.
-- **Run-together spellings.** "fucksake" and "fuckssake" had no entry and
-  substring matching is off by design, so they were whole unknown tokens. Added
-  both to the core list.
+1. **Clitics.** `normalizeToken` keeps the apostrophe as a core character
+   (it has to, for "fuckin'" and "sh*t"), so a trailing `'s`, `'ll`, `'d`,
+   `'re`, `'ve` or `'m` kept the token whole and the stemmer never saw the
+   base word. Whisper spells the phrase "for fuck's sake" nearly every time,
+   so this was the common path. Now stripped, straight or curly apostrophe.
+2. **Joiners.** A hyphen, dash, slash, dot or underscore glues two words into
+   one whitespace token ("fuck-sake", "bull-shit"). `surfaceForms` splits the
+   normalized token on those and checks each segment as well as the whole.
+3. **Run-together compounds.** "fuckssake", "shitstorm", "absofuckinglutely".
+   General substring matching stays off for English (SAFE_WORDS exists
+   because "class" and "assassin" are real). `compoundRoot` is the narrow,
+   safe version: a token that *begins with* one of seven strong roots (fuck,
+   shit, cunt, bitch, twat, wank, motherfuck), plus "fuckin" as the one
+   infix. Prefix, not contains, because "mishit", "swanky" and "Scunthorpe"
+   contain roots without starting with one. Each rule is gated on the root
+   still being in the active stem set, so level "none" and an allow-listed
+   root switch it off with the list.
+
+Three innocent prefix collisions found by hand and added to SAFE_WORDS:
+"shitake" (shiitake), "shitzu" (shih tzu), "wankel" (rotary engine). Each is
+real caption content.
+
+Tests pin every sub-type as a class (clitic set, joiner set, compound set),
+the innocent guards (contains-but-not-prefix words, possessives of ordinary
+nouns, hyphenated ordinary words), allow-list gating, attribution of a
+compound to its root, and the censored output for each shape.
 
 Still not caught, deliberately: "fck", "fuk", "fkn", "fuking". Whisper does
-not emit those from speech, and adding leetspeak roots widens the innocent
-false-positive surface for nothing measurable.
+not emit those from speech, and leetspeak roots widen the innocent surface
+for nothing measurable.
