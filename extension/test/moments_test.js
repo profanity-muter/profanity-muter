@@ -428,7 +428,7 @@ test("the Pin it step shows the payoff before the reason for it", () => {
   );
   const step = html.slice(html.indexOf('id="ob-step-4"'), html.indexOf("</section>", html.indexOf('id="ob-step-4"')));
   const order = [
-    ">Pin it<",
+    ">Pin the badge to see it working<",
     "What the pinned icon tells you",
     "The toolbar icon is where you see the filter working",
     "puzzle-piece icon</strong> in the Chrome toolbar",

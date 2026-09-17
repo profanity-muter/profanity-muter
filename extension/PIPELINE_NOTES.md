@@ -3633,3 +3633,33 @@ card is 546px wide, still pinned top-right, capped at the viewport minus a
 the edge. The Pin it step also reordered: the five badge states go above the
 lede now, because "pin this" is a chore until you have seen what the icon
 will tell you. 521 tests across 18 files, from 520.
+
+**Dark-mode inputs on "Set it up", and the guard that should have existed.**
+Owner review on a dark-mode Mac, 2026-09-17: the word-list textarea and the
+two password fields rendered navy on the paper page, the same defect fixed on
+the report page on 2026-09-04. It was reported as a regression. It is not one:
+measured with the same harness, the inputs are navy under
+prefers-color-scheme: dark at the 0.1.53 store commit, at 0.1.54, and at
+every commit back to the 0.1.52 palette (before that they were Chrome's
+default dark grey, also wrong). No branch, dangling commit or old checkout
+holds an onboarding fix. The 2026-09-04 fix was scoped to `.rp-page` on
+purpose, so the identical bug on the sibling page was never touched, and
+every review since was done in light mode, where it cannot be seen.
+
+Root fix rather than a second page-scoped patch: onboarding.css, the shell
+every full page loads after popup.css, pins each `--pm-*` token popup.css
+darkens back to its light value while the page is not in its own
+`[data-theme="dark"]`, and sets `color-scheme: light` so native controls
+follow. One block, every control class, both pages. As a side effect the
+gold link-buttons on "One last thing" go back to gold-deep, which was the
+same leak (contrast 1.58 on paper in dark mode).
+
+Two guards so it cannot come back quietly. `test/page_theme_test.js` (in
+`npm test`) fails if popup.css ever darkens a token the shell does not pin,
+or if the shell grows a prefers-color-scheme rule of its own. `npm run
+verify:pages` loads both pages in a dark-mode Chromium, walks every step, and
+fails on any dark-filled field on a light page or any control text under
+4.5:1. Run it before every store upload. Proven against the 0.1.54 tree: it
+reports the three fields and the two gold links; on this tree it is clean.
+
+Also in this pass: the step title is now "Pin the badge to see it working".

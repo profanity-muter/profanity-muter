@@ -33,6 +33,41 @@
   --hairline: #2b3a5e;
 }
 
+/* ---- Full pages follow the PAGE theme, never the OS ------------------
+   This shell is designed light. Its own tokens above only go dark under an
+   explicit [data-theme="dark"], which nothing sets today. popup.css, loaded
+   first, flips its --pm-* control tokens to navy under prefers-color-scheme:
+   dark unconditionally, so on a dark-mode Mac every popup-class control on
+   a paper page (inputs, textareas, radios, buttons) went navy while the page
+   stayed paper: navy boxes with near-invisible text. Found on the report
+   page 2026-09-04 and fixed there with an .rp-page override, which left the
+   identical bug on the onboarding "Set it up" step until a dark-mode review
+   on 2026-09-17. The fix now lives at the root: while the page is not in its
+   own dark theme, every --pm-* token popup.css darkens is pinned back to its
+   light value here, and native controls are told the page is light. The
+   .rp-page block further down is now redundant and stays only as a stricter
+   look for the report form. test/page_theme_test.js fails the build if
+   popup.css ever grows a dark token this block does not pin. */
+:root:not([data-theme="dark"]) {
+  color-scheme: light;
+  --pm-bg: #ffffff;
+  --pm-fg: #1d2f54;
+  --pm-muted: #56617e;
+  --pm-border: #e4dfd2;
+  --pm-accent: #1d2f54;
+  --pm-on-accent: #faf8f2;
+  --pm-track-off: #b9bfce;
+  --pm-soft: #faf8f2;
+  --pm-bar-track: #f7edd6;
+  --pm-gold: #e8c46c;
+  --pm-gold-soft: #f7edd6;
+  --pm-gold-deep: #8a6d1f;
+  --pm-link: #8a6d1f;
+  --pm-good: #2f7d5b;
+  --pm-good-bg: #eef7f1;
+  --pm-good-border: #cfe6d8;
+}
+
 body {
   hyphens: none;
   -webkit-hyphens: none;
