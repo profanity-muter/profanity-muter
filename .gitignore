@@ -7,3 +7,4 @@ verify/last_run.log
 # time by extension/scripts/fetch-models.mjs, shipped inside the extension
 # zip, but never committed. See CENSOR_NOTES "0.1.44".
 extension/models/
+*.zip
