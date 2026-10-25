@@ -16,7 +16,7 @@
 // what "eligible" means (0.1.33). shared/badge.js joined the list in 0.1.56,
 // when the badge became a live mirror of the on-player pill.
 try {
-  importScripts('shared/moments.js', 'shared/badge.js', 'shared/pill.js', 'shared/active_tab.js');
+  importScripts('shared/moments.js', 'shared/badge.js', 'shared/pill.js', 'shared/active_tab.js', 'shared/memlog.js');
 } catch (e) {
   console.warn('[PM-BG] could not load a shared module:', String(e));
 }
@@ -24,6 +24,26 @@ try {
 var portsByTabId = new Map(); // tabId -> chrome.runtime.Port
 var videoIdByTabId = new Map(); // tabId -> last known videoId (0.1.15: needed to re-push pm-config on offscreen respawn without waiting for a video change)
 var creatingOffscreen = null;
+
+// ---- PM-MEM persistence (0.1.57) -------------------------------------------
+// The offscreen document samples memory and sends 'pm-mem'; the series is
+// kept in chrome.storage.local (pm_memlog) so it survives service-worker
+// restarts and is picked up by the popup's "Copy debug log". Writes are
+// chained so concurrent samples cannot clobber each other.
+var memlogChain = Promise.resolve();
+function persistMemSample(sample) {
+  memlogChain = memlogChain
+    .then(function () {
+      return chrome.storage.local.get(['pm_memlog']);
+    })
+    .then(function (items) {
+      var next = globalThis.PMMemlog.append(items && items.pm_memlog, sample);
+      return chrome.storage.local.set({ pm_memlog: next });
+    })
+    .catch(function (e) {
+      console.warn('[PM-BG] pm_memlog write failed:', String(e));
+    });
+}
 
 // ---- active-tab-follow (0.1.49) --------------------------------------------
 //
@@ -788,6 +808,8 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
       }
     }
     console.log('[PM-BG] resync-result relayed:', (msg.words || []).length, 'words,', (msg.coveredIntervals || []).length, 'covered intervals');
+  } else if (msg.type === 'pm-mem') {
+    if (msg.sample && globalThis.PMMemlog) persistMemSample(msg.sample);
   } else if (msg.type === 'pm-log') {
     console.log('[PM-OFFSCREEN]', msg.text);
   }

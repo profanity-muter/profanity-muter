@@ -877,15 +877,23 @@
 
   function copyDevlog() {
     if (!hasLocalStorage) { setStatus("Storage unavailable"); return; }
-    chrome.storage.local.get(["pm_devlog"], function (items) {
+    chrome.storage.local.get(["pm_devlog", "pm_memlog"], function (items) {
       if (chrome.runtime && chrome.runtime.lastError) { setStatus("Copy failed"); return; }
       var log = items && items.pm_devlog;
-      if (!log || !log.videos || !log.videos.length) { setStatus("No debug log yet"); return; }
+      var mem = items && items.pm_memlog;
+      var hasVideos = !!(log && log.videos && log.videos.length);
+      if (!hasVideos && !mem) { setStatus("No debug log yet"); return; }
+      // 0.1.57: the PM-MEM memory timeline rides along as `memory` (see
+      // shared/memlog.js for the shape). Only added when present so the
+      // payload for an install without samples is unchanged.
+      var out = hasVideos ? log : { version: 1, videos: [] };
+      if (mem) out = Object.assign({}, out, { memory: mem });
       var text;
-      try { text = JSON.stringify(log); } catch (e) { setStatus("Copy failed"); return; }
+      try { text = JSON.stringify(out); } catch (e) { setStatus("Copy failed"); return; }
       if (!navigator.clipboard || !navigator.clipboard.writeText) { setStatus("Clipboard unavailable"); return; }
+      var n = out.videos.length;
       navigator.clipboard.writeText(text).then(
-        function () { setStatus("Debug log copied (" + log.videos.length + " videos)"); },
+        function () { setStatus("Debug log copied (" + n + " videos" + (mem ? ", memory timeline" : "") + ")"); },
         function () { setStatus("Copy failed"); }
       );
     });

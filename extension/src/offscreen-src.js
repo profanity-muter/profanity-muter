@@ -40,6 +40,7 @@ import { Input, ReadableStreamSource, AudioBufferSink, WEBM, MP4, ADTS } from 'm
 // Imported for its side effect (it attaches globalThis.PMDecode) so the
 // shipped path is the same code the Node tests exercise.
 import '../shared/decode.js';
+import '../shared/memlog.js'; // 0.1.57 PM-MEM, attaches globalThis.PMMemlog
 // 0.1.41: run topology (boundary classification, playhead-aware
 // retirement). Imported for its side effect, like the others, so the
 // shipped decision is the tested one.
@@ -151,6 +152,69 @@ function logWarmToSession(s) {
   );
 }
 
+const PMMemlog = globalThis.PMMemlog;
+// ---- 0.1.57 PM-MEM: memory timeline ---------------------------------------
+// Sampled once a minute (plus at window completion, throttled to the same
+// minimum gap, and at offscreen create / model load / worker respawn /
+// teardown) and sent to background.js, which persists a bounded tiered
+// series under pm_memlog (shared/memlog.js). The popup's "Copy debug log"
+// includes it as `memory`. No per-chunk sampling.
+const MEM_MIN_GAP_MS = 45000;
+const MEM_TICK_MS = 60000;
+const offscreenStartedAtWall = Date.now();
+let lastWorkerMem = null; // newest snapshot reported by the worker, or null (fresh worker)
+let lastMemEmitWall = 0;
+
+function memCaches() {
+  let runs = 0, runBytes = 0, words = 0, keys = 0, maps = 0, infl = 0, skip = 0;
+  for (const s of sessions.values()) {
+    runs += s.runs.length;
+    for (const r of s.runs) runBytes += Math.min(r.bytesFed || 0, RUN_STREAM_CACHE_BYTES);
+    words += s.allWords.length;
+    keys += s.emittedKeys.size;
+    maps += s.windowAttempts.size + s.sinkErrorAttempts.size + s.hangAttempts.size;
+    infl += s.inFlightWindows.size;
+    skip += s.skippedSpans.length;
+  }
+  return {
+    ses: sessions.size,
+    runs,
+    runMB: PMMemlog.mb(runBytes),
+    words,
+    keys,
+    maps,
+    pend: pendingWorkerRequests.size,
+    infl,
+    skip
+  };
+}
+
+function emitMem(kind, why, force) {
+  try {
+    const nowWall = Date.now();
+    if (!force && (kind === 'tick' || kind === 'win') && nowWall - lastMemEmitWall < MEM_MIN_GAP_MS) return;
+    if (kind === 'tick' || kind === 'win') lastMemEmitWall = nowWall;
+    const wm = lastWorkerMem;
+    const worker = wm
+      ? Object.assign({}, wm, { staleS: Math.round((nowWall - (wm.takenAtWall || nowWall)) / 1000) })
+      : { ageS: workerSpawnedAtWall ? Math.round((nowWall - workerSpawnedAtWall) / 1000) : null };
+    const h = PMMemlog.jsHeap(performance);
+    const sample = PMMemlog.buildSample(
+      kind,
+      nowWall,
+      worker,
+      { jsUsed: h.used, jsTotal: h.total, ageS: Math.round((nowWall - offscreenStartedAtWall) / 1000), caches: memCaches() },
+      why
+    );
+    if (kind !== 'win') log('[PM-MEM] ' + JSON.stringify(sample));
+    chrome.runtime.sendMessage({ type: 'pm-mem', sample }).catch(() => {});
+  } catch (e) {
+    log('[PM-MEM] sample failed: ' + String(e));
+  }
+}
+setInterval(() => emitMem('tick'), MEM_TICK_MS);
+self.addEventListener('pagehide', () => emitMem('teardown', 'offscreen pagehide', true));
+
 function spawnWhisperWorker() {
   workerSpawnedAtWall = Date.now();
   whisperWorker = new Worker(chrome.runtime.getURL('dist/whisper.worker.js'));
@@ -174,6 +238,14 @@ function spawnWhisperWorker() {
 // wedge the pipeline far worse than the compute we are trying to abandon.
 function respawnWhisperWorker(reason) {
   const startedWall = Date.now();
+  // 0.1.57: record memory AT TEARDOWN, from the last snapshot the dying
+  // worker managed to report (it may be stuck in a synchronous call, which
+  // shows up as a large `stale`). console tag: PM-MEM-RESPAWN.
+  try {
+    log('[PM-MEM-RESPAWN] ' + reason);
+    emitMem('respawn', reason, true);
+  } catch (e) {}
+  lastWorkerMem = null;
   for (const [, pending] of pendingWorkerRequests) {
     try {
       pending.reject(new Error('worker preempted: ' + reason));
@@ -201,6 +273,11 @@ function handleWorkerMessage(ev) {
     broadcastDiag('[whisper-worker] ' + msg.text);
     return;
   }
+  if (msg.type === 'mem') {
+    lastWorkerMem = msg.mem || null;
+    if (msg.why) emitMem('model-loaded', msg.why);
+    return;
+  }
   if (msg.type === 'warm-ready') {
     warmInfo = { workerSpawnMs: msg.workerSpawnMs, modelLoadMs: msg.modelLoadMs, readyAtWall: Date.now() };
     log('[PM-WARM] worker spawn=' + warmInfo.workerSpawnMs + 'ms model load=' + warmInfo.modelLoadMs + 'ms');
@@ -210,10 +287,15 @@ function handleWorkerMessage(ev) {
   const pending = pendingWorkerRequests.get(msg.requestId);
   if (!pending) return;
   pendingWorkerRequests.delete(msg.requestId);
-  if (msg.type === 'result') pending.resolve(msg);
+  if (msg.type === 'result') {
+    if (msg.mem) lastWorkerMem = msg.mem;
+    emitMem('win'); // throttled: at most one per MEM_MIN_GAP_MS
+    pending.resolve(msg);
+  }
   else pending.reject(new Error(msg.error || 'unknown whisper worker error'));
 }
 spawnWhisperWorker();
+setTimeout(() => emitMem('create', 'offscreen document start', true), 0); // deferred: sessions/consts below must be initialized first
 
 // Transfers `float16k`'s own buffer into the worker (0.1.15: "transfer, not
 // copy" - this ~1.1MB-per-18s-window array is detached from this thread by
@@ -581,6 +663,7 @@ function dropSessionsForTab(tabId) {
 }
 
 function appendToRun(run, bytes) {
+  run.bytesFed = (run.bytesFed || 0) + (bytes && bytes.byteLength ? bytes.byteLength : 0); // 0.1.57 PM-MEM cache sizing only
   try {
     run.streamController.enqueue(bytes);
   } catch (e) {

@@ -32,12 +32,14 @@
 // (its own .buffer), never copied. This worker has NO chrome.* API access
 // (deliberately not needed) - the wasm path base is handed over once in an
 // 'init' message from the main thread, which already has chrome.runtime.
+import { wasmProbe, PMMemlog } from './mem-probe.js'; // MUST stay first: wraps WebAssembly before onnxruntime-web loads
 import { pipeline, env } from '@huggingface/transformers';
 
 // Eager warm-up timing (0.1.18) - as early in this file's own execution as
 // possible, so `workerSpawnMs` (below) measures genuine worker-script-start-
 // to-init latency, not anything this file does before reaching here.
 const workerScriptStartWall = performance.now();
+const workerStartedAtWall = Date.now();
 
 function log(...args) {
   console.log('[PM-WHISPER-WORKER]', ...args);
@@ -128,6 +130,28 @@ function rmsAt(float16k, localStartInWindow, localEndInWindow, sampleRate) {
 // is exactly the boundary the warm-up question is about.
 let inferenceCount = 0;
 
+// 0.1.57 memory snapshot (see shared/memlog.js). Cheap: a few property
+// reads, no allocation proportional to anything. WASM linear memory never
+// shrinks, so wasmBytes is the number that separates "leak" from "plateau".
+function memSnapshot() {
+  const w = wasmProbe.stats();
+  const h = PMMemlog.jsHeap(performance);
+  return {
+    wasmBytes: w.bytes,
+    wasmPeak: w.peak,
+    wasmN: w.n,
+    jsUsed: h.used,
+    jsTotal: h.total,
+    windows: inferenceCount,
+    ageS: Math.round((Date.now() - workerStartedAtWall) / 1000),
+    takenAtWall: Date.now()
+  };
+}
+// Periodic report (every 30s so the offscreen 60s tick is never more than 30s stale); the offscreen document owns throttling and persistence.
+// Skipped (by the event loop) while a synchronous inference holds the
+// thread, which the offscreen side sees as a growing `stale`.
+setInterval(() => self.postMessage({ type: 'mem', mem: memSnapshot() }), 30000);
+
 async function handleTranscribe(msg) {
   const { requestId, modelId, float16k, options } = msg;
   try {
@@ -157,7 +181,8 @@ async function handleTranscribe(msg) {
       chunks,
       transcribeMs,
       modelResolveMs,
-      inferenceIndex: inferenceCount
+      inferenceIndex: inferenceCount,
+      mem: memSnapshot()
     });
   } catch (e) {
     self.postMessage({ type: 'error', requestId, error: String(e && e.stack ? e.stack : e) });
@@ -185,6 +210,7 @@ function preload(modelId, reportWarm) {
   const t0 = performance.now();
   getTranscriber(modelId)
     .then(() => {
+      self.postMessage({ type: 'mem', why: 'model-loaded', mem: memSnapshot() });
       if (reportWarm) {
         self.postMessage({ type: 'warm-ready', workerSpawnMs: reportWarm.workerSpawnMs, modelLoadMs: Math.round(performance.now() - t0) });
       }

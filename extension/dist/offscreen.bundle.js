@@ -37,7 +37,7 @@
     mod
   ));
 
-  // node_modules/mediabunny/dist/modules/src/misc.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/misc.js
   function assert(x) {
     if (!x) {
       throw new Error("Assertion failed.");
@@ -45,7 +45,7 @@
   }
   var normalizeRotation, last, readExpGolomb, readSignedExpGolomb, toUint8Array, toDataView, textDecoder, invertObject, COLOR_PRIMARIES_MAP, COLOR_PRIMARIES_MAP_INVERSE, TRANSFER_CHARACTERISTICS_MAP, TRANSFER_CHARACTERISTICS_MAP_INVERSE, MATRIX_COEFFICIENTS_MAP, MATRIX_COEFFICIENTS_MAP_INVERSE, isAllowSharedBufferSource, AsyncMutex, HEX_STRING_REGEX, bytesToHexString, hexStringToBytes, reverseBitsU32, binarySearchExact, binarySearchLessOrEqual, promiseWithResolvers, removeItem, findLastIndex, toAsyncIterator, validateAnyIterable, assertNever, getUint24, getInt24, mapAsyncGenerator, clamp, UNDETERMINED_LANGUAGE, roundIfAlmostInteger, roundToMultiple, roundToDivisor, popcount, ISO_639_2_REGEX, isIso639Dash2LanguageCode, SECOND_TO_MICROSECOND_FACTOR, CallSerializer, isWebKitCache, isWebKit, isChromiumCache, isChromium, chromiumVersionCache, getChromiumVersion, missingWebCodecsClassMessage, NativePromiseConstructor, isThenable, coalesceIndex, uint8ArraysAreEqual, polyfillSymbolDispose, isNumber, arrayCount, arrayArgmin, simplifyRational, EventEmitter;
   var init_misc = __esm({
-    "node_modules/mediabunny/dist/modules/src/misc.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/misc.js"() {
       normalizeRotation = (rotation) => {
         const mappedRotation = (rotation % 360 + 360) % 360;
         if (mappedRotation === 0 || mappedRotation === 90 || mappedRotation === 180 || mappedRotation === 270) {
@@ -466,10 +466,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/logging.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/logging.js
   var LogLevel, Logging;
   var init_logging = __esm({
-    "node_modules/mediabunny/dist/modules/src/logging.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/logging.js"() {
       init_misc();
       (function(LogLevel2) {
         LogLevel2[LogLevel2["Silent"] = 0] = "Silent";
@@ -525,10 +525,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/metadata.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/metadata.js
   var RichImageData, AttachedFile, DEFAULT_TRACK_DISPOSITION;
   var init_metadata = __esm({
-    "node_modules/mediabunny/dist/modules/src/metadata.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/metadata.js"() {
       RichImageData = class {
         /** Creates a new {@link RichImageData}. */
         constructor(data, mimeType) {
@@ -575,10 +575,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/shared/bitstream.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/bitstream.js
   var Bitstream;
   var init_bitstream = __esm({
-    "node_modules/mediabunny/dist/modules/shared/bitstream.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/bitstream.js"() {
       Bitstream = class _Bitstream {
         constructor(bytes) {
           this.bytes = bytes;
@@ -642,10 +642,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/shared/aac-misc.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/aac-misc.js
   var aacFrequencyTable, aacChannelMap, parseAacAudioSpecificConfig, readAacObjectType, readAacSamplingFrequency;
   var init_aac_misc = __esm({
-    "node_modules/mediabunny/dist/modules/shared/aac-misc.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/aac-misc.js"() {
       init_bitstream();
       aacFrequencyTable = [
         96e3,
@@ -733,10 +733,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/codec.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/codec.js
   var PCM_AUDIO_CODECS, NON_PCM_AUDIO_CODECS, AUDIO_CODECS, AVC_LEVEL_TABLE, VP9_LEVEL_TABLE, VP9_DEFAULT_SUFFIX, AV1_DEFAULT_SUFFIX, PRORES_FOURCCS, DTS_FOURCCS, extractVideoCodecString, extractAudioCodecString, OPUS_SAMPLE_RATE, PCM_CODEC_REGEX, parsePcmCodec, VALID_VIDEO_CODEC_STRING_PREFIXES;
   var init_codec = __esm({
-    "node_modules/mediabunny/dist/modules/src/codec.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/codec.js"() {
       init_aac_misc();
       init_misc();
       PCM_AUDIO_CODECS = [
@@ -1059,10 +1059,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/shared/mp3-misc.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/mp3-misc.js
   var decodeSynchsafe, XingFlags;
   var init_mp3_misc = __esm({
-    "node_modules/mediabunny/dist/modules/shared/mp3-misc.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/mp3-misc.js"() {
       decodeSynchsafe = (synchsafed) => {
         let mask = 2130706432;
         let unsynchsafed = 0;
@@ -1081,19 +1081,19 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/shared/ac3-misc.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/ac3-misc.js
   var AC3_SAMPLE_RATES, EAC3_REDUCED_SAMPLE_RATES;
   var init_ac3_misc = __esm({
-    "node_modules/mediabunny/dist/modules/shared/ac3-misc.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/shared/ac3-misc.js"() {
       AC3_SAMPLE_RATES = [48e3, 44100, 32e3];
       EAC3_REDUCED_SAMPLE_RATES = [24e3, 22050, 16e3];
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/codec-data.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/codec-data.js
   var AvcNalUnitType, HevcNalUnitType, iterateNalUnitsInAnnexB, iterateNalUnitsInLengthPrefixed, iterateAvcNalUnits, extractNalUnitTypeForAvc, removeEmulationPreventionBytes, ANNEX_B_START_CODE, extractAvcDecoderConfigurationRecord, AVC_HEVC_ASPECT_RATIO_IDC_TABLE, parseAvcSps, skipAvcHrdParameters, iterateHevcNalUnits, extractNalUnitTypeForHevc, parseHevcSps, extractHevcDecoderConfigurationRecord, parseProfileTierLevel, skipScalingListData, skipAllStRefPicSets, skipStRefPicSet, parseHevcVui, skipHevcHrdParameters, skipSubLayerHrdParameters, HevcNaluOrderState, extractVp9CodecInfoFromPacket, iterateAv1PacketObus, extractAv1CodecInfoFromPacket, determineVideoPacketType, FlacBlockType, AC3_ACMOD_CHANNEL_COUNTS, AC3_FRAME_SIZES, AC3_REGISTRATION_DESCRIPTOR, EAC3_REGISTRATION_DESCRIPTOR, parseEac3Config, getEac3SampleRate, getEac3ChannelCount, DTS_EXSS_SYNC_WORD, DTS_CORE_FRAME_HEADER_SIZE, DTS_EXSS_HEADER_PREFIX_SIZE, DTS_PCM_BLOCK_SAMPLES, DTS_SPECIFIC_BOX_SIZE, DTS_SUBBAND_SAMPLES, DTS_CORE_SAMPLE_RATES, DTS_CORE_BIT_RATES, DTS_PCM_RESOLUTIONS, DTS_AMODE_CHANNEL_COUNTS, DTS_AMODE_CHANNEL_LAYOUTS, DTS_CHANNEL_LAYOUT_LFE1, DTS_CHANNEL_LAYOUT_PAIR_MASK, DTS_EXSS_REF_CLOCKS, DTS_EXSS_SAMPLE_RATES, DTS_SPECIFIC_BOX_FRAME_DURATIONS, parseDtsFrame, extractDtsFourCcFromPacket, parseDtsCoreFrameHeader, parseDtsExssHeader, parseDtsSpecificBox, getDtsChannelCount;
   var init_codec_data = __esm({
-    "node_modules/mediabunny/dist/modules/src/codec-data.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/codec-data.js"() {
       init_codec();
       init_misc();
       init_logging();
@@ -2921,10 +2921,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/demuxer.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/demuxer.js
   var Demuxer;
   var init_demuxer = __esm({
-    "node_modules/mediabunny/dist/modules/src/demuxer.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/demuxer.js"() {
       Demuxer = class {
         constructor(input) {
           this.input = input;
@@ -2935,10 +2935,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/packet.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/packet.js
   var PLACEHOLDER_DATA, EncodedPacket;
   var init_packet = __esm({
-    "node_modules/mediabunny/dist/modules/src/packet.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/packet.js"() {
       init_misc();
       PLACEHOLDER_DATA = /* @__PURE__ */ new Uint8Array(0);
       EncodedPacket = class _EncodedPacket {
@@ -3102,10 +3102,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/isobmff/isobmff-misc.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-misc.js
   var buildIsobmffMimeType, parsePsshBoxContents, psshBoxesAreEqual;
   var init_isobmff_misc = __esm({
-    "node_modules/mediabunny/dist/modules/src/isobmff/isobmff-misc.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-misc.js"() {
       init_misc();
       buildIsobmffMimeType = (info) => {
         const base = info.hasVideo ? "video/" : info.hasAudio ? "audio/" : "application/";
@@ -3148,10 +3148,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/isobmff/isobmff-reader.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-reader.js
   var MIN_BOX_HEADER_SIZE, MAX_BOX_HEADER_SIZE, readBoxHeader, readFixed_16_16, readFixed_2_30, readIsomVariableInteger, readMetadataStringShort, readDataBox;
   var init_isobmff_reader = __esm({
-    "node_modules/mediabunny/dist/modules/src/isobmff/isobmff-reader.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-reader.js"() {
       init_metadata();
       init_misc();
       init_reader();
@@ -3227,10 +3227,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/aes.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/aes.js
   var AES_128_BLOCK_SIZE, Te4, Td0, Td1, Td2, Td3, Td4, rcon, tablesGenerated, generateAesTables, Aes128CbcContext;
   var init_aes = __esm({
-    "node_modules/mediabunny/dist/modules/src/aes.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/aes.js"() {
       init_misc();
       AES_128_BLOCK_SIZE = 16;
       Te4 = new Uint32Array(256);
@@ -3364,10 +3364,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/isobmff/isobmff-demuxer.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-demuxer.js
   var IsobmffDemuxer, IsobmffTrackBacking, IsobmffVideoTrackBacking, IsobmffAudioTrackBacking, getSampleIndexForTimestamp, getKeyframeSampleIndexForTimestamp, getSampleInfo, getNextKeyframeIndexForSample, offsetFragmentTrackDataByTimestamp, extractRotationFromMatrix, sampleTableIsEmpty, getOrCreateEncryptionAuxInfo, resolveEncryptionAuxInfo, getDefaultSampleEncryption, decryptSample, decryptCtr, decryptCbcs, collectCryptRanges;
   var init_isobmff_demuxer = __esm({
-    "node_modules/mediabunny/dist/modules/src/isobmff/isobmff-demuxer.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/isobmff/isobmff-demuxer.js"() {
       init_aac_misc();
       init_codec();
       init_codec_data();
@@ -6368,7 +6368,7 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/matroska/ebml.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/ebml.js
   function assertDefinedSize(size) {
     if (size === void 0) {
       throw new Error("Undefined element size is used in a place where it is not supported.");
@@ -6376,7 +6376,7 @@
   }
   var EBMLId, LEVEL_0_EBML_IDS, LEVEL_1_EBML_IDS, LEVEL_0_AND_1_EBML_IDS, MAX_VAR_INT_SIZE, MIN_HEADER_SIZE, MAX_HEADER_SIZE, readVarIntSize, readVarInt, readUnsignedInt, readUnsignedBigInt, readElementId, readElementSize, readElementHeader, readAsciiString, readUnicodeString, readFloat, searchForNextElementId, resync, CODEC_STRING_MAP;
   var init_ebml = __esm({
-    "node_modules/mediabunny/dist/modules/src/matroska/ebml.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/ebml.js"() {
       init_misc();
       init_reader();
       (function(EBMLId2) {
@@ -6713,10 +6713,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/matroska/matroska-misc.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/matroska-misc.js
   var buildMatroskaMimeType;
   var init_matroska_misc = __esm({
-    "node_modules/mediabunny/dist/modules/src/matroska/matroska-misc.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/matroska-misc.js"() {
       buildMatroskaMimeType = (info) => {
         const base = info.hasVideo ? "video/" : info.hasAudio ? "audio/" : "application/";
         let string = base + (info.isWebM ? "webm" : "x-matroska");
@@ -6729,10 +6729,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/matroska/matroska-demuxer.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/matroska-demuxer.js
   var BlockLacing, ContentEncodingScope, ContentCompAlgo, METADATA_ELEMENTS, MAX_RESYNC_LENGTH, MatroskaDemuxer, MatroskaTrackBacking, MatroskaVideoTrackBacking, MatroskaAudioTrackBacking;
   var init_matroska_demuxer = __esm({
-    "node_modules/mediabunny/dist/modules/src/matroska/matroska-demuxer.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/matroska/matroska-demuxer.js"() {
       init_codec_data();
       init_codec();
       init_demuxer();
@@ -8794,10 +8794,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/adts/adts-reader.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/adts/adts-reader.js
   var MIN_ADTS_FRAME_HEADER_SIZE, MAX_ADTS_FRAME_HEADER_SIZE, readAdtsFrameHeader;
   var init_adts_reader = __esm({
-    "node_modules/mediabunny/dist/modules/src/adts/adts-reader.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/adts/adts-reader.js"() {
       init_bitstream();
       init_reader();
       MIN_ADTS_FRAME_HEADER_SIZE = 7;
@@ -8855,10 +8855,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/adts/adts-demuxer.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/adts/adts-demuxer.js
   var SAMPLES_PER_AAC_FRAME, AdtsDemuxer, AdtsAudioTrackBacking;
   var init_adts_demuxer = __esm({
-    "node_modules/mediabunny/dist/modules/src/adts/adts-demuxer.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/adts/adts-demuxer.js"() {
       init_aac_misc();
       init_demuxer();
       init_id3();
@@ -9127,10 +9127,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/source.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/source.js
   var DEFAULT_MIN_READ_POSITION, DEFAULT_MAX_READ_POSITION, sourceFinalizationRegistry, Source, SourceRef, PathedSource, sourceRequestsAreEqual, URL_SOURCE_MIN_LOAD_AMOUNT, ReadableStreamSource, RangedSource;
   var init_source = __esm({
-    "node_modules/mediabunny/dist/modules/src/source.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/source.js"() {
       init_misc();
       init_input();
       polyfillSymbolDispose();
@@ -9535,10 +9535,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/input-format.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input-format.js
   var InputFormat, IsobmffInputFormat, Mp4InputFormat, MatroskaInputFormat, WebMInputFormat, AdtsInputFormat, MP4, WEBM, ADTS, validateInputFormatOptions;
   var init_input_format = __esm({
-    "node_modules/mediabunny/dist/modules/src/input-format.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input-format.js"() {
       init_isobmff_demuxer();
       init_ebml();
       init_matroska_demuxer();
@@ -9803,10 +9803,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/sample.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/sample.js
   var lastVideoGcErrorLog, lastAudioGcErrorLog, finalizationRegistry, VIDEO_SAMPLE_PIXEL_FORMATS, VIDEO_SAMPLE_PIXEL_FORMATS_SET, AUDIO_SAMPLE_FORMATS, AudioSampleResource, AudioSample, getBytesPerSample, formatIsPlanar, getReadFunction, getWriteFunction, isAudioData, doAudioDataCopyToWebKitWorkaround;
   var init_sample = __esm({
-    "node_modules/mediabunny/dist/modules/src/sample.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/sample.js"() {
       init_misc();
       init_logging();
       polyfillSymbolDispose();
@@ -10536,19 +10536,19 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/custom-coder.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/custom-coder.js
   var customVideoDecoders, customAudioDecoders;
   var init_custom_coder = __esm({
-    "node_modules/mediabunny/dist/modules/src/custom-coder.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/custom-coder.js"() {
       customVideoDecoders = [];
       customAudioDecoders = [];
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/pcm.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/pcm.js
   var fromUlaw, fromAlaw;
   var init_pcm = __esm({
-    "node_modules/mediabunny/dist/modules/src/pcm.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/pcm.js"() {
       fromUlaw = (u8) => {
         const MULAW_BIAS = 33;
         let sign = 0;
@@ -10582,10 +10582,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/media-sink.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/media-sink.js
   var validatePacketRetrievalOptions, validateTimestamp, maybeFixPacketType, EncodedPacketSink, DecoderWrapper, BaseMediaSampleSink, computeMaxQueueSize, AudioDecoderWrapper, PcmAudioDecoderWrapper, AudioSampleSink, AudioBufferSink;
   var init_media_sink = __esm({
-    "node_modules/mediabunny/dist/modules/src/media-sink.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/media-sink.js"() {
       init_codec();
       init_custom_coder();
       init_input();
@@ -11575,10 +11575,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/input-track.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input-track.js
   var InputTrack, requireSync, toValidatedPredicate, InputVideoTrack, InputAudioTrack, desc, prefer, toValidatedInputTrackQuery, mergeInputTrackQueries, queryInputTracks, findUnderlyingFrameRate, simplestFractionBetween, getBestGuessFrameRate;
   var init_input_track = __esm({
-    "node_modules/mediabunny/dist/modules/src/input-track.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input-track.js"() {
       init_codec_data();
       init_custom_coder();
       init_logging();
@@ -12607,10 +12607,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/input.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input.js
   var DEFAULT_SOURCE_CACHE_GROUP, Input, UnsupportedInputFormatError, InputDisposedError;
   var init_input = __esm({
-    "node_modules/mediabunny/dist/modules/src/input.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/input.js"() {
       init_input_format();
       init_input_track();
       init_misc();
@@ -12970,10 +12970,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/reader.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/reader.js
   var Reader, FileSlice, checkIsInRange, readBytes, readU8, readU16Be, readU24Be, readI16Be, readU32Be, readI32Be, readU64Be, readI64Be, readF32Be, readF64Be, readAscii;
   var init_reader = __esm({
-    "node_modules/mediabunny/dist/modules/src/reader.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/reader.js"() {
       init_input();
       init_misc();
       init_source();
@@ -13192,10 +13192,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/id3.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/id3.js
   var Id3V2HeaderFlags, Id3V2TextEncoding, ID3_V2_HEADER_SIZE, ID3_V1_GENRES, readId3V2Header, parseId3V2Tag, Id3V2Reader;
   var init_id3 = __esm({
-    "node_modules/mediabunny/dist/modules/src/id3.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/id3.js"() {
       init_mp3_misc();
       init_logging();
       init_misc();
@@ -13843,10 +13843,10 @@
     }
   });
 
-  // node_modules/mediabunny/dist/modules/src/index.js
+  // ../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/index.js
   var MEDIABUNNY_LOADED_SYMBOL;
   var init_src = __esm({
-    "node_modules/mediabunny/dist/modules/src/index.js"() {
+    "../../profanity-muter-clean/extension/node_modules/mediabunny/dist/modules/src/index.js"() {
       init_logging();
       init_source();
       init_input_format();
@@ -14030,6 +14030,185 @@
         root.PMDecode = PMDecodeCore;
         if (typeof module !== "undefined" && module.exports) {
           module.exports = { PMDecodeCore };
+        }
+      })(typeof globalThis !== "undefined" ? globalThis : exports);
+    }
+  });
+
+  // shared/memlog.js
+  var require_memlog = __commonJS({
+    "shared/memlog.js"(exports, module) {
+      (function(root) {
+        "use strict";
+        var SCHEMA_VERSION = 1;
+        var RECENT_CAP = 120;
+        var MID_CAP = 144;
+        var OLD_CAP = 48;
+        var EVENT_CAP = 60;
+        var MID_GAP_MS = 5 * 60 * 1e3;
+        var OLD_GAP_MS = 15 * 60 * 1e3;
+        var MB = 1048576;
+        function mb(bytes) {
+          if (typeof bytes !== "number" || !isFinite(bytes) || bytes < 0) return null;
+          return Math.round(bytes / MB * 10) / 10;
+        }
+        function num(n) {
+          return typeof n === "number" && isFinite(n) ? n : null;
+        }
+        function jsHeap(perf) {
+          var m = perf && perf.memory;
+          if (!m) return { used: null, total: null };
+          return { used: num(m.usedJSHeapSize), total: num(m.totalJSHeapSize) };
+        }
+        function emptyLog() {
+          return { version: SCHEMA_VERSION, recent: [], mid: [], old: [], events: [] };
+        }
+        function arr(a) {
+          return Array.isArray(a) ? a.slice() : [];
+        }
+        function normalize(raw) {
+          if (!raw || typeof raw !== "object") return emptyLog();
+          return {
+            version: SCHEMA_VERSION,
+            recent: arr(raw.recent),
+            mid: arr(raw.mid),
+            old: arr(raw.old),
+            events: arr(raw.events)
+          };
+        }
+        function promote(tier, sample, gap, cap) {
+          var last2 = tier[tier.length - 1];
+          if (last2 && sample.t - last2.t < gap) return null;
+          tier.push(sample);
+          return tier.length > cap ? tier.shift() : null;
+        }
+        function append(log, sample) {
+          var out = normalize(log);
+          if (!sample || typeof sample !== "object") return out;
+          if (sample.k === "tick" || sample.k === "win") {
+            out.recent.push(sample);
+            while (out.recent.length > RECENT_CAP) {
+              var fell = out.recent.shift();
+              var evicted = promote(out.mid, fell, MID_GAP_MS, MID_CAP);
+              if (evicted) {
+                promote(out.old, evicted, OLD_GAP_MS, OLD_CAP);
+              }
+            }
+          } else {
+            out.events.push(sample);
+            while (out.events.length > EVENT_CAP) out.events.shift();
+          }
+          return out;
+        }
+        function flatten(log) {
+          var l = normalize(log);
+          return l.old.concat(l.mid, l.recent);
+        }
+        function buildSample(kind, wall, worker, offscreen, why) {
+          var s = { t: wall, k: kind };
+          if (why != null) s.why = String(why).slice(0, 120);
+          if (worker) {
+            s.w = {
+              wasm: mb(worker.wasmBytes),
+              peak: mb(worker.wasmPeak),
+              n: num(worker.wasmN),
+              ju: mb(worker.jsUsed),
+              jt: mb(worker.jsTotal),
+              win: num(worker.windows),
+              age: num(worker.ageS),
+              stale: num(worker.staleS)
+            };
+          }
+          if (offscreen) {
+            s.o = {
+              ju: mb(offscreen.jsUsed),
+              jt: mb(offscreen.jsTotal),
+              age: num(offscreen.ageS),
+              c: offscreen.caches || null
+            };
+          }
+          return s;
+        }
+        var MAX_TRACKED = 8;
+        function installWasmProbe(WA) {
+          var empty = { stats: function() {
+            return { bytes: null, n: 0, peak: null };
+          } };
+          if (!WA || typeof WA !== "object") return empty;
+          if (WA.__pmMemProbe) return WA.__pmMemProbe;
+          var mems = [];
+          var peak = 0;
+          function track(m) {
+            if (!m || mems.indexOf(m) !== -1 || mems.length >= MAX_TRACKED) return;
+            mems.push(m);
+          }
+          function trackExports(res) {
+            try {
+              var inst = res && res.instance ? res.instance : res;
+              var ex = inst && inst.exports;
+              if (!ex) return;
+              for (var k in ex) {
+                if (typeof WebAssembly !== "undefined" && ex[k] instanceof WebAssembly.Memory) track(ex[k]);
+              }
+            } catch (e) {
+            }
+          }
+          if (typeof WA.Memory === "function") {
+            var RealMemory = WA.Memory;
+            WA.Memory = new Proxy(RealMemory, {
+              construct: function(target, args, newTarget) {
+                var m = Reflect.construct(target, args, newTarget === WA.Memory ? target : newTarget);
+                track(m);
+                return m;
+              }
+            });
+          }
+          ["instantiate", "instantiateStreaming"].forEach(function(name) {
+            var real = WA[name];
+            if (typeof real !== "function") return;
+            WA[name] = function() {
+              var p = real.apply(this, arguments);
+              if (p && typeof p.then === "function") p.then(trackExports, function() {
+              });
+              return p;
+            };
+          });
+          var probe = {
+            stats: function() {
+              var total = 0;
+              for (var i = 0; i < mems.length; i++) {
+                try {
+                  total += mems[i].buffer.byteLength;
+                } catch (e) {
+                }
+              }
+              if (total > peak) peak = total;
+              return { bytes: mems.length ? total : null, n: mems.length, peak: mems.length ? peak : null };
+            }
+          };
+          try {
+            WA.__pmMemProbe = probe;
+          } catch (e) {
+          }
+          return probe;
+        }
+        root.PMMemlog = {
+          SCHEMA_VERSION,
+          RECENT_CAP,
+          MID_CAP,
+          OLD_CAP,
+          EVENT_CAP,
+          mb,
+          jsHeap,
+          emptyLog,
+          normalize,
+          append,
+          flatten,
+          buildSample,
+          installWasmProbe
+        };
+        if (typeof module !== "undefined" && module.exports) {
+          module.exports = { PMMemlog: root.PMMemlog };
         }
       })(typeof globalThis !== "undefined" ? globalThis : exports);
     }
@@ -14252,6 +14431,7 @@
     "src/offscreen-src.js"() {
       init_src();
       var import_decode = __toESM(require_decode());
+      var import_memlog = __toESM(require_memlog());
       var import_runs = __toESM(require_runs());
       var import_preempt = __toESM(require_preempt());
       var MODEL_IDS = {
@@ -14300,6 +14480,59 @@
           "[PM-WARM] worker spawn=" + warmInfo.workerSpawnMs + "ms model load=" + warmInfo.modelLoadMs + "ms (ready " + sinceReadyS + "s before this session started)"
         );
       }
+      var PMMemlog = globalThis.PMMemlog;
+      var MEM_MIN_GAP_MS = 45e3;
+      var MEM_TICK_MS = 6e4;
+      var offscreenStartedAtWall = Date.now();
+      var lastWorkerMem = null;
+      var lastMemEmitWall = 0;
+      function memCaches() {
+        let runs = 0, runBytes = 0, words = 0, keys = 0, maps = 0, infl = 0, skip = 0;
+        for (const s of sessions.values()) {
+          runs += s.runs.length;
+          for (const r of s.runs) runBytes += Math.min(r.bytesFed || 0, RUN_STREAM_CACHE_BYTES);
+          words += s.allWords.length;
+          keys += s.emittedKeys.size;
+          maps += s.windowAttempts.size + s.sinkErrorAttempts.size + s.hangAttempts.size;
+          infl += s.inFlightWindows.size;
+          skip += s.skippedSpans.length;
+        }
+        return {
+          ses: sessions.size,
+          runs,
+          runMB: PMMemlog.mb(runBytes),
+          words,
+          keys,
+          maps,
+          pend: pendingWorkerRequests.size,
+          infl,
+          skip
+        };
+      }
+      function emitMem(kind, why, force) {
+        try {
+          const nowWall = Date.now();
+          if (!force && (kind === "tick" || kind === "win") && nowWall - lastMemEmitWall < MEM_MIN_GAP_MS) return;
+          if (kind === "tick" || kind === "win") lastMemEmitWall = nowWall;
+          const wm = lastWorkerMem;
+          const worker = wm ? Object.assign({}, wm, { staleS: Math.round((nowWall - (wm.takenAtWall || nowWall)) / 1e3) }) : { ageS: workerSpawnedAtWall ? Math.round((nowWall - workerSpawnedAtWall) / 1e3) : null };
+          const h = PMMemlog.jsHeap(performance);
+          const sample = PMMemlog.buildSample(
+            kind,
+            nowWall,
+            worker,
+            { jsUsed: h.used, jsTotal: h.total, ageS: Math.round((nowWall - offscreenStartedAtWall) / 1e3), caches: memCaches() },
+            why
+          );
+          if (kind !== "win") log("[PM-MEM] " + JSON.stringify(sample));
+          chrome.runtime.sendMessage({ type: "pm-mem", sample }).catch(() => {
+          });
+        } catch (e) {
+          log("[PM-MEM] sample failed: " + String(e));
+        }
+      }
+      setInterval(() => emitMem("tick"), MEM_TICK_MS);
+      self.addEventListener("pagehide", () => emitMem("teardown", "offscreen pagehide", true));
       function spawnWhisperWorker() {
         workerSpawnedAtWall = Date.now();
         whisperWorker = new Worker(chrome.runtime.getURL("dist/whisper.worker.js"));
@@ -14315,6 +14548,12 @@
       }
       function respawnWhisperWorker(reason) {
         const startedWall = Date.now();
+        try {
+          log("[PM-MEM-RESPAWN] " + reason);
+          emitMem("respawn", reason, true);
+        } catch (e) {
+        }
+        lastWorkerMem = null;
         for (const [, pending] of pendingWorkerRequests) {
           try {
             pending.reject(new Error("worker preempted: " + reason));
@@ -14340,6 +14579,11 @@
           broadcastDiag("[whisper-worker] " + msg.text);
           return;
         }
+        if (msg.type === "mem") {
+          lastWorkerMem = msg.mem || null;
+          if (msg.why) emitMem("model-loaded", msg.why);
+          return;
+        }
         if (msg.type === "warm-ready") {
           warmInfo = { workerSpawnMs: msg.workerSpawnMs, modelLoadMs: msg.modelLoadMs, readyAtWall: Date.now() };
           log("[PM-WARM] worker spawn=" + warmInfo.workerSpawnMs + "ms model load=" + warmInfo.modelLoadMs + "ms");
@@ -14349,10 +14593,14 @@
         const pending = pendingWorkerRequests.get(msg.requestId);
         if (!pending) return;
         pendingWorkerRequests.delete(msg.requestId);
-        if (msg.type === "result") pending.resolve(msg);
-        else pending.reject(new Error(msg.error || "unknown whisper worker error"));
+        if (msg.type === "result") {
+          if (msg.mem) lastWorkerMem = msg.mem;
+          emitMem("win");
+          pending.resolve(msg);
+        } else pending.reject(new Error(msg.error || "unknown whisper worker error"));
       }
       spawnWhisperWorker();
+      setTimeout(() => emitMem("create", "offscreen document start", true), 0);
       function transcribeInWorker(modelId, float16k, options) {
         return new Promise((resolve, reject) => {
           const requestId = nextWorkerRequestId++;
@@ -14622,6 +14870,7 @@
         log("dropped sessions for tab", tabId);
       }
       function appendToRun(run, bytes) {
+        run.bytesFed = (run.bytesFed || 0) + (bytes && bytes.byteLength ? bytes.byteLength : 0);
         try {
           run.streamController.enqueue(bytes);
         } catch (e) {

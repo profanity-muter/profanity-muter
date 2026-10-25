@@ -498,8 +498,8 @@ const browser = await chromium.launch();
   await page.waitForTimeout(150);
 
   const obSnap = () => ({
-    // Step 5 is the 0.1.33 completion view, reached only by finishing.
-    step: [1, 2, 3, 4, 5].filter(i => !document.getElementById('ob-step-' + i).classList.contains('pm-hidden')),
+    // Step 6 is the 0.1.33 completion view (step 5 is the acknowledgment since the 0.1.56 pin step), reached only by finishing.
+    step: [1, 2, 3, 4, 5, 6].filter(i => !document.getElementById('ob-step-' + i).classList.contains('pm-hidden')),
     dotsDone: document.querySelectorAll('.ob-dot--done').length,
     finishHidden: document.getElementById('ob-finish').classList.contains('pm-hidden'),
     finishDisabled: document.getElementById('ob-finish').disabled,
@@ -553,9 +553,10 @@ const browser = await chromium.launch();
   check('onboarding: never writes the deprecated pm_wordlist', !('pm_wordlist' in sync), Object.keys(sync));
 
   // Acknowledgment gate.
+  await page.click('#ob-next'); // step 4 is the pin step (0.1.56); the acknowledgment moved to step 5
   await page.click('#ob-next');
   s = await page.evaluate(obSnap);
-  check('onboarding: final step shows Finish, hides Next', s.finishHidden === false && s.step[0] === 4);
+  check('onboarding: final step shows Finish, hides Next', s.finishHidden === false && s.step[0] === 5);
   check('onboarding: Finish disabled until the box is ticked', s.finishDisabled === true);
   // Force a click past the `disabled` attribute, the way the locked-popup
   // check does: finish() must refuse on its own, not only because the
@@ -577,7 +578,7 @@ const browser = await chromium.launch();
   check('onboarding: ack record written', !!ack && ack.version === 1 && typeof ack.timestamp === 'number', ack);
 
   // ---- 0.1.33 completion view ----
-  check('done: lands on the completion view', s.step.length === 1 && s.step[0] === 5, s.step);
+  check('done: lands on the completion view', s.step.length === 1 && s.step[0] === 6, s.step);
   check('done: large completion headline', /You're all set\./.test(s.doneTitle || ''), s.doneTitle);
   check('done: the stale header goes with it', s.headerHidden === true);
   check('done: the setup nav goes with it', s.navHidden === true);
@@ -586,7 +587,7 @@ const browser = await chromium.launch();
   check('done: pin request removed', s.pinShown === false);
   check('done: ballot illustration present', s.ballotShown === true);
 
-  const doneText = await page.evaluate(() => document.getElementById('ob-step-5').innerText);
+  const doneText = await page.evaluate(() => document.getElementById('ob-step-6').innerText);
   check('done: no incentive language anywhere in the ask',
     !/free trial|discount|reward|unlock|premium|coupon|gift/i.test(doneText), doneText);
   check('done: no fake social proof', !/\d+[,\d]*\s+(users|people|installs|reviews)/i.test(doneText), doneText);
@@ -968,6 +969,7 @@ const devlogFixture = {
   await page.click('#ob-next');
   await page.click('#ob-next');
   await page.click('#ob-next');
+  await page.click('#ob-next'); // pin step
   await page.click('#ob-report-problem');
   await page.waitForTimeout(60);
   const tabs = await page.evaluate(() => window.__pmTabs);
@@ -985,6 +987,7 @@ const devlogFixture = {
   await page.click('#ob-next');
   await page.click('#ob-next');
   await page.click('#ob-next');
+  await page.click('#ob-next'); // pin step
   await page.click('#ob-ack-check');
   await page.click('#ob-finish');
   await page.waitForTimeout(150);
