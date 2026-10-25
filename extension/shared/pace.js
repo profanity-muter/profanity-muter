@@ -229,11 +229,11 @@
   }
 
   // ---- copy -------------------------------------------------------------------------
-  // WHY it exists, in plain words: it runs on this computer (private, and fast
-  // enough to keep up), and the price is processing power.
+  // WHY it exists, in plain words: fully private, runs only on the device, and
+  // the price is the computer's own processing power.
   var WHY =
-    "Profanity Muter listens and filters on this computer, so nothing you watch is sent anywhere, " +
-    "and muting keeps up with the video. The tradeoff is that it needs a fair amount of free processing power.";
+    "Profanity Muter is fully private: it runs only on your device and never sends anything to the cloud. " +
+    "That means it uses your computer's own processing power to keep up with the video.";
   var COPY = {
     pill: "Your computer is busy, so muting is falling behind. Closing other apps or tabs helps.",
     pillWhyLabel: "Why?",
@@ -241,13 +241,12 @@
     pausedPill: "Audio filtering is paused on this computer. Captions are still censored.",
     noticeTitle: "Audio filtering is paused on this computer",
     noticeBody:
-      "Profanity Muter filters audio on this computer, so what you watch stays private and muting keeps up with the video. " +
-      "The tradeoff is that it needs a fair amount of free processing power, and this computer doesn't have enough free for Profanity Muter to filter reliably, " +
-      "so audio filtering is paused and captions are still censored. " +
-      "Closing other programs may help. If it keeps happening, Profanity Muter may not be a good fit for this computer.",
+      "Profanity Muter is fully private: it runs only on your device and never sends anything to the cloud. " +
+      "That means it uses your computer's own processing power, and this computer doesn't have enough free right now. " +
+      "Audio filtering is paused; captions are still censored. Closing other programs may help.",
     tryAgain: "Try again",
     remove: "Remove extension",
-    onboarding: "Profanity Muter runs on your computer, not in the cloud, so it needs some free processing power. Older or very busy computers may struggle to keep up."
+    onboarding: "Profanity Muter is fully private: it runs only on your device and never sends anything to the cloud. That means it uses your computer's own processing power, and older or very busy computers may struggle to keep up."
   };
   function noticeModel(flag) {
     if (!flag) return null;
