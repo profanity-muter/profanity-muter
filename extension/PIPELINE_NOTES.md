@@ -3663,3 +3663,35 @@ fails on any dark-filled field on a light page or any control text under
 reports the three fields and the two gold links; on this tree it is clean.
 
 Also in this pass: the step title is now "Pin the badge to see it working".
+
+## 0.1.58: stuck-chunk loop, falling behind, slow computers
+
+**Stuck-chunk loop (field log, 0.1.57).** Playhead frozen at 2814.0 (pause
+catch-up); the window [2813,2819.67) was decoded six times. Root cause was in
+`pickNextWindow`: the first uncovered point was searched from
+`lowBound = playhead - OVERLAP_S` (2812, a hole BEHIND the playhead that no
+window can fill), the cold-start floor (`playhead - 1`) then bumped the start
+to 2813, which was already covered, and the window was re-decoded. With a
+moving playhead the first uncovered point is ahead of coverage so it never
+showed. Fix: `PMPace.resolveWindowStart` (shared/pace.js) applies the floor and
+re-resolves the first uncovered point from there. Reproduced in
+`test/pace_test.js` ("the field case"). Belt and suspenders: spans completed
+on a run are remembered; a re-pick logs `[PM-REPEAT-SKIP]` and goes on a
+30s cooldown (never coverage). The `[PM-TIMELINE-ALARM]` detector now also
+puts an identical repeated span on cooldown instead of only logging.
+
+**Falling behind.** Per completed window: RTF = (decode + inference ms) / audio
+ms (queue wait excluded; cold windows and windows under 3s ignored). 3 in a
+row above 1.0 enters BUSY (`[PM-BACKOFF] enter`): no new windows except one
+probe per 60s; one probe under 0.8 exits. The tab gets a `pace` message (pill
+text), the service worker keeps a per-video summary (`pm_paceHistory`, last
+10). 3 of the last 5 videos with >= 60s analyzed, each with >= 50% of its
+analyzed time behind realtime, set `pm_autoPausedSlow`: the offscreen document
+is closed and not recreated (no model, no CPU), the toolbar goes grey, the
+popup shows the notice (Try again / Remove extension). Captions do not depend
+on the offscreen document and keep working.
+
+**Threads.** The Whisper worker caps onnxruntime threads at
+`max(1, floor(cores/2))` and never above the configured 1. More than 1 would
+also need cross-origin isolation (SharedArrayBuffer), which the manifest does
+not declare. Logged once as `[PM-THREADS]` in the memlog events.

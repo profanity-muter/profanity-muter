@@ -589,6 +589,18 @@ body {
 .pm-health-detail { margin: 4px 0 0; font-size: 11.5px; line-height: 1.45; color: var(--pm-warn-fg); opacity: 0.85; }
 .pm-health .pm-link-button { margin-top: 7px; color: var(--pm-warn-fg); }
 
+/* ---- Slow-computer notice (0.1.58): calm, not alarming. Reuses the warning
+   palette tokens so it follows light/dark like the health banner. */
+.pm-slow {
+  padding: 11px 14px;
+  background: var(--pm-warn-bg);
+  border-bottom: 1px solid var(--pm-warn-border);
+}
+.pm-slow-title { margin: 0; font-size: 12.5px; font-weight: 650; line-height: 1.4; color: var(--pm-warn-fg); }
+.pm-slow-body { margin: 4px 0 0; font-size: 12px; line-height: 1.5; color: var(--pm-warn-fg); }
+.pm-slow-actions { display: flex; align-items: center; gap: 12px; margin-top: 9px; }
+.pm-slow .pm-link-button { color: var(--pm-warn-fg); }
+
 /* ---- Shared controls used by the onboarding page (onboarding.html reuses
    popup.css wholesale). Kept here so both surfaces stay in one stylesheet. */
 .pm-label { display: block; font-weight: 500; margin-bottom: 4px; }

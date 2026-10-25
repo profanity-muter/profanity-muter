@@ -102,6 +102,10 @@
     if (kind === "shorts") return { label: "Shorts not supported", presented: "shorts" };
     if (kind === "live") return { label: "Live - limited support", presented: "live" };
     if (kind === "protected") return { label: "Protected", presented: "protected" };
+    // 0.1.58 slow-computer states. Labels here are the short forms; the
+    // sentences shown to the user live in shared/pace.js COPY.
+    if (kind === "busy") return { label: "Busy", presented: "busy" };
+    if (kind === "audio-paused") return { label: "Audio paused", presented: "audio-paused" };
     // 0.1.49 active-tab-follow: the shared pipeline is busy with another tab.
     // A calm, actionable label rather than any "analyzing" or warning state,
     // because nothing is wrong and the fix is a single click. The full

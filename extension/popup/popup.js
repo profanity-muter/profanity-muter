@@ -875,19 +875,71 @@
     } catch (e) {}
   }
 
+  // ==== slow-computer notice (0.1.58) ===================================
+  // Shown while pm_autoPausedSlow is set (the service worker decided this
+  // computer cannot keep up and stopped audio filtering). "Try again" clears
+  // the flag and the pace history so the verdict starts fresh; "Remove
+  // extension" uses chrome.management.uninstallSelf, which needs no
+  // permission and shows Chrome's own confirmation dialog.
+  var slowEl = $("pm-slow");
+  var slowRetryEl = $("pm-slow-retry");
+  var slowRemoveEl = $("pm-slow-remove");
+  function renderSlowNotice(flag) {
+    var api = window.PMPace;
+    var model = api ? api.noticeModel(flag) : null;
+    slowEl.classList.toggle("pm-hidden", !model);
+    slowEl.setAttribute("aria-hidden", model ? "false" : "true");
+    if (!model) return;
+    $("pm-slow-title").textContent = model.title;
+    $("pm-slow-body").textContent = model.body;
+    slowRetryEl.textContent = model.buttons[0];
+    slowRemoveEl.textContent = model.buttons[1];
+  }
+  function loadSlowNotice() {
+    if (!hasLocalStorage) return;
+    chrome.storage.local.get(["pm_autoPausedSlow"], function (items) {
+      if (chrome.runtime && chrome.runtime.lastError) return;
+      renderSlowNotice(items && items.pm_autoPausedSlow);
+    });
+  }
+  function slowTryAgain() {
+    var patch = window.PMPace.tryAgainPatch();
+    chrome.storage.local.remove(patch.remove, function () {
+      renderSlowNotice(null);
+      setStatus("Audio filtering is back on");
+    });
+  }
+  function slowRemove() {
+    if (isLocked()) { promptUnlock(); return; }
+    try {
+      chrome.management.uninstallSelf({ showConfirmDialog: true }, function () {
+        // Cancelled in Chrome's dialog (lastError) or removed: nothing to do.
+        void (chrome.runtime && chrome.runtime.lastError);
+      });
+    } catch (e) { setStatus("Could not open the remove dialog"); }
+  }
+  slowRetryEl.addEventListener("click", slowTryAgain);
+  slowRemoveEl.addEventListener("click", slowRemove);
+
   function copyDevlog() {
     if (!hasLocalStorage) { setStatus("Storage unavailable"); return; }
-    chrome.storage.local.get(["pm_devlog", "pm_memlog"], function (items) {
+    chrome.storage.local.get(["pm_devlog", "pm_memlog", "pm_paceHistory", "pm_autoPausedSlow"], function (items) {
       if (chrome.runtime && chrome.runtime.lastError) { setStatus("Copy failed"); return; }
       var log = items && items.pm_devlog;
       var mem = items && items.pm_memlog;
+      // 0.1.58: the chronic slow-computer summary (per-video RTF history and
+      // the auto-pause flag, if any).
+      var pace = items && (items.pm_paceHistory || items.pm_autoPausedSlow)
+        ? { history: items.pm_paceHistory || [], autoPaused: items.pm_autoPausedSlow || null }
+        : null;
       var hasVideos = !!(log && log.videos && log.videos.length);
-      if (!hasVideos && !mem) { setStatus("No debug log yet"); return; }
+      if (!hasVideos && !mem && !pace) { setStatus("No debug log yet"); return; }
       // 0.1.57: the PM-MEM memory timeline rides along as `memory` (see
       // shared/memlog.js for the shape). Only added when present so the
       // payload for an install without samples is unchanged.
       var out = hasVideos ? log : { version: 1, videos: [] };
       if (mem) out = Object.assign({}, out, { memory: mem });
+      if (pace) out = Object.assign({}, out, { pace: pace });
       var text;
       try { text = JSON.stringify(out); } catch (e) { setStatus("Copy failed"); return; }
       if (!navigator.clipboard || !navigator.clipboard.writeText) { setStatus("Clipboard unavailable"); return; }
@@ -904,6 +956,7 @@
     try {
       chrome.storage.onChanged.addListener(function (changes, areaName) {
         if (areaName !== "local") return;
+        if (changes.pm_autoPausedSlow) renderSlowNotice(changes.pm_autoPausedSlow.newValue);
         if (changes.pm_activity) {
           var api = statsApi();
           activityStore = api ? api.normalizeStore(changes.pm_activity.newValue) : null;
@@ -987,5 +1040,6 @@
   loadLock();
   loadMoments();
   loadHealth();
+  loadSlowNotice();
   showView("home");
 })();

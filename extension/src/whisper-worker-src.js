@@ -34,6 +34,7 @@
 // 'init' message from the main thread, which already has chrome.runtime.
 import { wasmProbe, PMMemlog } from './mem-probe.js'; // MUST stay first: wraps WebAssembly before onnxruntime-web loads
 import { pipeline, env } from '@huggingface/transformers';
+import '../shared/pace.js'; // 0.1.58: PMPace.threadCap
 
 // Eager warm-up timing (0.1.18) - as early in this file's own execution as
 // possible, so `workerSpawnMs` (below) measures genuine worker-script-start-
@@ -65,7 +66,24 @@ const MODEL_IDS = {
 const DEFAULT_MODEL = 'base';
 
 env.backends.onnx.wasm.proxy = false; // we ARE the dedicated thread now; onnxruntime-web's own proxy would just add another hop
-env.backends.onnx.wasm.numThreads = 1;
+// 0.1.58 thread cap: never take every core. threadCap = max(1, floor(cores/2)),
+// and never above the value already configured (1). Threads beyond 1 also
+// need SharedArrayBuffer, i.e. a cross-origin-isolated page, which this
+// extension does not declare (no COOP/COEP in the manifest), so onnxruntime
+// would fall back to 1 regardless; the cap makes that an explicit limit
+// rather than an accident. Reported once as PM-THREADS (see 'threads' below).
+const THREADS_CONFIGURED = env.backends.onnx.wasm.numThreads;
+env.backends.onnx.wasm.numThreads = globalThis.PMPace.threadCap(
+  self.navigator && self.navigator.hardwareConcurrency,
+  1
+);
+self.postMessage({
+  type: 'threads',
+  cores: self.navigator ? self.navigator.hardwareConcurrency : null,
+  before: THREADS_CONFIGURED,
+  effective: env.backends.onnx.wasm.numThreads,
+  isolated: self.crossOriginIsolated === true
+});
 // 0.1.44: models are BUNDLED, loaded from the packaged extension, never
 // the network. allowRemoteModels is hard-OFF so a missing or misnamed
 // local file fails loudly at build/dev time instead of silently reaching

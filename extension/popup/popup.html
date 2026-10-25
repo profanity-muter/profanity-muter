@@ -42,6 +42,18 @@
         <button id="pm-health-report" class="pm-link-button" type="button">Report a problem</button>
       </section>
 
+      <!-- Slow-computer notice (0.1.58): audio filtering was auto-paused because
+           this computer could not keep up. Copy comes from shared/pace.js so
+           the popup, the pill and the tests agree. Captions are unaffected. -->
+      <section class="pm-slow pm-hidden" id="pm-slow" aria-hidden="true" role="status">
+        <p class="pm-slow-title" id="pm-slow-title"></p>
+        <p class="pm-slow-body" id="pm-slow-body"></p>
+        <div class="pm-slow-actions">
+          <button id="pm-slow-retry" class="pm-button pm-button--secondary" type="button"></button>
+          <button id="pm-slow-remove" class="pm-link-button" type="button"></button>
+        </div>
+      </section>
+
       <!-- Review nudge strip (Chrome Web Store policy rules in
            shared/moments.js). 0.1.56: this used to own a global "1" on the
            toolbar badge as well. The badge is now a live per-tab status
@@ -342,6 +354,7 @@
   <script src="../shared/stats.js"></script>
   <script src="../shared/lock.js"></script>
   <script src="../shared/moments.js"></script>
+  <script src="../shared/pace.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

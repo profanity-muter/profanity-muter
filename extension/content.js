@@ -254,6 +254,15 @@
   // computeStatusState (the on-video badge) and evaluateHealth (the popup /
   // toolbar-badge verdict) so the two surfaces cannot disagree.
   var pmServedElsewhere = false;
+  // 0.1.58 slow-computer handling. pmAudioPaused: the service worker has
+  // auto-paused audio filtering on this computer (chronically too slow);
+  // nothing is listening, captions still work. session.paceBusy: the
+  // pipeline is behind realtime right now and has backed off. Both mean
+  // "do not mute/pause waiting for coverage that is not coming".
+  var pmAudioPaused = false;
+  function analysisSuspended() {
+    return pmAudioPaused || !!(session && (session.unanalyzable || session.paceBusy));
+  }
   // Last play state reported to background, so we only post real changes.
   var lastReportedPlaying = null;
   // Monotonic per-page counter (0.1.35). Purely diagnostic, but the thing it
@@ -295,6 +304,7 @@
       // computation) so a video that will never decode is never left
       // muted/paused forever waiting for coverage that can't arrive.
       unanalyzable: false,
+      paceBusy: false, // 0.1.58, set from 'pace' port messages
       // Status pill + mute counting (0.1.15) - per-video count of matched
       // intervals actually muted through; activeMuteCountKey tracks the
       // CURRENTLY-active counted interval so re-entering the SAME interval
@@ -1502,7 +1512,7 @@
       promiseEtaMs: session.etaPromise && session.etaPromise.etaS != null
         ? session.etaPromise.etaS * 1000
         : null,
-      unanalyzable: !!session.unanalyzable,
+      unanalyzable: !!session.unanalyzable || pmAudioPaused || !!session.paceBusy,
       // 0.1.49: this tab is not the one the shared pipeline is serving right
       // now. Reported as WAITING, never as a fault, and cleared the moment
       // this tab becomes active. Placed here so an inactive tab's legitimate
@@ -1714,8 +1724,10 @@
   function computeStatusState() {
     if (!session) return null;
 
+    if (pmAudioPaused) return { kind: 'audio-paused' };
     if (session.unanalyzable) return { kind: 'off' };
     var video = getVideo();
+    if (session.paceBusy) return { kind: 'busy' };
     if (!video) return null;
     if (isShortsPage()) return { kind: 'shorts' };
     if (isLiveStream(video)) return { kind: 'live' };
@@ -2258,6 +2270,25 @@
     dismissFirstProtected();
   }, true);
 
+  // 0.1.58: the pipeline reports its realtime state. Entering "busy" means
+  // windows stop (one probe a minute), so any mute/pause held for coverage
+  // that is not coming is released; leaving it re-arms normal protection.
+  function handlePace(msg) {
+    var busy = msg.state === 'busy';
+    if (msg.changed || busy !== !!session.paceBusy) {
+      session.paceBusy = busy;
+      TWARN(TAG, '[PM-PACE] ' + (busy ? 'busy: muting is falling behind, analysis backed off' : 'recovered: full analysis resumed') +
+        ' recentRtf=' + (msg.recentRtf == null ? 'NA' : msg.recentRtf.toFixed(2)));
+      devlog('logError', '[PM-PACE] state=' + msg.state + ' recentRtf=' + (msg.recentRtf == null ? 'NA' : msg.recentRtf.toFixed(2)));
+      if (busy) {
+        releaseMute('pace-busy');
+        if (catchupPausedByUs) resumeFromCatchup('pace-busy');
+        session.catchupFallbackActive = false;
+      }
+      refreshPillSoon();
+    }
+  }
+
   function renderStatusPill() {
     var settings = currentSettings();
     // Compute the state FIRST, before any early return (0.1.34). The pill's
@@ -2314,6 +2345,16 @@
     // A one-off notice (livestream, Shorts, protected content) takes the
     // badge for a few seconds, then it reverts to the state label. Ranked
     // below the health warning, which outranks everything.
+    if (status && (status.kind === 'busy' || status.kind === 'audio-paused')) {
+      var P = globalThis.PMPace;
+      var isBusy = status.kind === 'busy';
+      setStatusPillActive(true, 'busy');
+      if (statusPillEl) {
+        setPillContent(isBusy ? P.COPY.pill + ' ' + P.COPY.pillWhyLabel : P.COPY.pausedPill);
+        statusPillEl.setAttribute('title', isBusy ? P.COPY.pillWhy : P.COPY.noticeBody);
+      }
+      return;
+    }
     var notice = activeNoticeText();
     if (notice) {
       setStatusPillActive(true, 'notice');
@@ -2494,10 +2535,13 @@
             ? 'background:#1d2f54;color:#f3e6c0;font:11px/1.4 sans-serif;'
             : tone === 'notice'
               ? 'background:#555;color:#fff;font:11px/1.4 sans-serif;'
+            : tone === 'busy'
+              ? 'background:#7a4a00;color:#fff;font:11px/1.4 sans-serif;max-width:min(360px,80%);white-space:normal;'
             : 'background:rgba(0,0,0,0.62);color:#fff;font:11px/1.4 sans-serif;') +
         'padding:3px 8px;' +
         'border-radius:3px;pointer-events:auto;cursor:pointer;white-space:nowrap;' +
-        'user-select:none;transition:filter 120ms ease;';
+        'user-select:none;transition:filter 120ms ease;' +
+        (tone === 'busy' ? 'white-space:normal;' : ''); // 0.1.58: the busy sentence may wrap
       statusPillEl.className = 'pm-badge';
       statusPillEl.setAttribute('role', 'button');
       statusPillEl.setAttribute('tabindex', '0');
@@ -2841,6 +2885,7 @@
   // drift from the timer path (paused/resumed video, throttled timers). ------
   function requestStallRecovery() {
     var now = Date.now();
+    if (analysisSuspended()) return; // 0.1.58: backed off on purpose, a restart would only wake the pipeline
     if (now - session.lastStallRequestWall < STALL_MS) return; // throttle repeated requests
     session.lastStallRequestWall = now;
     TWARN(TAG, '[PM-STALL] no coverage growth for ' + STALL_MS + 'ms while playing an uncovered region - requesting pipeline restart');
@@ -2887,7 +2932,7 @@
       // gets any real coverage, ever - without this, safe mode would mute/
       // pause this video forever waiting for transcription that offscreen
       // has already given up on (see the 'unanalyzable' handler above).
-      var uncovered = settings.safeMode && !isCovered(t) && !session.unanalyzable;
+      var uncovered = settings.safeMode && !isCovered(t) && !analysisSuspended();
 
       // [PM-CATCHUP-TIME] (0.1.17): visible in every Copy Logs paste so the
       // "uncovered -> covered" latency after a seek is a measured fact, not
@@ -3074,7 +3119,7 @@
       // would fire constantly whenever the playhead is simply ahead of
       // capture itself (normal, not a pipeline stall) rather than only when
       // audio exists and transcription genuinely isn't happening.
-      var playheadUncovered = !isCovered(t) && !session.unanalyzable;
+      var playheadUncovered = !isCovered(t) && !analysisSuspended();
 
       // Persistent record of unanalyzed playback (0.1.28) - see
       // trackDevlogGap above. Uses playheadUncovered, NOT the `uncovered`
@@ -3192,7 +3237,7 @@
       // tick or an armed timer) so there is no gap between "seek lands" and
       // "safe mode notices the new position is uncovered".
       var settings = currentSettings();
-      var seekUncovered = !isCovered(video.currentTime) && !(session && session.unanalyzable);
+      var seekUncovered = !isCovered(video.currentTime) && !analysisSuspended();
       if (settings.enabled && settings.safeMode && seekUncovered) {
         if (settings.catchupMode === 'pause') pauseForCatchup();
         else if (settings.muteAudio) engageMute('safe-mode-uncovered');
@@ -3406,6 +3451,22 @@
           session.catchupFallbackActive = false;
           showAnalyzingOverlay(false);
           showUnanalyzableNotice();
+        }
+      } else if (msg.type === 'pace') {
+        if (session && session.videoId === msg.videoId) handlePace(msg);
+      } else if (msg.type === 'audio-paused') {
+        var nowPaused = msg.paused === true;
+        if (nowPaused !== pmAudioPaused) {
+          pmAudioPaused = nowPaused;
+          TWARN(TAG, '[PM-AUTOPAUSE] audio filtering is ' + (nowPaused ? 'paused on this computer (captions still censored)' : 'running again'));
+          devlog('logError', '[PM-AUTOPAUSE] audio filtering ' + (nowPaused ? 'paused: too slow on this computer' : 're-enabled'));
+          if (nowPaused) {
+            clearArmedTimers();
+            releaseMute('audio-paused');
+            if (catchupPausedByUs) resumeFromCatchup('audio-paused');
+            if (session) session.catchupFallbackActive = false;
+          }
+          refreshPillSoon();
         }
       } else if (msg.type === 'active-status') {
         // 0.1.49 active-tab-follow: background decides which single tab the
@@ -3621,6 +3682,7 @@
         mergeRangeInto(session.bufferedRanges, data.growthAbsStart, data.growthAbsEnd);
         session.lastBufferedGrowthWall = Date.now();
       }
+      if (pmAudioPaused) return; // 0.1.58: nothing is listening, skip the base64 work too
       var bytes = new Uint8Array(data.bytes);
       safePortPost({
         type: 'segment',

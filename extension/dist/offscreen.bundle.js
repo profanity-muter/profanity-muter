@@ -14324,6 +14324,255 @@
     }
   });
 
+  // shared/pace.js
+  var require_pace = __commonJS({
+    "shared/pace.js"(exports, module) {
+      (function(root) {
+        "use strict";
+        var C = {
+          BUSY_ENTER_RTF: 1,
+          BUSY_ENTER_N: 3,
+          BUSY_EXIT_RTF: 0.8,
+          BUSY_EXIT_N: 1,
+          // probes are 60s apart, so one good probe is the evidence
+          PROBE_EVERY_MS: 6e4,
+          MIN_AUDIO_S: 3,
+          // tail windows are dominated by fixed overhead; ignore them
+          RTF_KEEP: 200,
+          CHRONIC_BEHIND_FRAC: 0.5,
+          CHRONIC_MIN_AUDIO_S: 60,
+          CHRONIC_LOOKBACK: 5,
+          CHRONIC_MIN_VIDEOS: 3,
+          CHRONIC_TRIP: 3,
+          HISTORY_CAP: 10,
+          COMPLETED_SPANS_CAP: 64,
+          REPEAT_COOLDOWN_MS: 3e4
+        };
+        function firstUncoveredPoint(intervals, lo, hi, eps) {
+          var e = typeof eps === "number" ? eps : 0.05;
+          var p = lo;
+          for (var i = 0; i < intervals.length; i++) {
+            var iv = intervals[i];
+            if (iv.end <= p + e) continue;
+            if (iv.start > p + e) return p;
+            p = iv.end;
+            if (p >= hi - e) return null;
+          }
+          return p < hi - e ? p : null;
+        }
+        function maxCoveredIn(view, rangeStart, rangeEnd, floor) {
+          var m = floor;
+          for (var i = 0; i < view.length; i++) {
+            if (view[i].start < rangeEnd && view[i].end > rangeStart) m = Math.max(m, view[i].end);
+          }
+          return m;
+        }
+        function resolveWindowStart(o) {
+          var eps = typeof o.eps === "number" ? o.eps : 0.05;
+          var view = o.coverageView;
+          var start = firstUncoveredPoint(view, o.lowBound, o.high, eps);
+          if (start == null) {
+            start = Math.max(maxCoveredIn(view, o.rangeStart, o.rangeEnd, o.rangeStart), o.lowBound);
+            if (start >= o.high) return { reason: "fully-covered" };
+          }
+          function isCold(at) {
+            if (!o.hadFirstWindow) return true;
+            for (var i = 0; i < o.covered.length; i++) {
+              if (Math.abs(o.covered[i].end - at) < o.adjacencyS) return false;
+            }
+            return true;
+          }
+          var cold = isCold(start);
+          if (cold) {
+            var coldFloor = Math.max(o.rangeStart, o.ct - (typeof o.coldBehindS === "number" ? o.coldBehindS : 1));
+            if (coldFloor >= o.high) return { reason: "cold-behind-playhead", coldFloor };
+            if (coldFloor > start) {
+              start = coldFloor;
+              var again = firstUncoveredPoint(view, start, o.high, eps);
+              if (again == null) {
+                start = Math.max(maxCoveredIn(view, o.rangeStart, o.rangeEnd, start), start);
+                if (start >= o.high) return { reason: "fully-covered" };
+              } else {
+                start = again;
+              }
+              cold = isCold(start);
+            }
+          }
+          return { start, isColdStart: cold };
+        }
+        function spanKey(a, b) {
+          return a.toFixed(2) + "," + b.toFixed(2);
+        }
+        function isRepeatSpan(set, a, b) {
+          return set.has(spanKey(a, b));
+        }
+        function noteCompletedSpan(set, a, b) {
+          set.add(spanKey(a, b));
+          while (set.size > C.COMPLETED_SPANS_CAP) set.delete(set.values().next().value);
+        }
+        function median(xs) {
+          if (!xs.length) return null;
+          var s = xs.slice().sort(function(a, b) {
+            return a - b;
+          });
+          var m = s.length >> 1;
+          return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+        }
+        function createPace(opts) {
+          opts = opts || {};
+          var enterN = opts.enterN || C.BUSY_ENTER_N;
+          var exitN = opts.exitN || C.BUSY_EXIT_N;
+          var state = "ok", slow = 0, fast = 0, lastProbe = 0;
+          var rtfs = [], totalS = 0, behindS = 0;
+          function onWindow(w, now) {
+            var none = { changed: false, from: state, to: state };
+            if (!w || w.cold || !(w.audioS >= C.MIN_AUDIO_S) || typeof w.rtf !== "number" || !isFinite(w.rtf)) return none;
+            rtfs.push(w.rtf);
+            if (rtfs.length > C.RTF_KEEP) rtfs.shift();
+            totalS += w.audioS;
+            if (w.rtf > C.BUSY_ENTER_RTF) behindS += w.audioS;
+            var from = state;
+            if (state === "ok") {
+              slow = w.rtf > C.BUSY_ENTER_RTF ? slow + 1 : 0;
+              if (slow >= enterN) {
+                state = "busy";
+                slow = 0;
+                fast = 0;
+                lastProbe = now;
+              }
+            } else {
+              fast = w.rtf < C.BUSY_EXIT_RTF ? fast + 1 : 0;
+              if (fast >= exitN) {
+                state = "ok";
+                slow = 0;
+                fast = 0;
+              }
+            }
+            return { changed: state !== from, from, to: state, rtf: w.rtf };
+          }
+          function allowWindow(now) {
+            if (state !== "busy") return true;
+            if (now - lastProbe >= C.PROBE_EVERY_MS) {
+              lastProbe = now;
+              return true;
+            }
+            return false;
+          }
+          function probeDue(now) {
+            return state === "busy" && now - lastProbe >= C.PROBE_EVERY_MS;
+          }
+          function video() {
+            return {
+              analyzedS: totalS,
+              behindFrac: totalS > 0 ? behindS / totalS : 0,
+              medianRtf: median(rtfs),
+              windows: rtfs.length,
+              recentRtf: median(rtfs.slice(-3))
+            };
+          }
+          return {
+            onWindow,
+            allowWindow,
+            probeDue,
+            video,
+            state: function() {
+              return state;
+            }
+          };
+        }
+        function videoEntry(id, v, now) {
+          return {
+            id,
+            t: now,
+            analyzedS: Math.round(v.analyzedS),
+            medianRtf: v.medianRtf == null ? null : Math.round(v.medianRtf * 100) / 100,
+            behindFrac: Math.round(v.behindFrac * 100) / 100,
+            chronic: v.behindFrac >= C.CHRONIC_BEHIND_FRAC
+          };
+        }
+        function upsertHistory(history, entry) {
+          var out = (history || []).filter(function(e) {
+            return e && e.id !== entry.id;
+          });
+          out.push(entry);
+          return out.slice(-C.HISTORY_CAP);
+        }
+        function chronicVerdict(history) {
+          var q = (history || []).filter(function(e) {
+            return e && e.analyzedS >= C.CHRONIC_MIN_AUDIO_S;
+          }).slice(-C.CHRONIC_LOOKBACK);
+          var bad = q.filter(function(e) {
+            return e.chronic;
+          });
+          return {
+            tripped: q.length >= C.CHRONIC_MIN_VIDEOS && bad.length >= C.CHRONIC_TRIP,
+            qualifying: q.length,
+            chronicCount: bad.length,
+            medianRtf: median(bad.map(function(e) {
+              return e.medianRtf;
+            }).filter(function(x) {
+              return typeof x === "number";
+            }))
+          };
+        }
+        function audioAllowed(items) {
+          return !(items && items.pm_autoPausedSlow);
+        }
+        function makeAutoPauseFlag(verdict, now) {
+          return { at: now, chronicCount: verdict.chronicCount, qualifying: verdict.qualifying, medianRtf: verdict.medianRtf };
+        }
+        function tryAgainPatch() {
+          return { remove: ["pm_autoPausedSlow", "pm_paceHistory"] };
+        }
+        var WHY = "Profanity Muter listens and filters on this computer, so nothing you watch is sent anywhere, and muting keeps up with the video. The tradeoff is that it needs a fair amount of free processing power.";
+        var COPY = {
+          pill: "Your computer is busy, so muting is falling behind. Closing other apps or tabs helps.",
+          pillWhyLabel: "Why?",
+          pillWhy: WHY,
+          pausedPill: "Audio filtering is paused on this computer. Captions are still censored.",
+          noticeTitle: "Audio filtering is paused on this computer",
+          noticeBody: "Profanity Muter filters audio on this computer, so what you watch stays private and muting keeps up with the video. The tradeoff is that it needs a fair amount of free processing power, and this computer doesn't have enough free for Profanity Muter to filter reliably, so audio filtering is paused and captions are still censored. Closing other programs may help. If it keeps happening, Profanity Muter may not be a good fit for this computer.",
+          tryAgain: "Try again",
+          remove: "Remove extension",
+          onboarding: "Profanity Muter runs on your computer, not in the cloud, so it needs some free processing power. Older or very busy computers may struggle to keep up."
+        };
+        function noticeModel(flag) {
+          if (!flag) return null;
+          return { title: COPY.noticeTitle, body: COPY.noticeBody, buttons: [COPY.tryAgain, COPY.remove] };
+        }
+        function threadCap(hardwareConcurrency, current) {
+          var hc = typeof hardwareConcurrency === "number" && hardwareConcurrency >= 1 ? hardwareConcurrency : 1;
+          var cap = Math.max(1, Math.floor(hc / 2));
+          return typeof current === "number" && current >= 1 ? Math.min(cap, current) : cap;
+        }
+        var PMPaceCore = {
+          C,
+          COMPLETED_SPANS_CAP: C.COMPLETED_SPANS_CAP,
+          HISTORY_CAP: C.HISTORY_CAP,
+          REPEAT_COOLDOWN_MS: C.REPEAT_COOLDOWN_MS,
+          PROBE_EVERY_MS: C.PROBE_EVERY_MS,
+          COPY,
+          firstUncoveredPoint,
+          resolveWindowStart,
+          spanKey,
+          isRepeatSpan,
+          noteCompletedSpan,
+          createPace,
+          videoEntry,
+          upsertHistory,
+          chronicVerdict,
+          audioAllowed,
+          makeAutoPauseFlag,
+          tryAgainPatch,
+          noticeModel,
+          threadCap
+        };
+        root.PMPace = PMPaceCore;
+        if (typeof module !== "undefined" && module.exports) module.exports = { PMPaceCore };
+      })(typeof globalThis !== "undefined" ? globalThis : exports);
+    }
+  });
+
   // shared/preempt.js
   var require_preempt = __commonJS({
     "shared/preempt.js"(exports, module) {
@@ -14433,6 +14682,7 @@
       var import_decode = __toESM(require_decode());
       var import_memlog = __toESM(require_memlog());
       var import_runs = __toESM(require_runs());
+      var import_pace = __toESM(require_pace());
       var import_preempt = __toESM(require_preempt());
       var MODEL_IDS = {
         base: "Xenova/whisper-base.en"
@@ -14582,6 +14832,12 @@
         if (msg.type === "mem") {
           lastWorkerMem = msg.mem || null;
           if (msg.why) emitMem("model-loaded", msg.why);
+          return;
+        }
+        if (msg.type === "threads") {
+          const line = "[PM-THREADS] cores=" + msg.cores + " onnxThreads=" + msg.effective + " (default " + msg.before + ", cap max(1,floor(cores/2))) crossOriginIsolated=" + msg.isolated;
+          log(line);
+          emitMem("create", line, true);
           return;
         }
         if (msg.type === "warm-ready") {
@@ -14807,6 +15063,9 @@
             // set true once DRM/undecodable content is detected - maybeProcess stops entirely, content.js releases safe-mode muting for this session
             processing: false,
             pendingRerun: false,
+            pace: globalThis.PMPace.createPace(),
+            // 0.1.58: realtime-factor state machine (busy / back-off), per session
+            repeatSkips: 0,
             modelId: DEFAULT_MODEL,
             // 0.1.46 English-only: always resolves to base.en; the worker falls back to DEFAULT_MODEL for any unknown id
             // 0.1.42 preemption inputs.
@@ -14892,14 +15151,7 @@
       }
       var COVERAGE_EPS_S = globalThis.PMDecode && typeof globalThis.PMDecode.ANCHOR_EPS_S === "number" ? globalThis.PMDecode.ANCHOR_EPS_S : 0.05;
       function firstUncoveredPoint(intervals, lo, hi) {
-        let p = lo;
-        for (const iv of intervals) {
-          if (iv.end <= p + COVERAGE_EPS_S) continue;
-          if (iv.start > p + COVERAGE_EPS_S) return p;
-          p = iv.end;
-          if (p >= hi - COVERAGE_EPS_S) return null;
-        }
-        return p < hi - COVERAGE_EPS_S ? p : null;
+        return globalThis.PMPace.firstUncoveredPoint(intervals, lo, hi, COVERAGE_EPS_S);
       }
       var NORMALIZE_TARGET_PEAK = 0.9;
       var NORMALIZE_MIN_PEAK = 0.02;
@@ -15150,32 +15402,33 @@
           return null;
         }
         const coverageView = coverageViewForPicking(s);
-        let start = firstUncoveredPoint(coverageView, lowBound, high);
-        if (start == null) {
-          let maxCoveredInRange = targetRange.start;
-          for (const iv of coverageView) {
-            if (iv.start < targetRange.end && iv.end > targetRange.start) maxCoveredInRange = Math.max(maxCoveredInRange, iv.end);
-          }
-          start = Math.max(maxCoveredInRange, lowBound);
-          if (start >= high) {
-            logNoWindowReason(s, "fully-covered", "fully covered (or in flight) up to the available buffer in range [" + lowBound.toFixed(2) + "," + high.toFixed(2) + ") - nothing new to transcribe right now");
-            return null;
-          }
+        const resolved = globalThis.PMPace.resolveWindowStart({
+          coverageView,
+          covered: s.covered,
+          lowBound,
+          high,
+          rangeStart: targetRange.start,
+          rangeEnd: targetRange.end,
+          ct,
+          hadFirstWindow: s.hadFirstWindow,
+          adjacencyS: COLD_START_ADJACENCY_S,
+          coldBehindS: 1,
+          eps: COVERAGE_EPS_S
+        });
+        if (resolved.reason === "fully-covered") {
+          logNoWindowReason(s, "fully-covered", "fully covered (or in flight) up to the available buffer in range [" + lowBound.toFixed(2) + "," + high.toFixed(2) + ") - nothing new to transcribe right now");
+          return null;
         }
-        const nearExistingCoverage = s.covered.some((iv) => Math.abs(iv.end - start) < COLD_START_ADJACENCY_S);
-        const isColdStart = !s.hadFirstWindow || !nearExistingCoverage;
-        if (isColdStart) {
-          const coldFloor = Math.max(targetRange.start, ct - 1);
-          if (coldFloor >= high) {
-            logNoWindowReason(
-              s,
-              "cold-behind-playhead",
-              "captured range [" + targetRange.start.toFixed(2) + "," + targetRange.end.toFixed(2) + ") is entirely behind the playhead (currentTimeS=" + ct.toFixed(2) + ") - deferring rather than wasting a cold window on already-passed audio"
-            );
-            return null;
-          }
-          if (coldFloor > start) start = coldFloor;
+        if (resolved.reason === "cold-behind-playhead") {
+          logNoWindowReason(
+            s,
+            "cold-behind-playhead",
+            "captured range [" + targetRange.start.toFixed(2) + "," + targetRange.end.toFixed(2) + ") is entirely behind the playhead (currentTimeS=" + ct.toFixed(2) + ") - deferring rather than wasting a cold window on already-passed audio"
+          );
+          return null;
         }
+        let start = resolved.start;
+        const isColdStart = resolved.isColdStart;
         let targetWindowS = isColdStart ? COLD_START_WINDOW_S : WINDOW_S;
         if (isColdStart) {
           const rtfEstimate = Math.min(COLD_START_RTF_CLAMP_MAX, Math.max(COLD_START_RTF_CLAMP_MIN, s.lastKnownRtf || COLD_START_RTF_CLAMP_MIN));
@@ -15588,6 +15841,9 @@
               s,
               "[PM-TIMELINE-ALARM] consecutive windows are " + Math.round(similarity * 100) + "% overlapping by 4-gram (prevWindow=[" + s.lastWindowSpan + "] thisWindow=[" + absStart.toFixed(2) + "," + absEnd.toFixed(2) + ")) - almost certainly the SAME audio decoded twice under a shifted timeline, not real repeated dialogue"
             );
+            if (s.lastWindowSpan === absStart.toFixed(2) + "," + absEnd.toFixed(2)) {
+              recordCooldownSpan(s, absStart, absEnd, globalThis.PMPace.REPEAT_COOLDOWN_MS);
+            }
           }
         }
         s.lastWindowGrams = currentGrams;
@@ -15648,6 +15904,14 @@
         for (const wb of wrapped) {
           mergeRangeInto(s.covered, wb.timestamp, wb.timestamp + wb.buffer.duration);
         }
+        if (isCovered(s, absStart, absEnd)) {
+          globalThis.PMPace.noteCompletedSpan(run.completedSpans || (run.completedSpans = /* @__PURE__ */ new Set()), absStart, absEnd);
+        }
+        reportPace(s, {
+          rtf: (decodeMs + computeMs) / 1e3 / audioDurationS,
+          audioS: audioDurationS,
+          cold: isColdInference
+        });
         if (!s.firstCoverageLogged) {
           s.firstCoverageLogged = true;
           const m = {
@@ -15765,7 +16029,7 @@
         }
         return false;
       }
-      var BENIGN_IDLE_GATES = /* @__PURE__ */ new Set(["disabled", "unanalyzable", "not-active-tab"]);
+      var BENIGN_IDLE_GATES = /* @__PURE__ */ new Set(["disabled", "unanalyzable", "not-active-tab", "backoff"]);
       function reportIdleGate(s, gateName, detail) {
         if (BENIGN_IDLE_GATES.has(gateName)) return;
         if (!hasUncoveredCapturedWorkNearPlayhead(s)) return;
@@ -15775,6 +16039,39 @@
         lastByGate[gateName] = now;
         notifyTab(s, "[PM-IDLE-GATE] maybeProcess stopped (" + gateName + ") while captured-but-uncovered audio exists within " + WORK_CHECK_HORIZON_S + "s of the playhead: " + detail);
       }
+      var PACE_LOG_EVERY = 10;
+      function reportPace(s, w) {
+        const res = s.pace.onWindow(w, Date.now());
+        const v = s.pace.video();
+        if (res.changed) {
+          notifyTab(
+            s,
+            res.to === "busy" ? "[PM-BACKOFF] enter: rtf=" + res.rtf.toFixed(2) + " for " + globalThis.PMPace.C.BUSY_ENTER_N + " windows in a row (> " + globalThis.PMPace.C.BUSY_ENTER_RTF + "); no new windows except one probe every " + globalThis.PMPace.PROBE_EVERY_MS / 1e3 + "s" : "[PM-BACKOFF] exit: probe rtf=" + res.rtf.toFixed(2) + " (< " + globalThis.PMPace.C.BUSY_EXIT_RTF + "); resuming full analysis"
+          );
+        }
+        if (res.changed || v.windows > 0 && v.windows % PACE_LOG_EVERY === 0 && !w.cold) {
+          notifyTab(
+            s,
+            "[PM-RTF] state=" + s.pace.state() + " windows=" + v.windows + " medianRtf=" + (v.medianRtf == null ? "NA" : v.medianRtf.toFixed(2)) + " recentRtf=" + (v.recentRtf == null ? "NA" : v.recentRtf.toFixed(2)) + " behindFrac=" + v.behindFrac.toFixed(2) + " analyzedS=" + v.analyzedS.toFixed(1)
+          );
+        }
+        chrome.runtime.sendMessage({
+          type: "pm-pace",
+          tabId: s.tabId,
+          videoId: s.videoId,
+          state: s.pace.state(),
+          changed: res.changed,
+          recentRtf: v.recentRtf,
+          video: { analyzedS: v.analyzedS, behindFrac: v.behindFrac, medianRtf: v.medianRtf, windows: v.windows }
+        }).catch(() => {
+        });
+      }
+      setInterval(() => {
+        const now = Date.now();
+        for (const s of sessions.values()) {
+          if (s.pace.probeDue(now) && !s.processing) maybeProcess(s);
+        }
+      }, 5e3);
       async function maybeProcess(s) {
         if (s.disabled || s.unanalyzable) return;
         if (!sessionIsServing(s)) return;
@@ -15823,6 +16120,20 @@
             if (!target) {
               exitGate = "no-target";
               exitDetail = "pickNextWindow found nothing to pick (see its own [PM-NO-WINDOW] reason above, if any)";
+              break;
+            }
+            if (run.completedSpans && globalThis.PMPace.isRepeatSpan(run.completedSpans, target.start, target.end)) {
+              s.repeatSkips++;
+              notifyTab(
+                s,
+                "[PM-REPEAT-SKIP] span [" + target.start.toFixed(2) + "," + target.end.toFixed(2) + ") was already completed on this run; not decoding it again (skip #" + s.repeatSkips + ")"
+              );
+              recordCooldownSpan(s, target.start, target.end, globalThis.PMPace.REPEAT_COOLDOWN_MS);
+              continue;
+            }
+            if (!s.pace.allowWindow(Date.now())) {
+              exitGate = "backoff";
+              exitDetail = "busy: waiting for the next probe window";
               break;
             }
             if (!s.firstCoverageLogged && s.firstWindowPickedAt == null) s.firstWindowPickedAt = Date.now();

@@ -119,6 +119,14 @@
   function badgeState(state) {
     state = state || {};
 
+    // 0.1.58: audio filtering auto-paused on this computer (chronically too
+    // slow). Grey and silent, on every tab: the extension is not listening,
+    // and the popup says why. Outranks health because a paused pipeline is
+    // not a failing one.
+    if (state.audioPaused === true) {
+      return { text: "", color: null, iconSet: ICON_OFF };
+    }
+
     if (state.healthStatus === STATUS_UNHEALTHY) {
       // Colour icon, not grey: this tab IS a video we are supposed to be
       // filtering, and a grey icon under a red "!" would read as "off",
@@ -129,7 +137,7 @@
     // Nowhere to filter, or nothing to filter with. Grey, silent. This is
     // the common case across a browser full of tabs, and it is also the
     // default the action starts in.
-    if (state.isWatchPage !== true || state.enabled === false || state.presented === OFF_STATE) {
+    if (state.isWatchPage !== true || state.enabled === false || state.presented === OFF_STATE || state.presented === "audio-paused") {
       return { text: "", color: null, iconSet: ICON_OFF };
     }
 

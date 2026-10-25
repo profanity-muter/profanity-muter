@@ -45,6 +45,7 @@ import '../shared/memlog.js'; // 0.1.57 PM-MEM, attaches globalThis.PMMemlog
 // retirement). Imported for its side effect, like the others, so the
 // shipped decision is the tested one.
 import '../shared/runs.js';
+import '../shared/pace.js'; // 0.1.58: window start resolution, RTF state machine, thread cap
 // 0.1.42: the seek-preemption decision. Imported for its side effect, like
 // the others, so the shipped wager is the tested one.
 import '../shared/preempt.js';
@@ -276,6 +277,13 @@ function handleWorkerMessage(ev) {
   if (msg.type === 'mem') {
     lastWorkerMem = msg.mem || null;
     if (msg.why) emitMem('model-loaded', msg.why);
+    return;
+  }
+  if (msg.type === 'threads') {
+    const line = '[PM-THREADS] cores=' + msg.cores + ' onnxThreads=' + msg.effective + ' (default ' + msg.before +
+      ', cap max(1,floor(cores/2))) crossOriginIsolated=' + msg.isolated;
+    log(line);
+    emitMem('create', line, true);
     return;
   }
   if (msg.type === 'warm-ready') {
@@ -604,6 +612,8 @@ function getOrCreateSession(tabId, videoId) {
       unanalyzable: false, // set true once DRM/undecodable content is detected - maybeProcess stops entirely, content.js releases safe-mode muting for this session
       processing: false,
       pendingRerun: false,
+      pace: globalThis.PMPace.createPace(), // 0.1.58: realtime-factor state machine (busy / back-off), per session
+      repeatSkips: 0,
       modelId: DEFAULT_MODEL, // 0.1.46 English-only: always resolves to base.en; the worker falls back to DEFAULT_MODEL for any unknown id
       // 0.1.42 preemption inputs.
       wallRtf: null, // EWMA of wall ms per second of audio
@@ -697,14 +707,7 @@ const COVERAGE_EPS_S = globalThis.PMDecode && typeof globalThis.PMDecode.ANCHOR_
   ? globalThis.PMDecode.ANCHOR_EPS_S
   : 0.05;
 function firstUncoveredPoint(intervals, lo, hi) {
-  let p = lo;
-  for (const iv of intervals) {
-    if (iv.end <= p + COVERAGE_EPS_S) continue;
-    if (iv.start > p + COVERAGE_EPS_S) return p;
-    p = iv.end;
-    if (p >= hi - COVERAGE_EPS_S) return null;
-  }
-  return p < hi - COVERAGE_EPS_S ? p : null;
+  return globalThis.PMPace.firstUncoveredPoint(intervals, lo, hi, COVERAGE_EPS_S);
 }
 
 // Loudness normalization (0.1.13): quiet passages were under-driving
@@ -1197,54 +1200,42 @@ function pickNextWindow(s, run) {
   }
 
   const coverageView = coverageViewForPicking(s);
-  let start = firstUncoveredPoint(coverageView, lowBound, high);
-  if (start == null) {
-    // Fully covered (or in-flight) so far within this range - extend
-    // forward WITHIN THE SAME RANGE only (never jump to some other,
-    // unrelated buffered region just because it happens to be later in the
-    // list's ordering).
-    let maxCoveredInRange = targetRange.start;
-    for (const iv of coverageView) {
-      if (iv.start < targetRange.end && iv.end > targetRange.start) maxCoveredInRange = Math.max(maxCoveredInRange, iv.end);
-    }
-    start = Math.max(maxCoveredInRange, lowBound);
-    if (start >= high) {
-      logNoWindowReason(s, 'fully-covered', 'fully covered (or in flight) up to the available buffer in range [' + lowBound.toFixed(2) + ',' + high.toFixed(2) + ') - nothing new to transcribe right now');
-      return null;
-    }
+  // 0.1.58: start resolution lives in shared/pace.js. It applies the cold
+  // floor and THEN re-resolves the first uncovered point, which is what
+  // stops a frozen playhead from re-picking an already-covered span forever
+  // (PIPELINE_NOTES "0.1.58"; test/pace_test.js reproduces the field log).
+  const resolved = globalThis.PMPace.resolveWindowStart({
+    coverageView,
+    covered: s.covered,
+    lowBound,
+    high,
+    rangeStart: targetRange.start,
+    rangeEnd: targetRange.end,
+    ct,
+    hadFirstWindow: s.hadFirstWindow,
+    adjacencyS: COLD_START_ADJACENCY_S,
+    coldBehindS: 1,
+    eps: COVERAGE_EPS_S
+  });
+  if (resolved.reason === 'fully-covered') {
+    logNoWindowReason(s, 'fully-covered', 'fully covered (or in flight) up to the available buffer in range [' + lowBound.toFixed(2) + ',' + high.toFixed(2) + ') - nothing new to transcribe right now');
+    return null;
   }
-
-  const nearExistingCoverage = s.covered.some((iv) => Math.abs(iv.end - start) < COLD_START_ADJACENCY_S);
-  const isColdStart = !s.hadFirstWindow || !nearExistingCoverage;
-
-  if (isColdStart) {
-    // FIX (0.1.17): a live seek (to t=3289) showed the FIRST window aimed at
-    // [3280.00,3285.00) - the very START of the freshly-captured range,
-    // entirely BEHIND the playhead by the time transcription finished
-    // (playhead had reached ~3294 by then) - wasting the coldest, slowest
-    // window (paid model-load cost, see item 2) on audio the user had
-    // already passed and would never hear (mute) or need (it's gone).
-    // Audio behind the playhead is lowest priority - useful only for
-    // rewind protection, which can wait until ahead-coverage is
-    // comfortable. Force the cold window to start at most 1s behind
-    // currentTime, never at the captured range's own start.
-    const coldFloor = Math.max(targetRange.start, ct - 1);
-    if (coldFloor >= high) {
-      // The entire currently-captured range is behind the playhead - there
-      // is NOTHING to usefully transcribe near/ahead of it yet. Defer
-      // rather than burn a slow cold window on stale audio; safe mode's
-      // muting already protects the user while waiting for capture to
-      // reach the playhead (normally just the next segment or two).
-      logNoWindowReason(
-        s,
-        'cold-behind-playhead',
-        'captured range [' + targetRange.start.toFixed(2) + ',' + targetRange.end.toFixed(2) +
-          ') is entirely behind the playhead (currentTimeS=' + ct.toFixed(2) + ') - deferring rather than wasting a cold window on already-passed audio'
-      );
-      return null;
-    }
-    if (coldFloor > start) start = coldFloor;
+  if (resolved.reason === 'cold-behind-playhead') {
+    // The entire currently-captured range is behind the playhead - there is
+    // NOTHING to usefully transcribe near/ahead of it yet. Defer rather than
+    // burn a slow cold window on stale audio; safe mode's muting protects
+    // the user while waiting for capture to reach the playhead.
+    logNoWindowReason(
+      s,
+      'cold-behind-playhead',
+      'captured range [' + targetRange.start.toFixed(2) + ',' + targetRange.end.toFixed(2) +
+        ') is entirely behind the playhead (currentTimeS=' + ct.toFixed(2) + ') - deferring rather than wasting a cold window on already-passed audio'
+    );
+    return null;
   }
+  let start = resolved.start;
+  const isColdStart = resolved.isColdStart;
 
   let targetWindowS = isColdStart ? COLD_START_WINDOW_S : WINDOW_S;
   if (isColdStart) {
@@ -2022,6 +2013,13 @@ async function transcribeWindow(s, run, absStart, absEnd) {
           absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ')) - almost certainly the SAME audio ' +
           'decoded twice under a shifted timeline, not real repeated dialogue'
       );
+      // 0.1.58: the detector's finding is USED, not just logged. The same
+      // audio decoded twice is wasted CPU, so keep the picker off this span
+      // for a while (cooldown, never coverage) instead of letting it come
+      // back around.
+      if (s.lastWindowSpan === absStart.toFixed(2) + ',' + absEnd.toFixed(2)) {
+        recordCooldownSpan(s, absStart, absEnd, globalThis.PMPace.REPEAT_COOLDOWN_MS);
+      }
     }
   }
   s.lastWindowGrams = currentGrams;
@@ -2111,6 +2109,20 @@ async function transcribeWindow(s, run, absStart, absEnd) {
   for (const wb of wrapped) {
     mergeRangeInto(s.covered, wb.timestamp, wb.timestamp + wb.buffer.duration);
   }
+  // 0.1.58: remember the span completed on this run (see PM-REPEAT-SKIP in
+  // maybeProcess) and feed the realtime-factor state machine. RTF here is the
+  // work this machine did (demux+resample+inference) per second of audio;
+  // queue wait behind other tabs is deliberately left out.
+  // Only spans that really registered as covered count: a span that failed to
+  // cover stays eligible for the WINDOW-LOOP re-anchor/retry path.
+  if (isCovered(s, absStart, absEnd)) {
+    globalThis.PMPace.noteCompletedSpan(run.completedSpans || (run.completedSpans = new Set()), absStart, absEnd);
+  }
+  reportPace(s, {
+    rtf: (decodeMs + computeMs) / 1000 / audioDurationS,
+    audioS: audioDurationS,
+    cold: isColdInference
+  });
 
   // [PM-FIRST-COVERAGE] (0.1.18): one-line, per-stage breakdown of the cold
   // path - captured -> relayed -> picked -> decoded -> words -> covered -
@@ -2342,7 +2354,7 @@ function hasUncoveredCapturedWorkNearPlayhead(s) {
 // purpose and uncovered work near the playhead is expected, not a symptom.
 // 'not-active-tab' (0.1.49) joins disabled/unanalyzable here so an inactive
 // tab does not emit a [PM-IDLE-GATE] every loop while another tab is served.
-const BENIGN_IDLE_GATES = new Set(['disabled', 'unanalyzable', 'not-active-tab']);
+const BENIGN_IDLE_GATES = new Set(['disabled', 'unanalyzable', 'not-active-tab', 'backoff']);
 function reportIdleGate(s, gateName, detail) {
   if (BENIGN_IDLE_GATES.has(gateName)) return;
   if (!hasUncoveredCapturedWorkNearPlayhead(s)) return; // nothing left to do near the playhead right now - this exit is legitimate, not a bug, don't alarm
@@ -2352,6 +2364,49 @@ function reportIdleGate(s, gateName, detail) {
   lastByGate[gateName] = now;
   notifyTab(s, '[PM-IDLE-GATE] maybeProcess stopped (' + gateName + ') while captured-but-uncovered audio exists within ' + WORK_CHECK_HORIZON_S + 's of the playhead: ' + detail);
 }
+
+// 0.1.58: one place that turns a completed window into pace state, a
+// tab-visible log line, and a 'pm-pace' message for the service worker (which
+// persists the per-video summary and decides on auto-pause).
+const PACE_LOG_EVERY = 10;
+function reportPace(s, w) {
+  const res = s.pace.onWindow(w, Date.now());
+  const v = s.pace.video();
+  if (res.changed) {
+    notifyTab(
+      s,
+      res.to === 'busy'
+        ? '[PM-BACKOFF] enter: rtf=' + res.rtf.toFixed(2) + ' for ' + globalThis.PMPace.C.BUSY_ENTER_N +
+            ' windows in a row (> ' + globalThis.PMPace.C.BUSY_ENTER_RTF + '); no new windows except one probe every ' +
+            globalThis.PMPace.PROBE_EVERY_MS / 1000 + 's'
+        : '[PM-BACKOFF] exit: probe rtf=' + res.rtf.toFixed(2) + ' (< ' + globalThis.PMPace.C.BUSY_EXIT_RTF + '); resuming full analysis'
+    );
+  }
+  if (res.changed || (v.windows > 0 && v.windows % PACE_LOG_EVERY === 0 && !w.cold)) {
+    notifyTab(
+      s,
+      '[PM-RTF] state=' + s.pace.state() + ' windows=' + v.windows + ' medianRtf=' + (v.medianRtf == null ? 'NA' : v.medianRtf.toFixed(2)) +
+        ' recentRtf=' + (v.recentRtf == null ? 'NA' : v.recentRtf.toFixed(2)) + ' behindFrac=' + v.behindFrac.toFixed(2) +
+        ' analyzedS=' + v.analyzedS.toFixed(1)
+    );
+  }
+  chrome.runtime.sendMessage({
+    type: 'pm-pace',
+    tabId: s.tabId,
+    videoId: s.videoId,
+    state: s.pace.state(),
+    changed: res.changed,
+    recentRtf: v.recentRtf,
+    video: { analyzedS: v.analyzedS, behindFrac: v.behindFrac, medianRtf: v.medianRtf, windows: v.windows }
+  }).catch(() => {});
+}
+// Probe cadence while backed off: nothing else wakes an idle session.
+setInterval(() => {
+  const now = Date.now();
+  for (const s of sessions.values()) {
+    if (s.pace.probeDue(now) && !s.processing) maybeProcess(s);
+  }
+}, 5000);
 
 async function maybeProcess(s) {
   if (s.disabled || s.unanalyzable) return; // pm_enabled=false (0.1.13), or DRM/undecodable content (0.1.15) - idle, no transcription CPU
@@ -2426,6 +2481,29 @@ async function maybeProcess(s) {
       if (!target) {
         exitGate = 'no-target';
         exitDetail = 'pickNextWindow found nothing to pick (see its own [PM-NO-WINDOW] reason above, if any)';
+        break;
+      }
+      // 0.1.58 belt-and-suspenders: never decode a span this run already
+      // completed. The picker fix (shared/pace.js resolveWindowStart) removes
+      // the known cause; this guard keeps any other path that re-picks an
+      // identical span from burning CPU on it. Cooldown, never coverage.
+      if (run.completedSpans && globalThis.PMPace.isRepeatSpan(run.completedSpans, target.start, target.end)) {
+        s.repeatSkips++;
+        notifyTab(
+          s,
+          '[PM-REPEAT-SKIP] span [' + target.start.toFixed(2) + ',' + target.end.toFixed(2) +
+            ') was already completed on this run; not decoding it again (skip #' + s.repeatSkips + ')'
+        );
+        recordCooldownSpan(s, target.start, target.end, globalThis.PMPace.REPEAT_COOLDOWN_MS);
+        continue;
+      }
+      // 0.1.58 back-off: while the machine cannot keep up, no new windows
+      // except one probe per minute (audio behind the playhead has already
+      // played, so continuing is wasted CPU). Checked after the pick so a
+      // probe is never spent on "nothing to do".
+      if (!s.pace.allowWindow(Date.now())) {
+        exitGate = 'backoff';
+        exitDetail = 'busy: waiting for the next probe window';
         break;
       }
       // [PM-FIRST-COVERAGE] milestone (0.1.18): "picked" - the first time

@@ -293,6 +293,13 @@ test("the onboarding Pin it step shows the shipped badge states", () => {
   assert.ok(html.indexOf("icons/off/icon32.png") > 0, "the off icon");
 });
 
+test("audio auto-paused: grey and silent on every tab, outranks health", () => {
+  const paused = B.badgeState({ audioPaused: true, isWatchPage: true, enabled: true, presented: "protected", mutedCount: 4, healthStatus: "unhealthy" });
+  assert.strictEqual(paused.text, "");
+  assert.strictEqual(paused.iconSet, B.ICON_OFF);
+  assert.strictEqual(B.badgeState({ isWatchPage: true, enabled: true, presented: "audio-paused" }).iconSet, B.ICON_OFF);
+});
+
 // ---- summary -------------------------------------------------------------
 
 console.log("badge_test.js: " + passed + "/" + (passed + failed) + " passed");

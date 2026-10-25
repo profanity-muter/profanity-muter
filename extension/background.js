@@ -16,7 +16,7 @@
 // what "eligible" means (0.1.33). shared/badge.js joined the list in 0.1.56,
 // when the badge became a live mirror of the on-player pill.
 try {
-  importScripts('shared/moments.js', 'shared/badge.js', 'shared/pill.js', 'shared/active_tab.js', 'shared/memlog.js');
+  importScripts('shared/moments.js', 'shared/badge.js', 'shared/pill.js', 'shared/active_tab.js', 'shared/memlog.js', 'shared/pace.js');
 } catch (e) {
   console.warn('[PM-BG] could not load a shared module:', String(e));
 }
@@ -151,7 +151,69 @@ self.addEventListener('unhandledrejection', function (ev) {
   broadcastDiag('unhandled rejection: ' + String(ev.reason));
 });
 
+// ---- slow-computer auto-pause (0.1.58) ---------------------------------------
+// pm_autoPausedSlow (chrome.storage.local) is set when the per-video pace
+// history says this computer cannot keep up (shared/pace.js chronicVerdict).
+// While it is set, NO offscreen document is created: no Whisper worker, no
+// model in memory, no CPU. Captions (captions.js) do not depend on the
+// offscreen document and keep working. The popup's "Try again" clears the
+// flag, which lands in the onChanged listener below.
+var autoPausedSlow = false;
+var autoPauseLoaded = chrome.storage.local
+  .get(['pm_autoPausedSlow'])
+  .then(function (items) {
+    autoPausedSlow = !globalThis.PMPace.audioAllowed(items);
+  })
+  .catch(function () {});
+
+function broadcastAudioPaused() {
+  portsByTabId.forEach(function (port, tabId) {
+    try { port.postMessage({ type: 'audio-paused', paused: autoPausedSlow }); } catch (e) {}
+    applyTabBadge(tabId);
+  });
+}
+
+chrome.storage.onChanged.addListener(function (changes, area) {
+  if (area !== 'local' || !changes.pm_autoPausedSlow) return;
+  autoPausedSlow = !!changes.pm_autoPausedSlow.newValue;
+  console.log('[PM-BG] [PM-AUTOPAUSE] audio filtering ' + (autoPausedSlow ? 'PAUSED (offscreen document closed)' : 're-enabled (Try again)'));
+  if (autoPausedSlow) {
+    chrome.offscreen.closeDocument().catch(function () {});
+    broadcastAudioPaused();
+  } else {
+    ensureOffscreenDocument().then(function () {
+      broadcastAudioPaused();
+      resendModelConfigToAllTabs();
+    });
+  }
+});
+
+// pm-pace from the offscreen document: relay the live state to the tab (pill
+// text) and keep the per-video summary that decides the chronic verdict.
+// Writes are chained so two quick windows cannot clobber each other.
+var paceWriteChain = Promise.resolve();
+function persistPace(msg) {
+  if (!msg.video || msg.video.analyzedS <= 0) return;
+  paceWriteChain = paceWriteChain
+    .then(function () { return chrome.storage.local.get(['pm_paceHistory', 'pm_autoPausedSlow']); })
+    .then(function (items) {
+      if (items.pm_autoPausedSlow) return;
+      var P = globalThis.PMPace;
+      var hist = P.upsertHistory(items.pm_paceHistory, P.videoEntry(msg.videoId, msg.video, Date.now()));
+      var verdict = P.chronicVerdict(hist);
+      var patch = { pm_paceHistory: hist };
+      if (verdict.tripped) {
+        patch.pm_autoPausedSlow = P.makeAutoPauseFlag(verdict, Date.now());
+        console.warn('[PM-BG] [PM-CHRONIC] ' + verdict.chronicCount + ' of last ' + verdict.qualifying + ' videos behind realtime (median rtf ' + verdict.medianRtf + ') - auto-pausing audio filtering');
+      }
+      return chrome.storage.local.set(patch);
+    })
+    .catch(function (e) { console.warn('[PM-BG] persistPace failed:', String(e)); });
+}
+
 async function ensureOffscreenDocument() {
+  await autoPauseLoaded;
+  if (autoPausedSlow) return;
   var existing = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
   if (existing.length > 0) return;
   if (creatingOffscreen) {
@@ -305,6 +367,7 @@ function applyTabBadge(tabId) {
   if (!api || tabId == null) return;
   var known = badgeStateByTabId.get(tabId) || {};
   var decision = api.badgeState({
+    audioPaused: autoPausedSlow,
     healthStatus: unhealthyTabs.has(tabId) ? 'unhealthy' : null,
     presented: known.presented,
     mutedCount: known.mutedCount,
@@ -457,6 +520,11 @@ chrome.runtime.onConnect.addListener(function (port) {
   portsByTabId.set(tabId, port);
   console.log('[PM-BG] content port connected, tabId=' + tabId);
 
+  autoPauseLoaded.then(function () {
+    if (autoPausedSlow) {
+      try { port.postMessage({ type: 'audio-paused', paused: true }); } catch (e) {}
+    }
+  });
   ensureOffscreenDocument();
   // A new YouTube tab changes who should be served (0.1.49). Recompute so the
   // pipeline follows, and so this new tab is told its own active/inactive
@@ -729,6 +797,14 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
         ' lagMs=' + Math.round(msg.lagMs) +
         ' text=[' + msg.words.map(function (w) { return w.word; }).join(' ') + ']'
     );
+  } else if (msg.type === 'pm-pace') {
+    var pacePort = portsByTabId.get(msg.tabId);
+    if (pacePort) {
+      try {
+        pacePort.postMessage({ type: 'pace', videoId: msg.videoId, state: msg.state, changed: msg.changed, recentRtf: msg.recentRtf, video: msg.video });
+      } catch (e) {}
+    }
+    persistPace(msg);
   } else if (msg.type === 'pm-heartbeat') {
     var hbPort = portsByTabId.get(msg.tabId);
     if (hbPort) {

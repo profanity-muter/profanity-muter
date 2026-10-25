@@ -33211,11 +33211,261 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
     }
   });
 
+  // shared/pace.js
+  var require_pace = __commonJS({
+    "shared/pace.js"(exports, module) {
+      (function(root) {
+        "use strict";
+        var C = {
+          BUSY_ENTER_RTF: 1,
+          BUSY_ENTER_N: 3,
+          BUSY_EXIT_RTF: 0.8,
+          BUSY_EXIT_N: 1,
+          // probes are 60s apart, so one good probe is the evidence
+          PROBE_EVERY_MS: 6e4,
+          MIN_AUDIO_S: 3,
+          // tail windows are dominated by fixed overhead; ignore them
+          RTF_KEEP: 200,
+          CHRONIC_BEHIND_FRAC: 0.5,
+          CHRONIC_MIN_AUDIO_S: 60,
+          CHRONIC_LOOKBACK: 5,
+          CHRONIC_MIN_VIDEOS: 3,
+          CHRONIC_TRIP: 3,
+          HISTORY_CAP: 10,
+          COMPLETED_SPANS_CAP: 64,
+          REPEAT_COOLDOWN_MS: 3e4
+        };
+        function firstUncoveredPoint(intervals, lo, hi, eps) {
+          var e = typeof eps === "number" ? eps : 0.05;
+          var p = lo;
+          for (var i = 0; i < intervals.length; i++) {
+            var iv = intervals[i];
+            if (iv.end <= p + e) continue;
+            if (iv.start > p + e) return p;
+            p = iv.end;
+            if (p >= hi - e) return null;
+          }
+          return p < hi - e ? p : null;
+        }
+        function maxCoveredIn(view, rangeStart, rangeEnd, floor2) {
+          var m = floor2;
+          for (var i = 0; i < view.length; i++) {
+            if (view[i].start < rangeEnd && view[i].end > rangeStart) m = Math.max(m, view[i].end);
+          }
+          return m;
+        }
+        function resolveWindowStart(o) {
+          var eps = typeof o.eps === "number" ? o.eps : 0.05;
+          var view = o.coverageView;
+          var start = firstUncoveredPoint(view, o.lowBound, o.high, eps);
+          if (start == null) {
+            start = Math.max(maxCoveredIn(view, o.rangeStart, o.rangeEnd, o.rangeStart), o.lowBound);
+            if (start >= o.high) return { reason: "fully-covered" };
+          }
+          function isCold(at2) {
+            if (!o.hadFirstWindow) return true;
+            for (var i = 0; i < o.covered.length; i++) {
+              if (Math.abs(o.covered[i].end - at2) < o.adjacencyS) return false;
+            }
+            return true;
+          }
+          var cold = isCold(start);
+          if (cold) {
+            var coldFloor = Math.max(o.rangeStart, o.ct - (typeof o.coldBehindS === "number" ? o.coldBehindS : 1));
+            if (coldFloor >= o.high) return { reason: "cold-behind-playhead", coldFloor };
+            if (coldFloor > start) {
+              start = coldFloor;
+              var again = firstUncoveredPoint(view, start, o.high, eps);
+              if (again == null) {
+                start = Math.max(maxCoveredIn(view, o.rangeStart, o.rangeEnd, start), start);
+                if (start >= o.high) return { reason: "fully-covered" };
+              } else {
+                start = again;
+              }
+              cold = isCold(start);
+            }
+          }
+          return { start, isColdStart: cold };
+        }
+        function spanKey(a, b) {
+          return a.toFixed(2) + "," + b.toFixed(2);
+        }
+        function isRepeatSpan(set, a, b) {
+          return set.has(spanKey(a, b));
+        }
+        function noteCompletedSpan(set, a, b) {
+          set.add(spanKey(a, b));
+          while (set.size > C.COMPLETED_SPANS_CAP) set.delete(set.values().next().value);
+        }
+        function median(xs2) {
+          if (!xs2.length) return null;
+          var s = xs2.slice().sort(function(a, b) {
+            return a - b;
+          });
+          var m = s.length >> 1;
+          return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+        }
+        function createPace(opts) {
+          opts = opts || {};
+          var enterN = opts.enterN || C.BUSY_ENTER_N;
+          var exitN = opts.exitN || C.BUSY_EXIT_N;
+          var state = "ok", slow = 0, fast = 0, lastProbe = 0;
+          var rtfs = [], totalS = 0, behindS = 0;
+          function onWindow(w, now) {
+            var none = { changed: false, from: state, to: state };
+            if (!w || w.cold || !(w.audioS >= C.MIN_AUDIO_S) || typeof w.rtf !== "number" || !isFinite(w.rtf)) return none;
+            rtfs.push(w.rtf);
+            if (rtfs.length > C.RTF_KEEP) rtfs.shift();
+            totalS += w.audioS;
+            if (w.rtf > C.BUSY_ENTER_RTF) behindS += w.audioS;
+            var from = state;
+            if (state === "ok") {
+              slow = w.rtf > C.BUSY_ENTER_RTF ? slow + 1 : 0;
+              if (slow >= enterN) {
+                state = "busy";
+                slow = 0;
+                fast = 0;
+                lastProbe = now;
+              }
+            } else {
+              fast = w.rtf < C.BUSY_EXIT_RTF ? fast + 1 : 0;
+              if (fast >= exitN) {
+                state = "ok";
+                slow = 0;
+                fast = 0;
+              }
+            }
+            return { changed: state !== from, from, to: state, rtf: w.rtf };
+          }
+          function allowWindow(now) {
+            if (state !== "busy") return true;
+            if (now - lastProbe >= C.PROBE_EVERY_MS) {
+              lastProbe = now;
+              return true;
+            }
+            return false;
+          }
+          function probeDue(now) {
+            return state === "busy" && now - lastProbe >= C.PROBE_EVERY_MS;
+          }
+          function video() {
+            return {
+              analyzedS: totalS,
+              behindFrac: totalS > 0 ? behindS / totalS : 0,
+              medianRtf: median(rtfs),
+              windows: rtfs.length,
+              recentRtf: median(rtfs.slice(-3))
+            };
+          }
+          return {
+            onWindow,
+            allowWindow,
+            probeDue,
+            video,
+            state: function() {
+              return state;
+            }
+          };
+        }
+        function videoEntry(id, v, now) {
+          return {
+            id,
+            t: now,
+            analyzedS: Math.round(v.analyzedS),
+            medianRtf: v.medianRtf == null ? null : Math.round(v.medianRtf * 100) / 100,
+            behindFrac: Math.round(v.behindFrac * 100) / 100,
+            chronic: v.behindFrac >= C.CHRONIC_BEHIND_FRAC
+          };
+        }
+        function upsertHistory(history, entry) {
+          var out = (history || []).filter(function(e) {
+            return e && e.id !== entry.id;
+          });
+          out.push(entry);
+          return out.slice(-C.HISTORY_CAP);
+        }
+        function chronicVerdict(history) {
+          var q = (history || []).filter(function(e) {
+            return e && e.analyzedS >= C.CHRONIC_MIN_AUDIO_S;
+          }).slice(-C.CHRONIC_LOOKBACK);
+          var bad = q.filter(function(e) {
+            return e.chronic;
+          });
+          return {
+            tripped: q.length >= C.CHRONIC_MIN_VIDEOS && bad.length >= C.CHRONIC_TRIP,
+            qualifying: q.length,
+            chronicCount: bad.length,
+            medianRtf: median(bad.map(function(e) {
+              return e.medianRtf;
+            }).filter(function(x) {
+              return typeof x === "number";
+            }))
+          };
+        }
+        function audioAllowed(items) {
+          return !(items && items.pm_autoPausedSlow);
+        }
+        function makeAutoPauseFlag(verdict, now) {
+          return { at: now, chronicCount: verdict.chronicCount, qualifying: verdict.qualifying, medianRtf: verdict.medianRtf };
+        }
+        function tryAgainPatch() {
+          return { remove: ["pm_autoPausedSlow", "pm_paceHistory"] };
+        }
+        var WHY = "Profanity Muter listens and filters on this computer, so nothing you watch is sent anywhere, and muting keeps up with the video. The tradeoff is that it needs a fair amount of free processing power.";
+        var COPY = {
+          pill: "Your computer is busy, so muting is falling behind. Closing other apps or tabs helps.",
+          pillWhyLabel: "Why?",
+          pillWhy: WHY,
+          pausedPill: "Audio filtering is paused on this computer. Captions are still censored.",
+          noticeTitle: "Audio filtering is paused on this computer",
+          noticeBody: "Profanity Muter filters audio on this computer, so what you watch stays private and muting keeps up with the video. The tradeoff is that it needs a fair amount of free processing power, and this computer doesn't have enough free for Profanity Muter to filter reliably, so audio filtering is paused and captions are still censored. Closing other programs may help. If it keeps happening, Profanity Muter may not be a good fit for this computer.",
+          tryAgain: "Try again",
+          remove: "Remove extension",
+          onboarding: "Profanity Muter runs on your computer, not in the cloud, so it needs some free processing power. Older or very busy computers may struggle to keep up."
+        };
+        function noticeModel(flag) {
+          if (!flag) return null;
+          return { title: COPY.noticeTitle, body: COPY.noticeBody, buttons: [COPY.tryAgain, COPY.remove] };
+        }
+        function threadCap(hardwareConcurrency, current) {
+          var hc2 = typeof hardwareConcurrency === "number" && hardwareConcurrency >= 1 ? hardwareConcurrency : 1;
+          var cap = Math.max(1, Math.floor(hc2 / 2));
+          return typeof current === "number" && current >= 1 ? Math.min(cap, current) : cap;
+        }
+        var PMPaceCore = {
+          C,
+          COMPLETED_SPANS_CAP: C.COMPLETED_SPANS_CAP,
+          HISTORY_CAP: C.HISTORY_CAP,
+          REPEAT_COOLDOWN_MS: C.REPEAT_COOLDOWN_MS,
+          PROBE_EVERY_MS: C.PROBE_EVERY_MS,
+          COPY,
+          firstUncoveredPoint,
+          resolveWindowStart,
+          spanKey,
+          isRepeatSpan,
+          noteCompletedSpan,
+          createPace,
+          videoEntry,
+          upsertHistory,
+          chronicVerdict,
+          audioAllowed,
+          makeAutoPauseFlag,
+          tryAgainPatch,
+          noticeModel,
+          threadCap
+        };
+        root.PMPace = PMPaceCore;
+        if (typeof module !== "undefined" && module.exports) module.exports = { PMPaceCore };
+      })(typeof globalThis !== "undefined" ? globalThis : exports);
+    }
+  });
+
   // src/whisper-worker-src.js
   var require_whisper_worker_src = __commonJS({
     "src/whisper-worker-src.js"() {
       init_mem_probe();
       init_transformers_web();
+      var import_pace = __toESM(require_pace());
       var workerScriptStartWall = performance.now();
       var workerStartedAtWall = Date.now();
       function log(...args) {
@@ -33232,7 +33482,18 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
       };
       var DEFAULT_MODEL = "base";
       env2.backends.onnx.wasm.proxy = false;
-      env2.backends.onnx.wasm.numThreads = 1;
+      var THREADS_CONFIGURED = env2.backends.onnx.wasm.numThreads;
+      env2.backends.onnx.wasm.numThreads = globalThis.PMPace.threadCap(
+        self.navigator && self.navigator.hardwareConcurrency,
+        1
+      );
+      self.postMessage({
+        type: "threads",
+        cores: self.navigator ? self.navigator.hardwareConcurrency : null,
+        before: THREADS_CONFIGURED,
+        effective: env2.backends.onnx.wasm.numThreads,
+        isolated: self.crossOriginIsolated === true
+      });
       env2.allowLocalModels = true;
       env2.allowRemoteModels = false;
       env2.useBrowserCache = false;

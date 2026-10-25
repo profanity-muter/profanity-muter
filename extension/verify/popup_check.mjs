@@ -66,12 +66,13 @@ const stub = (initialSync, initialLocal, health) => `
       },
       remove(key, cb) {
         window.__pmWrites.push({ area: label, remove: key });
-        delete bag[key];
+        (Array.isArray(key) ? key : [key]).forEach(k => { delete bag[k]; });
         if (cb) setTimeout(cb, 0);
       }
     };
   }
   window.__pmTabs = [];
+  window.__pmUninstalls = [];
   window.__pmBadge = [];
   window.__pmClipboard = null;
   window.chrome = {
@@ -101,6 +102,9 @@ const stub = (initialSync, initialLocal, health) => `
           cb(window.__pmHealth);
         }, 0);
       }
+    },
+    management: {
+      uninstallSelf: (opts, cb) => { window.__pmUninstalls.push(opts); if (cb) setTimeout(cb, 0); }
     },
     storage: {
       sync: area(window.__pmSync, 'sync'),
@@ -1153,6 +1157,78 @@ const devlogFixture = {
   const s = await page.evaluate(snapshot);
   check('health: a served-elsewhere tab does not raise the broken-filter banner', s.healthHidden === true);
   await page.close();
+}
+
+// ---- 32. slow-computer notice (0.1.58) ----
+{
+  const flag = { at: Date.now(), chronicCount: 3, qualifying: 4, medianRtf: 1.8 };
+  const hist = [{ id: 'a', t: 1, analyzedS: 120, medianRtf: 1.8, behindFrac: 0.9, chronic: true }];
+  // Not paused: no notice.
+  {
+    const { page } = await open(browser, { pm_ackNotPerfect: ACK }, {});
+    const hidden = await page.evaluate(() => document.getElementById('pm-slow').classList.contains('pm-hidden'));
+    check('slow: no notice when audio filtering is not paused', hidden === true);
+    await page.close();
+  }
+  // Paused: notice with the exact copy and the two buttons.
+  {
+    const { page, errors } = await open(browser, { pm_ackNotPerfect: ACK }, { pm_autoPausedSlow: flag, pm_paceHistory: hist });
+    const v = await page.evaluate(() => ({
+      hidden: document.getElementById('pm-slow').classList.contains('pm-hidden'),
+      title: document.getElementById('pm-slow-title').textContent,
+      body: document.getElementById('pm-slow-body').textContent,
+      retry: document.getElementById('pm-slow-retry').textContent,
+      remove: document.getElementById('pm-slow-remove').textContent
+    }));
+    check('slow: notice shown when auto-paused', v.hidden === false);
+    check('slow: title', v.title === 'Audio filtering is paused on this computer', v.title);
+    check('slow: body explains why (private, processing power, captions)',
+      /stays private/.test(v.body) && /processing power/.test(v.body) && /captions are still censored/.test(v.body) &&
+      /not be a good fit/.test(v.body), v.body);
+    check('slow: no em-dash or absolute claim in the body', !/\u2014|100%|guarantee/i.test(v.body));
+    check('slow: buttons are Try again and Remove extension', v.retry === 'Try again' && v.remove === 'Remove extension', v);
+
+    // Remove extension: uninstallSelf with the confirm dialog, nothing else.
+    await page.click('#pm-slow-remove');
+    await page.waitForTimeout(50);
+    const un = await page.evaluate(() => window.__pmUninstalls);
+    check('slow: Remove extension calls management.uninstallSelf({showConfirmDialog:true})',
+      un.length === 1 && un[0].showConfirmDialog === true, un);
+
+    // Copy debug log carries the chronic summary.
+    await page.evaluate(() => document.getElementById('pm-copy-devlog').click());
+    await page.waitForTimeout(100);
+    const clip = await page.evaluate(() => window.__pmClipboard);
+    const parsed = clip ? JSON.parse(clip) : null;
+    check('slow: Copy debug log includes the chronic summary',
+      parsed && parsed.pace && parsed.pace.autoPaused && parsed.pace.history.length === 1, clip && clip.slice(0, 200));
+
+    // Try again: clears the flag and the history, hides the notice.
+    await page.click('#pm-slow-retry');
+    await page.waitForTimeout(50);
+    const after = await page.evaluate(() => ({
+      hidden: document.getElementById('pm-slow').classList.contains('pm-hidden'),
+      local: JSON.parse(JSON.stringify(window.__pmLocal)),
+      removes: window.__pmWrites.filter(w => w.remove)
+    }));
+    check('slow: Try again hides the notice', after.hidden === true);
+    check('slow: Try again clears pm_autoPausedSlow and pm_paceHistory',
+      !('pm_autoPausedSlow' in after.local) && !('pm_paceHistory' in after.local), after.local);
+    check('slow: no page errors', errors.length === 0, errors);
+    await page.close();
+  }
+  // Locked: Remove extension asks for the password instead of uninstalling.
+  {
+    const { page: p0 } = await open(browser, {});
+    const record = await p0.evaluate(() => window.PMLock.create('hunter2'));
+    await p0.close();
+    const { page } = await open(browser, { pm_lock: record, pm_ackNotPerfect: ACK }, { pm_autoPausedSlow: flag });
+    await page.click('#pm-slow-remove');
+    await page.waitForTimeout(50);
+    const un = await page.evaluate(() => window.__pmUninstalls.length);
+    check('slow: locked popup does not uninstall', un === 0, un);
+    await page.close();
+  }
 }
 
 await browser.close();
