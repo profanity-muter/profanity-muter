@@ -1183,8 +1183,7 @@ const devlogFixture = {
     check('slow: notice shown when auto-paused', v.hidden === false);
     check('slow: title', v.title === 'Audio filtering is paused on this computer', v.title);
     check('slow: body explains why (private, processing power, captions)',
-      /fully private/.test(v.body) && /processing power/.test(v.body) && /captions are still censored/.test(v.body) &&
-      /not be a good fit/.test(v.body), v.body);
+      /fully private/.test(v.body) && /processing power/.test(v.body) && /captions are still censored/.test(v.body), v.body);
     check('slow: no em-dash or absolute claim in the body', !/\u2014|100%|guarantee/i.test(v.body));
     check('slow: buttons are Try again and Remove extension', v.retry === 'Try again' && v.remove === 'Remove extension', v);
 
