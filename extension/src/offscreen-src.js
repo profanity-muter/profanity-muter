@@ -41,6 +41,7 @@ import { Input, ReadableStreamSource, AudioBufferSink, WEBM, MP4, ADTS } from 'm
 // shipped path is the same code the Node tests exercise.
 import '../shared/decode.js';
 import '../shared/memlog.js'; // 0.1.57 PM-MEM, attaches globalThis.PMMemlog
+import '../shared/lifecycle.js'; // 0.1.59 session GC + diag gate, attaches globalThis.PMLifecycle
 // 0.1.41: run topology (boundary classification, playhead-aware
 // retirement). Imported for its side effect, like the others, so the
 // shipped decision is the tested one.
@@ -209,6 +210,7 @@ function emitMem(kind, why, force) {
     );
     if (kind !== 'win') log('[PM-MEM] ' + JSON.stringify(sample));
     chrome.runtime.sendMessage({ type: 'pm-mem', sample }).catch(() => {});
+    return sample;
   } catch (e) {
     log('[PM-MEM] sample failed: ' + String(e));
   }
@@ -290,6 +292,7 @@ function handleWorkerMessage(ev) {
     warmInfo = { workerSpawnMs: msg.workerSpawnMs, modelLoadMs: msg.modelLoadMs, readyAtWall: Date.now() };
     log('[PM-WARM] worker spawn=' + warmInfo.workerSpawnMs + 'ms model load=' + warmInfo.modelLoadMs + 'ms');
     for (const s of sessions.values()) logWarmToSession(s);
+    chrome.runtime.sendMessage({ type: 'pm-warm-ready', workerSpawnMs: msg.workerSpawnMs, modelLoadMs: msg.modelLoadMs }).catch(() => {}); // 0.1.59: lets the SW time an idle-wake cold start
     return;
   }
   const pending = pendingWorkerRequests.get(msg.requestId);
@@ -377,6 +380,12 @@ self.addEventListener('unhandledrejection', (ev) => {
 
 function sessionKey(tabId, videoId) {
   return tabId + ':' + videoId;
+}
+
+// 0.1.59: true when this message is about a video the tab has already left.
+function isStaleVideo(msg) {
+  const cur = currentVideoByTab.get(msg.tabId);
+  return cur !== undefined && cur !== msg.videoId;
 }
 
 // A run's demux state (mediabunny Input/track/sink) is created ONCE and fed
@@ -601,6 +610,7 @@ function getOrCreateSession(tabId, videoId) {
       lastWindowGrams: null, // this run's previous window's word 4-grams, for the timeline-shift self-check (see transcribeWindow)
       lastWindowSpan: null,
       lastSegWallTime: Date.now(),
+      lastTouchWall: Date.now(), // 0.1.59: any traffic for this session; drives sweepSessions
       lastBufferedGrowthWall: Date.now(), // last time s.bufferedRanges actually grew - used by pickNextWindow's tiny-tail deferral to detect "run has gone quiet, this really is the end"
       hadFirstWindow: false, // cold-start detection in pickNextWindow - cleared per session, not per run (a seek into a new run is still "cold" relative to session-level coverage)
       disabled: false, // pm_enabled=false (0.1.13) - see pm-disable/pm-enable handlers
@@ -659,18 +669,56 @@ function getOrCreateSession(tabId, videoId) {
   return s;
 }
 
+// The ONLY place a session leaves `sessions` (0.1.59 audit: before this
+// release it was reached solely from pm-reset and pm-tab-closed, so a tab that
+// simply sat open, or navigated away from YouTube without closing, kept its
+// two runs / words / dedupe keys forever).
+function dropSession(key) {
+  const s = sessions.get(key);
+  if (!s) return;
+  s.dropped = true; // 0.1.34: distinguishes "this session is gone" from "the playhead moved" - see the stale-result handling in transcribeWindow
+  s.generation++; // bump BEFORE deleting (0.1.18) - any in-flight closure still holding a reference to this exact object (a running maybeProcess loop or transcribeWindow call from before the reset) sees this and discards its own work instead of applying it to a session that's supposed to be gone
+  if (s.preemptTimer) { try { clearTimeout(s.preemptTimer); } catch (e) {} s.preemptTimer = null; }
+  for (const run of s.runs) closeRun(run); // close every run's demux state, not just prune - the whole session is going away
+  s.runs = [];
+  s.currentRun = null;
+  s.allWords = [];
+  s.covered = [];
+  s.bufferedRanges = [];
+  s.emittedKeys.clear();
+  sessions.delete(key);
+}
+
 function dropSessionsForTab(tabId) {
   for (const key of Array.from(sessions.keys())) {
-    if (key.startsWith(tabId + ':')) {
-      const s = sessions.get(key);
-      s.dropped = true; // 0.1.34: distinguishes "this session is gone" from "the playhead moved" - see the stale-result handling in transcribeWindow
-      s.generation++; // bump BEFORE deleting (0.1.18) - any in-flight closure still holding a reference to this exact object (a running maybeProcess loop or transcribeWindow call from before the reset) sees this and discards its own work instead of applying it to a session that's supposed to be gone
-      for (const run of s.runs) closeRun(run); // close every run's demux state, not just prune - the whole session is going away
-      sessions.delete(key);
-    }
+    if (key.startsWith(tabId + ':')) dropSession(key);
   }
   log('dropped sessions for tab', tabId);
 }
+
+// 0.1.59: tab -> the video it is on now (from pm-reset / pm-config). A late
+// message for any other video of that tab must not resurrect a session.
+const currentVideoByTab = new Map();
+
+// 0.1.59: free sessions nobody is using. Idle >= SESSION_IDLE_MS, or beyond
+// the cap on sessions of tabs we are not serving. Never a session mid-window.
+const SESSION_SWEEP_MS = 60000;
+function sweepSessions() {
+  const now = Date.now();
+  const list = [];
+  for (const [key, s] of sessions) {
+    list.push({ key, lastTouchWall: s.lastTouchWall, serving: sessionIsServing(s), processing: s.processing });
+  }
+  const victims = globalThis.PMLifecycle.selectEvictions(list, now);
+  for (const key of victims) {
+    const s = sessions.get(key);
+    log('[PM-SESSION-GC] freeing session ' + key + ' (idle ' + Math.round((now - s.lastTouchWall) / 1000) + 's, runs=' + s.runs.length + ', words=' + s.allWords.length + ')');
+    dropSession(key);
+  }
+  if (victims.length) emitMem('tick', 'session gc freed ' + victims.length, true);
+  return victims.length;
+}
+setInterval(sweepSessions, SESSION_SWEEP_MS);
 
 function appendToRun(run, bytes) {
   run.bytesFed = (run.bytesFed || 0) + (bytes && bytes.byteLength ? bytes.byteLength : 0); // 0.1.57 PM-MEM cache sizing only
@@ -794,11 +842,12 @@ async function windowToFloat16k(wrappedBuffers, absStart, absEnd, nativeRate) {
 // every appended segment), but a real block is now guaranteed visible
 // within NO_WINDOW_DIAG_THROTTLE_MS.
 const NO_WINDOW_DIAG_THROTTLE_MS = 5000;
+// 0.1.59: a paused tab hit "fully covered" about once a minute for hours and
+// flooded the capped devlog errors list. Now logged when the reason changes
+// and then at most every PMLifecycle.DIAG_REPEAT_MS (10 min) per session.
 function logNoWindowReason(s, key, reason) {
-  const now = Date.now();
-  const lastByKey = s.lastNoWindowDiagWall || (s.lastNoWindowDiagWall = {});
-  if (lastByKey[key] && now - lastByKey[key] < NO_WINDOW_DIAG_THROTTLE_MS) return;
-  lastByKey[key] = now;
+  const gate = s.noWindowGate || (s.noWindowGate = {});
+  if (!globalThis.PMLifecycle.diagGate(gate, key, Date.now(), { flapMs: NO_WINDOW_DIAG_THROTTLE_MS })) return;
   notifyTab(s, '[PM-NO-WINDOW] ' + reason);
 }
 
@@ -2602,11 +2651,19 @@ setInterval(() => {
   }
 }, 2000);
 
-chrome.runtime.onMessage.addListener((msg) => {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
+
+  if (msg.type === 'pm-prepare-teardown') {
+    // 0.1.59: the service worker is about to close this document (idle).
+    // Answer with a final memory sample so PM-IDLE-TEARDOWN carries it.
+    sendResponse(emitMem('teardown', 'idle teardown', true) || null);
+    return;
+  }
 
   if (msg.type === 'pm-reset') {
     dropSessionsForTab(msg.tabId);
+    currentVideoByTab.set(msg.tabId, msg.videoId);
     return;
   }
 
@@ -2640,6 +2697,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     const key = sessionKey(msg.tabId, msg.videoId);
     const s = sessions.get(key);
     if (s) {
+      s.lastTouchWall = Date.now();
       s.generation++;
       if (typeof msg.currentTime === 'number' && !Number.isNaN(msg.currentTime)) s.currentTimeS = msg.currentTime;
       scheduleSeekPreemptionCheck(s);
@@ -2654,11 +2712,15 @@ chrome.runtime.onMessage.addListener((msg) => {
     // offscreen document forever - nothing ever told offscreen the tab was
     // gone. background.js forwards chrome.tabs.onRemoved here.
     dropSessionsForTab(msg.tabId);
+    currentVideoByTab.delete(msg.tabId);
     return;
   }
 
   if (msg.type === 'pm-config') {
+    if (isStaleVideo(msg)) return;
     const s = getOrCreateSession(msg.tabId, msg.videoId);
+    s.lastTouchWall = Date.now();
+    currentVideoByTab.set(msg.tabId, msg.videoId);
     if (msg.model) {
       const changed = s.modelId !== msg.model;
       s.modelId = msg.model;
@@ -2687,7 +2749,9 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 
   if (msg.type === 'pm-enable') {
+    if (isStaleVideo(msg)) return;
     const s = getOrCreateSession(msg.tabId, msg.videoId);
+    s.lastTouchWall = Date.now();
     s.disabled = false;
     maybeProcess(s);
     return;
@@ -2778,6 +2842,7 @@ chrome.runtime.onMessage.addListener((msg) => {
     const key = sessionKey(msg.tabId, msg.videoId);
     const s = sessions.get(key);
     if (s) {
+      s.lastTouchWall = Date.now();
       log('[PM-RESYNC] resending', s.allWords.length, 'words and', s.covered.length, 'covered intervals for', key);
       chrome.runtime
         .sendMessage({ type: 'pm-resync-result', tabId: msg.tabId, videoId: msg.videoId, words: s.allWords, coveredIntervals: s.covered })
@@ -2787,7 +2852,9 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 
   if (msg.type === 'pm-segment') {
+    if (isStaleVideo(msg)) return;
     const s = getOrCreateSession(msg.tabId, msg.videoId);
+    s.lastTouchWall = Date.now();
     // [PM-FIRST-COVERAGE] milestone 1/2 (0.1.18): the FIRST segment this
     // session ever sees. msg.wallTime is capture.js's own Date.now() at the
     // moment of capture (MAIN world); this handler's Date.now() is when it
@@ -2895,6 +2962,21 @@ chrome.runtime.onMessage.addListener((msg) => {
       }
     } else {
       log('segment received before an init segment; dropping');
+      // 0.1.59: this session was just (re)created by a mid-stream segment: the
+      // offscreen doc was torn down while idle, or the session was freed by
+      // sweepSessions. capture.js holds the cached init bytes, so ask it for a
+      // fresh run boundary (same path as a stall) instead of waiting for the
+      // 15s stall watchdog. Rate limited per session.
+      const nowReq = Date.now();
+      if (!s.rebuildReqWall || nowReq - s.rebuildReqWall > 15000) {
+        s.rebuildReqWall = nowReq;
+        chrome.runtime.sendMessage({
+          type: 'pm-request-run-rebuild',
+          tabId: s.tabId,
+          videoId: s.videoId,
+          atS: typeof msg.currentTime === 'number' ? msg.currentTime : null
+        }).catch(() => {});
+      }
     }
 
     if (typeof msg.currentTime === 'number' && !Number.isNaN(msg.currentTime)) {

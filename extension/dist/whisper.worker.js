@@ -33411,17 +33411,17 @@ ${this.boa_token}${this.audio_token.repeat(this._compute_audio_num_tokens(audio_
         function tryAgainPatch() {
           return { remove: ["pm_autoPausedSlow", "pm_paceHistory"] };
         }
-        var WHY = "Profanity Muter listens and filters on this computer, so nothing you watch is sent anywhere, and muting keeps up with the video. The tradeoff is that it needs a fair amount of free processing power.";
+        var WHY = "Profanity Muter is fully private: it runs only on your device and never sends anything to the cloud. That means it uses your computer's own processing power to keep up with the video.";
         var COPY = {
           pill: "Your computer is busy, so muting is falling behind. Closing other apps or tabs helps.",
           pillWhyLabel: "Why?",
           pillWhy: WHY,
           pausedPill: "Audio filtering is paused on this computer. Captions are still censored.",
           noticeTitle: "Audio filtering is paused on this computer",
-          noticeBody: "Profanity Muter filters audio on this computer, so what you watch stays private and muting keeps up with the video. The tradeoff is that it needs a fair amount of free processing power, and this computer doesn't have enough free for Profanity Muter to filter reliably, so audio filtering is paused and captions are still censored. Closing other programs may help. If it keeps happening, Profanity Muter may not be a good fit for this computer.",
+          noticeBody: "Profanity Muter is fully private: it runs only on your device and never sends anything to the cloud. That means it uses your computer's own processing power, and this computer doesn't have enough free right now. Audio filtering is paused; captions are still censored. Closing other programs may help.",
           tryAgain: "Try again",
           remove: "Remove extension",
-          onboarding: "Profanity Muter runs on your computer, not in the cloud, so it needs some free processing power. Older or very busy computers may struggle to keep up."
+          onboarding: "Profanity Muter is fully private: it runs only on your device and never sends anything to the cloud. That means it uses your computer's own processing power, and older or very busy computers may struggle to keep up."
         };
         function noticeModel(flag) {
           if (!flag) return null;

@@ -14214,6 +14214,85 @@
     }
   });
 
+  // shared/lifecycle.js
+  var require_lifecycle = __commonJS({
+    "shared/lifecycle.js"(exports, module) {
+      (function(root) {
+        "use strict";
+        var MIN = 60 * 1e3;
+        var IDLE_TEARDOWN_MS = 10 * MIN;
+        var SESSION_IDLE_MS = 10 * MIN;
+        var MAX_INACTIVE_SESSIONS = 2;
+        var DIAG_REPEAT_MS = 10 * MIN;
+        var DIAG_FLAP_MS = 5e3;
+        function isSessionVideoId(id) {
+          return typeof id === "string" && id.length > 0 && id.charAt(0) !== "/";
+        }
+        function idleStep(state, now, idleMs) {
+          state = state || {};
+          var limit = typeof idleMs === "number" ? idleMs : IDLE_TEARDOWN_MS;
+          var playing = state.playing || {};
+          var any = false;
+          for (var k in playing) if (playing[k] === true) {
+            any = true;
+            break;
+          }
+          if (any) return { idleSince: null, teardown: false };
+          var since = typeof state.idleSince === "number" ? state.idleSince : now;
+          return { idleSince: since, teardown: now - since >= limit };
+        }
+        function selectEvictions(sessions, now, opts) {
+          opts = opts || {};
+          var idleMs = typeof opts.idleMs === "number" ? opts.idleMs : SESSION_IDLE_MS;
+          var maxInactive = typeof opts.maxInactive === "number" ? opts.maxInactive : MAX_INACTIVE_SESSIONS;
+          var out = {};
+          var keep = [];
+          sessions.forEach(function(s) {
+            if (s.processing) return;
+            if (now - s.lastTouchWall >= idleMs) out[s.key] = true;
+            else if (!s.serving) keep.push(s);
+          });
+          keep.sort(function(a, b) {
+            return b.lastTouchWall - a.lastTouchWall;
+          });
+          keep.slice(maxInactive).forEach(function(s) {
+            out[s.key] = true;
+          });
+          return Object.keys(out);
+        }
+        function diagGate(state, key, now, opts) {
+          opts = opts || {};
+          var repeatMs = typeof opts.repeatMs === "number" ? opts.repeatMs : DIAG_REPEAT_MS;
+          var flapMs = typeof opts.flapMs === "number" ? opts.flapMs : DIAG_FLAP_MS;
+          var wall = state.wall || (state.wall = {});
+          var last2 = wall[key];
+          var ok;
+          if (last2 == null) ok = true;
+          else if (state.lastKey !== key) ok = now - last2 >= flapMs;
+          else ok = now - last2 >= repeatMs;
+          if (ok) {
+            wall[key] = now;
+            state.lastKey = key;
+          }
+          return ok;
+        }
+        root.PMLifecycle = {
+          IDLE_TEARDOWN_MS,
+          SESSION_IDLE_MS,
+          MAX_INACTIVE_SESSIONS,
+          DIAG_REPEAT_MS,
+          isSessionVideoId,
+          idleStep,
+          selectEvictions,
+          diagGate
+        };
+        if (typeof module !== "undefined" && module.exports) {
+          module.exports = { PMLifecycle: root.PMLifecycle };
+        }
+      })(typeof globalThis !== "undefined" ? globalThis : exports);
+    }
+  });
+
   // shared/runs.js
   var require_runs = __commonJS({
     "shared/runs.js"(exports, module) {
@@ -14524,17 +14603,17 @@
         function tryAgainPatch() {
           return { remove: ["pm_autoPausedSlow", "pm_paceHistory"] };
         }
-        var WHY = "Profanity Muter listens and filters on this computer, so nothing you watch is sent anywhere, and muting keeps up with the video. The tradeoff is that it needs a fair amount of free processing power.";
+        var WHY = "Profanity Muter is fully private: it runs only on your device and never sends anything to the cloud. That means it uses your computer's own processing power to keep up with the video.";
         var COPY = {
           pill: "Your computer is busy, so muting is falling behind. Closing other apps or tabs helps.",
           pillWhyLabel: "Why?",
           pillWhy: WHY,
           pausedPill: "Audio filtering is paused on this computer. Captions are still censored.",
           noticeTitle: "Audio filtering is paused on this computer",
-          noticeBody: "Profanity Muter filters audio on this computer, so what you watch stays private and muting keeps up with the video. The tradeoff is that it needs a fair amount of free processing power, and this computer doesn't have enough free for Profanity Muter to filter reliably, so audio filtering is paused and captions are still censored. Closing other programs may help. If it keeps happening, Profanity Muter may not be a good fit for this computer.",
+          noticeBody: "Profanity Muter is fully private: it runs only on your device and never sends anything to the cloud. That means it uses your computer's own processing power, and this computer doesn't have enough free right now. Audio filtering is paused; captions are still censored. Closing other programs may help.",
           tryAgain: "Try again",
           remove: "Remove extension",
-          onboarding: "Profanity Muter runs on your computer, not in the cloud, so it needs some free processing power. Older or very busy computers may struggle to keep up."
+          onboarding: "Profanity Muter is fully private: it runs only on your device and never sends anything to the cloud. That means it uses your computer's own processing power, and older or very busy computers may struggle to keep up."
         };
         function noticeModel(flag) {
           if (!flag) return null;
@@ -14681,6 +14760,7 @@
       init_src();
       var import_decode = __toESM(require_decode());
       var import_memlog = __toESM(require_memlog());
+      var import_lifecycle = __toESM(require_lifecycle());
       var import_runs = __toESM(require_runs());
       var import_pace = __toESM(require_pace());
       var import_preempt = __toESM(require_preempt());
@@ -14777,6 +14857,7 @@
           if (kind !== "win") log("[PM-MEM] " + JSON.stringify(sample));
           chrome.runtime.sendMessage({ type: "pm-mem", sample }).catch(() => {
           });
+          return sample;
         } catch (e) {
           log("[PM-MEM] sample failed: " + String(e));
         }
@@ -14844,6 +14925,8 @@
           warmInfo = { workerSpawnMs: msg.workerSpawnMs, modelLoadMs: msg.modelLoadMs, readyAtWall: Date.now() };
           log("[PM-WARM] worker spawn=" + warmInfo.workerSpawnMs + "ms model load=" + warmInfo.modelLoadMs + "ms");
           for (const s of sessions.values()) logWarmToSession(s);
+          chrome.runtime.sendMessage({ type: "pm-warm-ready", workerSpawnMs: msg.workerSpawnMs, modelLoadMs: msg.modelLoadMs }).catch(() => {
+          });
           return;
         }
         const pending = pendingWorkerRequests.get(msg.requestId);
@@ -14896,6 +14979,10 @@
       });
       function sessionKey(tabId, videoId) {
         return tabId + ":" + videoId;
+      }
+      function isStaleVideo(msg) {
+        const cur = currentVideoByTab.get(msg.tabId);
+        return cur !== void 0 && cur !== msg.videoId;
       }
       function newRun() {
         const run = {
@@ -15043,6 +15130,8 @@
             // this run's previous window's word 4-grams, for the timeline-shift self-check (see transcribeWindow)
             lastWindowSpan: null,
             lastSegWallTime: Date.now(),
+            lastTouchWall: Date.now(),
+            // 0.1.59: any traffic for this session; drives sweepSessions
             lastBufferedGrowthWall: Date.now(),
             // last time s.bufferedRanges actually grew - used by pickNextWindow's tiny-tail deferral to detect "run has gone quiet, this really is the end"
             hadFirstWindow: false,
@@ -15116,18 +15205,51 @@
         }
         return s;
       }
+      function dropSession(key) {
+        const s = sessions.get(key);
+        if (!s) return;
+        s.dropped = true;
+        s.generation++;
+        if (s.preemptTimer) {
+          try {
+            clearTimeout(s.preemptTimer);
+          } catch (e) {
+          }
+          s.preemptTimer = null;
+        }
+        for (const run of s.runs) closeRun(run);
+        s.runs = [];
+        s.currentRun = null;
+        s.allWords = [];
+        s.covered = [];
+        s.bufferedRanges = [];
+        s.emittedKeys.clear();
+        sessions.delete(key);
+      }
       function dropSessionsForTab(tabId) {
         for (const key of Array.from(sessions.keys())) {
-          if (key.startsWith(tabId + ":")) {
-            const s = sessions.get(key);
-            s.dropped = true;
-            s.generation++;
-            for (const run of s.runs) closeRun(run);
-            sessions.delete(key);
-          }
+          if (key.startsWith(tabId + ":")) dropSession(key);
         }
         log("dropped sessions for tab", tabId);
       }
+      var currentVideoByTab = /* @__PURE__ */ new Map();
+      var SESSION_SWEEP_MS = 6e4;
+      function sweepSessions() {
+        const now = Date.now();
+        const list = [];
+        for (const [key, s] of sessions) {
+          list.push({ key, lastTouchWall: s.lastTouchWall, serving: sessionIsServing(s), processing: s.processing });
+        }
+        const victims = globalThis.PMLifecycle.selectEvictions(list, now);
+        for (const key of victims) {
+          const s = sessions.get(key);
+          log("[PM-SESSION-GC] freeing session " + key + " (idle " + Math.round((now - s.lastTouchWall) / 1e3) + "s, runs=" + s.runs.length + ", words=" + s.allWords.length + ")");
+          dropSession(key);
+        }
+        if (victims.length) emitMem("tick", "session gc freed " + victims.length, true);
+        return victims.length;
+      }
+      setInterval(sweepSessions, SESSION_SWEEP_MS);
       function appendToRun(run, bytes) {
         run.bytesFed = (run.bytesFed || 0) + (bytes && bytes.byteLength ? bytes.byteLength : 0);
         try {
@@ -15207,10 +15329,8 @@
       }
       var NO_WINDOW_DIAG_THROTTLE_MS = 5e3;
       function logNoWindowReason(s, key, reason) {
-        const now = Date.now();
-        const lastByKey = s.lastNoWindowDiagWall || (s.lastNoWindowDiagWall = {});
-        if (lastByKey[key] && now - lastByKey[key] < NO_WINDOW_DIAG_THROTTLE_MS) return;
-        lastByKey[key] = now;
+        const gate = s.noWindowGate || (s.noWindowGate = {});
+        if (!globalThis.PMLifecycle.diagGate(gate, key, Date.now(), { flapMs: NO_WINDOW_DIAG_THROTTLE_MS })) return;
         notifyTab(s, "[PM-NO-WINDOW] " + reason);
       }
       var COLD_START_WINDOW_S = 2.5;
@@ -16193,10 +16313,15 @@
           }
         }
       }, 2e3);
-      chrome.runtime.onMessage.addListener((msg) => {
+      chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!msg || !msg.type) return;
+        if (msg.type === "pm-prepare-teardown") {
+          sendResponse(emitMem("teardown", "idle teardown", true) || null);
+          return;
+        }
         if (msg.type === "pm-reset") {
           dropSessionsForTab(msg.tabId);
+          currentVideoByTab.set(msg.tabId, msg.videoId);
           return;
         }
         if (msg.type === "pm-active-tab") {
@@ -16214,6 +16339,7 @@
           const key = sessionKey(msg.tabId, msg.videoId);
           const s = sessions.get(key);
           if (s) {
+            s.lastTouchWall = Date.now();
             s.generation++;
             if (typeof msg.currentTime === "number" && !Number.isNaN(msg.currentTime)) s.currentTimeS = msg.currentTime;
             scheduleSeekPreemptionCheck(s);
@@ -16223,10 +16349,14 @@
         }
         if (msg.type === "pm-tab-closed") {
           dropSessionsForTab(msg.tabId);
+          currentVideoByTab.delete(msg.tabId);
           return;
         }
         if (msg.type === "pm-config") {
+          if (isStaleVideo(msg)) return;
           const s = getOrCreateSession(msg.tabId, msg.videoId);
+          s.lastTouchWall = Date.now();
+          currentVideoByTab.set(msg.tabId, msg.videoId);
           if (msg.model) {
             const changed = s.modelId !== msg.model;
             s.modelId = msg.model;
@@ -16241,7 +16371,9 @@
           return;
         }
         if (msg.type === "pm-enable") {
+          if (isStaleVideo(msg)) return;
           const s = getOrCreateSession(msg.tabId, msg.videoId);
+          s.lastTouchWall = Date.now();
           s.disabled = false;
           maybeProcess(s);
           return;
@@ -16288,6 +16420,7 @@
           const key = sessionKey(msg.tabId, msg.videoId);
           const s = sessions.get(key);
           if (s) {
+            s.lastTouchWall = Date.now();
             log("[PM-RESYNC] resending", s.allWords.length, "words and", s.covered.length, "covered intervals for", key);
             chrome.runtime.sendMessage({ type: "pm-resync-result", tabId: msg.tabId, videoId: msg.videoId, words: s.allWords, coveredIntervals: s.covered }).catch(() => {
             });
@@ -16295,7 +16428,9 @@
           return;
         }
         if (msg.type === "pm-segment") {
+          if (isStaleVideo(msg)) return;
           const s = getOrCreateSession(msg.tabId, msg.videoId);
+          s.lastTouchWall = Date.now();
           if (s.firstSegCapturedAt == null) {
             s.firstSegCapturedAt = typeof msg.wallTime === "number" ? msg.wallTime : Date.now();
             s.firstSegRelayedAt = Date.now();
@@ -16349,6 +16484,17 @@
             }
           } else {
             log("segment received before an init segment; dropping");
+            const nowReq = Date.now();
+            if (!s.rebuildReqWall || nowReq - s.rebuildReqWall > 15e3) {
+              s.rebuildReqWall = nowReq;
+              chrome.runtime.sendMessage({
+                type: "pm-request-run-rebuild",
+                tabId: s.tabId,
+                videoId: s.videoId,
+                atS: typeof msg.currentTime === "number" ? msg.currentTime : null
+              }).catch(() => {
+              });
+            }
           }
           if (typeof msg.currentTime === "number" && !Number.isNaN(msg.currentTime)) {
             s.currentTimeS = msg.currentTime;

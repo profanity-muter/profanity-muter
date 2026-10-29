@@ -16,7 +16,7 @@
 // what "eligible" means (0.1.33). shared/badge.js joined the list in 0.1.56,
 // when the badge became a live mirror of the on-player pill.
 try {
-  importScripts('shared/moments.js', 'shared/badge.js', 'shared/pill.js', 'shared/active_tab.js', 'shared/memlog.js', 'shared/pace.js');
+  importScripts('shared/moments.js', 'shared/badge.js', 'shared/pill.js', 'shared/active_tab.js', 'shared/memlog.js', 'shared/pace.js', 'shared/lifecycle.js');
 } catch (e) {
   console.warn('[PM-BG] could not load a shared module:', String(e));
 }
@@ -106,6 +106,7 @@ function recomputeActiveTab() {
 
   // Only re-tell the offscreen document when the served tab actually changes:
   // that is what triggers the re-bind (old tab stops, new tab resumes).
+  idleCheck();
   if (winner !== currentServedTabId) {
     currentServedTabId = winner;
     console.log('[PM-BG] active tab -> ' + (winner == null ? 'none' : winner));
@@ -211,9 +212,121 @@ function persistPace(msg) {
     .catch(function (e) { console.warn('[PM-BG] persistPace failed:', String(e)); });
 }
 
+// ---- idle teardown (0.1.59) --------------------------------------------------
+// The Whisper worker's WASM memory (~1.2-1.3GB) is never released while the
+// offscreen document lives, and the document lived for days. So: when no
+// YouTube tab has been PLAYING for IDLE_TEARDOWN_MS, close it ("parked"); the
+// next play event recreates it through ensureOffscreenDocument() and the
+// existing respawn path re-pushes per-tab config.
+//
+// Survives service-worker restarts without alarms (no new permission): the
+// state lives in chrome.storage.session ({playing, idleSince, parked}), and the
+// check runs on every event this worker already receives, including the
+// offscreen document's once-a-minute pm-mem sample, which wakes a sleeping
+// worker. Paused-but-open tabs do not count as playing. A restored "playing"
+// entry only counts while that tab's content port is connected, so a tab that
+// navigated away while the worker was down cannot hold the document open.
+var IDLE_TEARDOWN_MS = (globalThis.PMLifecycle && globalThis.PMLifecycle.IDLE_TEARDOWN_MS) || 600000;
+var SW_START_GRACE_MS = 30000; // let content scripts reconnect and re-report play state before judging
+var swStartWall = Date.now();
+var idleState = { idleSince: null, parked: false };
+var wakeStartWall = null; // set when a play event recreates the document; cleared on warm-ready
+var idleBusy = false;
+
+function persistIdle() {
+  try {
+    var playing = {};
+    playStateByTabId.forEach(function (ps, tabId) { if (ps.playing) playing[tabId] = true; });
+    chrome.storage.session.set({ pm_idle: { playing: playing, idleSince: idleState.idleSince, parked: idleState.parked } }).catch(function () {});
+  } catch (e) {}
+}
+
+var idleLoaded = (function () {
+  try {
+    return chrome.storage.session.get(['pm_idle']).then(function (items) {
+      var st = items && items.pm_idle;
+      if (!st) return;
+      idleState.idleSince = typeof st.idleSince === 'number' ? st.idleSince : null;
+      idleState.parked = st.parked === true;
+      Object.keys(st.playing || {}).forEach(function (k) {
+        var id = Number(k);
+        if (!playStateByTabId.has(id)) playStateByTabId.set(id, { playing: true, restored: true });
+      });
+    }).catch(function () {});
+  } catch (e) {
+    return Promise.resolve();
+  }
+})();
+
+function anyTabPlaying() {
+  var any = false;
+  playStateByTabId.forEach(function (ps, tabId) {
+    if (ps.playing === true && portsByTabId.has(tabId)) any = true;
+  });
+  return any;
+}
+
+async function idleCheck() {
+  await idleLoaded;
+  if (idleBusy || autoPausedSlow || !globalThis.PMLifecycle) return;
+  var now = Date.now();
+  var playing = {};
+  var awaitingReconnect = false;
+  playStateByTabId.forEach(function (ps, tabId) {
+    if (ps.playing !== true) return;
+    if (portsByTabId.has(tabId)) playing[tabId] = true;
+    else if (ps.restored) awaitingReconnect = true;
+  });
+  if (awaitingReconnect && now - swStartWall < SW_START_GRACE_MS) return;
+  var r = globalThis.PMLifecycle.idleStep({ playing: playing, idleSince: idleState.idleSince }, now, IDLE_TEARDOWN_MS);
+  if (r.idleSince !== idleState.idleSince) {
+    idleState.idleSince = r.idleSince;
+    persistIdle();
+  }
+  if (!r.teardown || idleState.parked) return;
+  idleBusy = true;
+  try {
+    idleState.parked = true; // set first: nothing may recreate the document while we close it
+    persistIdle();
+    var snap = null;
+    try { snap = await chrome.runtime.sendMessage({ type: 'pm-prepare-teardown' }); } catch (e) {}
+    var why = 'PM-IDLE-TEARDOWN no tab playing for ' + Math.round((now - r.idleSince) / 1000) + 's';
+    console.log('[PM-BG] [' + why + ']', JSON.stringify(snap || null));
+    persistMemSample(Object.assign({}, snap || { t: now }, { k: 'idle-teardown', why: why }));
+    await chrome.offscreen.closeDocument().catch(function () {});
+  } finally {
+    idleBusy = false;
+  }
+}
+
+// A tab reported (or resumed) playing. Un-park and recreate the document.
+function idleWake() {
+  idleLoaded.then(function () {
+    idleState.idleSince = null;
+    if (!idleState.parked) { persistIdle(); return; }
+    idleState.parked = false;
+    wakeStartWall = Date.now();
+    persistIdle();
+    console.log('[PM-BG] [PM-IDLE-WAKE] play event, recreating offscreen document');
+    ensureOffscreenDocument();
+  });
+}
+
+// Offscreen reports its model warm: that is the end of a cold start.
+function noteWarmReady(msg) {
+  if (wakeStartWall == null) return;
+  var ms = Date.now() - wakeStartWall;
+  wakeStartWall = null;
+  var why = 'PM-IDLE-WAKE cold start ' + ms + 'ms (worker ' + msg.workerSpawnMs + 'ms, model ' + msg.modelLoadMs + 'ms)';
+  console.log('[PM-BG] [' + why + ']');
+  persistMemSample({ t: Date.now(), k: 'idle-wake', why: why });
+}
+
 async function ensureOffscreenDocument() {
   await autoPauseLoaded;
+  await idleLoaded;
   if (autoPausedSlow) return;
+  if (idleState.parked) return; // idle teardown (0.1.59): only idleWake() un-parks
   var existing = await chrome.runtime.getContexts({ contextTypes: ['OFFSCREEN_DOCUMENT'] });
   if (existing.length > 0) return;
   if (creatingOffscreen) {
@@ -235,6 +348,9 @@ async function ensureOffscreenDocument() {
       // until the user happened to navigate. Re-push pm_model to every
       // currently-connected tab right away instead.
       resendModelConfigToAllTabs();
+      // The new document knows no served tab; tell it again (0.1.59).
+      currentServedTabId = undefined;
+      recomputeActiveTab();
     })
     .catch(function (e) {
       // Most common benign case: a create raced with an already-open doc.
@@ -533,7 +649,18 @@ chrome.runtime.onConnect.addListener(function (port) {
 
   port.onMessage.addListener(function (msg) {
     if (!msg || !msg.type) return;
-    if (msg.videoId) videoIdByTabId.set(tabId, msg.videoId); // see resendModelConfigToAllTabs()
+    // 0.1.59: channel/home pages (videoId is a pathname) and Shorts never open
+    // an offscreen session. A reset still goes through so the tab's previous
+    // video is released, but nothing else about such a page reaches offscreen.
+    var sessionVideo = globalThis.PMLifecycle ? globalThis.PMLifecycle.isSessionVideoId(msg.videoId) : true;
+    if (msg.videoId && sessionVideo) videoIdByTabId.set(tabId, msg.videoId); // see resendModelConfigToAllTabs()
+    if (msg.videoId && !sessionVideo && msg.type !== 'playstate') {
+      videoIdByTabId.delete(tabId);
+      if (msg.type === 'reset') {
+        chrome.runtime.sendMessage({ type: 'pm-reset', tabId: tabId, videoId: msg.videoId }).catch(function () {});
+      }
+      return;
+    }
     if (msg.type === 'reset') {
       chrome.runtime.sendMessage({ type: 'pm-reset', tabId: tabId, videoId: msg.videoId }).catch(function () {});
       ensureOffscreenDocument().then(function () {
@@ -589,7 +716,12 @@ chrome.runtime.onConnect.addListener(function (port) {
       // and visibility change. Feeds active_tab.choose so a video playing in a
       // background tab (focus elsewhere) can still be the served one. No
       // offscreen round-trip: this only informs the local arbitration.
-      playStateByTabId.set(tabId, { playing: msg.playing === true });
+      // A null videoId (content.js has not bound a session yet) is allowed; a
+      // channel/home/Shorts pathname is not: it must not keep the document up.
+      var playsHere = msg.playing === true && (msg.videoId == null || sessionVideo);
+      playStateByTabId.set(tabId, { playing: playsHere });
+      persistIdle();
+      if (playsHere) idleWake();
       recomputeActiveTab();
     } else if (msg.type === 'disable' || msg.type === 'enable') {
       // pm_enabled=false (0.1.13): idle the session's transcription CPU
@@ -609,6 +741,8 @@ chrome.runtime.onConnect.addListener(function (port) {
     // otherwise delete the NEWER, live port's map entry out from under it.
     if (portsByTabId.get(tabId) === port) {
       portsByTabId.delete(tabId);
+      playStateByTabId.delete(tabId); // page unloaded; a reconnect re-reports (content.js connectPort)
+      persistIdle();
       // The served tab may have just gone away (navigation, close). Recompute
       // so the pipeline hands off to a survivor rather than serving nothing.
       recomputeActiveTab();
@@ -628,6 +762,7 @@ chrome.tabs.onRemoved.addListener(function (tabId) {
   // 0.1.49: forget this tab's active-tab-follow bookkeeping and recompute, so
   // closing the served tab re-binds the pipeline to whatever remains.
   playStateByTabId.delete(tabId);
+  persistIdle();
   activatedWallByTabId.delete(tabId);
   activeTabByWindow.forEach(function (t, w) { if (t === tabId) activeTabByWindow.delete(w); });
   recomputeActiveTab();
@@ -886,6 +1021,9 @@ chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
     console.log('[PM-BG] resync-result relayed:', (msg.words || []).length, 'words,', (msg.coveredIntervals || []).length, 'covered intervals');
   } else if (msg.type === 'pm-mem') {
     if (msg.sample && globalThis.PMMemlog) persistMemSample(msg.sample);
+    idleCheck(); // the once-a-minute sample is what wakes a sleeping worker to run this check
+  } else if (msg.type === 'pm-warm-ready') {
+    noteWarmReady(msg);
   } else if (msg.type === 'pm-log') {
     console.log('[PM-OFFSCREEN]', msg.text);
   }

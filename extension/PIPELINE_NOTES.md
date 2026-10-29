@@ -3695,3 +3695,46 @@ on the offscreen document and keep working.
 `max(1, floor(cores/2))` and never above the configured 1. More than 1 would
 also need cross-origin isolation (SharedArrayBuffer), which the manifest does
 not declare. Logged once as `[PM-THREADS]` in the memlog events.
+
+## 0.1.59: idle teardown, per-video state release, log spam
+
+Field data (4 days, PM-MEM): Whisper WASM flat at 1223.5MB (peak 1328.1MB),
+no leak there, but the offscreen document lived the whole time, so ~1.4GB was
+held around the clock; its JS heap grew 45 -> 80MB with `ses=10 runs=20
+runMB=70` retained.
+
+**Why sessions were retained.** `dropSession` (the only `sessions.delete`)
+was reached only from `pm-reset` and `pm-tab-closed`. A session of a tab that
+stayed open (paused, backgrounded) or that left YouTube without closing kept
+its two runs, `allWords`, `emittedKeys` and coverage forever. Late messages
+for a left video also re-created sessions through `getOrCreateSession`.
+
+**Fix (offscreen).** `sweepSessions` (every 60s) frees sessions untouched for
+10 min (`s.lastTouchWall`), and caps sessions of tabs not being served at 2
+(`shared/lifecycle.js` `selectEvictions`; never one mid-window).
+`currentVideoByTab` ignores messages for a video the tab has left. A segment
+that creates a session mid-stream sends `pm-request-run-rebuild` (rate limited
+15s) so capture.js replays the init segment instead of waiting for the 15s
+stall watchdog. Logged as `[PM-SESSION-GC]`.
+
+**Idle teardown (service worker).** No tab PLAYING for 10 min
+(`IDLE_TEARDOWN_MS`) -> `chrome.offscreen.closeDocument()`. No alarms
+permission: state is `{playing, idleSince, parked}` in `chrome.storage.session`
+(`pm_idle`), checked on every event the worker gets, including the offscreen
+document's once-a-minute `pm-mem`, which wakes a sleeping worker. While
+`parked`, `ensureOffscreenDocument()` is a no-op; only a play event
+(`idleWake`) un-parks it and creates the document through the normal path,
+which re-pushes `pm-config` and the served tab. A restored "playing" entry
+counts only while that tab's port is connected (30s reconnect grace). Events
+`idle-teardown` (with the final memory sample) and `idle-wake` (cold start ms,
+create -> worker model warm) go into `pm_memlog` events.
+
+**Non-video pages.** `PMLifecycle.isSessionVideoId`: ids starting with "/"
+(channel, home, Shorts) open no session and send nothing to offscreen except
+the `pm-reset` that releases the previous video; they do not count as playing.
+
+**Log spam.** `PM-NO-WINDOW` goes through `PMLifecycle.diagGate`: on a changed
+reason (5s flap floor), otherwise once per 10 min per session.
+
+Tests: `test/lifecycle_test.js`, `test/offscreen_gc_test.js` (real bundle in a
+vm), `test/background_idle_test.js` (real background.js in a vm).
