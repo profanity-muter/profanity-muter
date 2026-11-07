@@ -1230,6 +1230,52 @@ const devlogFixture = {
   }
 }
 
+// ---- 0.1.61: "Paused?" feedback nudge ----
+{
+  const DAY = 24 * 60 * 60 * 1000;
+  const nudge = () => ({
+    hidden: document.getElementById('pm-paused-nudge').classList.contains('pm-hidden'),
+    text: document.getElementById('pm-paused-go').textContent.trim()
+  });
+  {
+    const { page } = await open(browser, { pm_ackNotPerfect: ACK }, { pm_audioOffSince: Date.now() - 3 * DAY });
+    check('paused: hidden under 7 days', (await page.evaluate(nudge)).hidden === true);
+    await page.close();
+  }
+  {
+    const { page } = await open(browser, { pm_ackNotPerfect: ACK }, {});
+    check('paused: hidden when audio never off', (await page.evaluate(nudge)).hidden === true);
+    await page.close();
+  }
+  {
+    const { page, errors } = await open(browser, { pm_ackNotPerfect: ACK }, { pm_audioOffSince: Date.now() - 8 * DAY });
+    const n = await page.evaluate(nudge);
+    check('paused: shown after 7 days', n.hidden === false);
+    check('paused: copy', n.text === 'Paused for a while? Tell us why in one tap.', n.text);
+    const snooze = await page.evaluate(() => window.__pmLocal.pm_feedbackSnooze);
+    check('paused: showing snoozes 30 days', snooze > Date.now() + 29 * DAY, snooze);
+    await page.click('#pm-paused-go');
+    await page.waitForTimeout(50);
+    const tabs = await page.evaluate(() => window.__pmTabs);
+    check('paused: click opens feedback page with from+v only',
+      tabs.length === 1 && /^https:\/\/profanity-muter\.github\.io\/feedback\/\?from=paused&v=[\d.]+$/.test(tabs[0]), tabs);
+    check('paused: click hides it', (await page.evaluate(nudge)).hidden === true);
+    check('paused: no page errors', errors.length === 0, errors);
+    await page.close();
+  }
+  {
+    const { page } = await open(browser, { pm_ackNotPerfect: ACK }, { pm_audioOffSince: Date.now() - 8 * DAY });
+    await page.click('#pm-paused-dismiss');
+    check('paused: dismiss hides it', (await page.evaluate(nudge)).hidden === true);
+    await page.close();
+  }
+  {
+    const { page } = await open(browser, { pm_ackNotPerfect: ACK }, { pm_audioOffSince: Date.now() - 40 * DAY, pm_feedbackSnooze: Date.now() + 10 * DAY });
+    check('paused: snoozed stays hidden', (await page.evaluate(nudge)).hidden === true);
+    await page.close();
+  }
+}
+
 await browser.close();
 console.log(`popup_check: ${pass}/${pass + fail} passed`);
 process.exit(fail ? 1 : 0);

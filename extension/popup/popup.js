@@ -921,6 +921,35 @@
   slowRetryEl.addEventListener("click", slowTryAgain);
   slowRemoveEl.addEventListener("click", slowRemove);
 
+  // ==== "Paused?" feedback nudge (0.1.61) ================================
+  // Due when audio filtering has been off 7+ days (pm_audioOffSince, stamped
+  // by background.js) and not snoozed. Showing it snoozes it 30 days, so it
+  // appears at most once per 30 days; tap or dismiss keep that snooze.
+  var pausedEl = $("pm-paused-nudge");
+  function feedbackApi() { return window.PMFeedback || null; }
+  function hidePausedNudge() {
+    pausedEl.classList.add("pm-hidden");
+    pausedEl.setAttribute("aria-hidden", "true");
+  }
+  function loadPausedNudge() {
+    var F = feedbackApi();
+    if (!F || !hasLocalStorage) return;
+    chrome.storage.local.get(["pm_audioOffSince", "pm_feedbackSnooze"], function (items) {
+      if (chrome.runtime && chrome.runtime.lastError) return;
+      var now = Date.now();
+      if (!F.nudgeDue(items && items.pm_audioOffSince, items && items.pm_feedbackSnooze, now)) return;
+      pausedEl.classList.remove("pm-hidden");
+      pausedEl.setAttribute("aria-hidden", "false");
+      chrome.storage.local.set({ pm_feedbackSnooze: now + F.SNOOZE_MS });
+    });
+  }
+  $("pm-paused-go").addEventListener("click", function () {
+    var F = feedbackApi();
+    hidePausedNudge();
+    try { chrome.tabs.create({ url: F.url("paused", chrome.runtime.getManifest().version) }); } catch (e) {}
+  });
+  $("pm-paused-dismiss").addEventListener("click", hidePausedNudge);
+
   function copyDevlog() {
     if (!hasLocalStorage) { setStatus("Storage unavailable"); return; }
     chrome.storage.local.get(["pm_devlog", "pm_memlog", "pm_paceHistory", "pm_autoPausedSlow"], function (items) {
@@ -1041,5 +1070,6 @@
   loadMoments();
   loadHealth();
   loadSlowNotice();
+  loadPausedNudge();
   showView("home");
 })();

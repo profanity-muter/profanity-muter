@@ -54,6 +54,14 @@
         </div>
       </section>
 
+      <!-- "Paused?" feedback nudge (0.1.61): audio filtering has been switched
+           off for 7+ days. One tap opens the static feedback page; dismissing
+           or tapping snoozes it 30 days (shared/feedback.js). -->
+      <section class="pm-paused-nudge pm-hidden" id="pm-paused-nudge" aria-hidden="true">
+        <button id="pm-paused-go" class="pm-link-button" type="button">Paused for a while? Tell us why in one tap.</button>
+        <button id="pm-paused-dismiss" class="pm-link-button" type="button" aria-label="Dismiss">Dismiss</button>
+      </section>
+
       <!-- Review nudge strip (Chrome Web Store policy rules in
            shared/moments.js). 0.1.56: this used to own a global "1" on the
            toolbar badge as well. The badge is now a live per-tab status
@@ -355,6 +363,7 @@
   <script src="../shared/lock.js"></script>
   <script src="../shared/moments.js"></script>
   <script src="../shared/pace.js"></script>
+  <script src="../shared/feedback.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

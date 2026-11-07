@@ -565,6 +565,17 @@ body {
   background: rgba(29, 47, 84, 0.06);
   border-bottom: 1px solid rgba(29, 47, 84, 0.14);
 }
+.pm-paused-nudge {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 14px;
+  font-size: 13px;
+  background: rgba(29, 47, 84, 0.06);
+  border-bottom: 1px solid rgba(29, 47, 84, 0.14);
+}
+.pm-paused-nudge .pm-link-button { text-align: left; }
 .pm-review-text { margin: 0; font-size: 13px; line-height: 1.45; }
 .pm-review-actions { display: flex; align-items: center; gap: 12px; }
 

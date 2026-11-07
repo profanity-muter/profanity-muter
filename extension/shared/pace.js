@@ -232,7 +232,7 @@
   // WHY it exists, in plain words: fully private, runs only on the device, and
   // the price is the computer's own processing power.
   var WHY =
-    "Profanity Muter is fully private: it runs only on your device and never sends anything to the cloud. " +
+    "Profanity Muter is fully private: it runs only on your device and never sends anything you watch or hear anywhere. " +
     "That means it uses your computer's own processing power to keep up with the video.";
   var COPY = {
     pill: "Your computer is busy, so muting is falling behind. Closing other apps or tabs helps.",
@@ -241,12 +241,12 @@
     pausedPill: "Audio filtering is paused on this computer. Captions are still censored.",
     noticeTitle: "Audio filtering is paused on this computer",
     noticeBody:
-      "Profanity Muter is fully private: it runs only on your device and never sends anything to the cloud. " +
+      "Profanity Muter is fully private: it runs only on your device and never sends anything you watch or hear anywhere. " +
       "That means it uses your computer's own processing power, and this computer doesn't have enough free right now. " +
       "Audio filtering is paused; captions are still censored. Closing other programs may help.",
     tryAgain: "Try again",
     remove: "Remove extension",
-    onboarding: "Profanity Muter is fully private: it runs only on your device and never sends anything to the cloud. That means it uses your computer's own processing power, and older or very busy computers may struggle to keep up."
+    onboarding: "Profanity Muter is fully private: it runs only on your device and never sends anything you watch or hear anywhere. That means it uses your computer's own processing power, and older or very busy computers may struggle to keep up."
   };
   function noticeModel(flag) {
     if (!flag) return null;

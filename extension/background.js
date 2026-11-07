@@ -16,7 +16,7 @@
 // what "eligible" means (0.1.33). shared/badge.js joined the list in 0.1.56,
 // when the badge became a live mirror of the on-player pill.
 try {
-  importScripts('shared/moments.js', 'shared/badge.js', 'shared/pill.js', 'shared/active_tab.js', 'shared/memlog.js', 'shared/pace.js', 'shared/lifecycle.js');
+  importScripts('shared/moments.js', 'shared/badge.js', 'shared/pill.js', 'shared/active_tab.js', 'shared/memlog.js', 'shared/pace.js', 'shared/lifecycle.js', 'shared/feedback.js');
 } catch (e) {
   console.warn('[PM-BG] could not load a shared module:', String(e));
 }
@@ -436,6 +436,43 @@ chrome.runtime.onInstalled.addListener(function (details) {
 });
 ensureOffscreenDocument();
 chrome.runtime.onStartup.addListener(ensureOffscreenDocument);
+
+// ---- feedback page (0.1.61) --------------------------------------------------
+// Uninstall survey: Chrome opens this URL after removal. setUninstallURL needs
+// no permission. The address carries only the version and where it came from.
+// Re-set on every worker start (cheap, idempotent) so it survives updates.
+function setUninstallUrl() {
+  try {
+    chrome.runtime.setUninstallURL(globalThis.PMFeedback.url('uninstall', chrome.runtime.getManifest().version));
+  } catch (e) {
+    console.warn('[PM-BG] setUninstallURL failed:', String(e));
+  }
+}
+setUninstallUrl();
+
+// "Paused?" nudge input: stamp when audio filtering went off (pm_enabled or
+// pm_muteAudio false), clear when it is back on. The slow-computer auto-pause
+// is a different flag and is not counted. Reconciled on every worker start
+// and on any change to either setting (including sync from another device).
+function reconcileAudioOffSince() {
+  try {
+    chrome.storage.sync.get(['pm_enabled', 'pm_muteAudio'], function (sync) {
+      if (chrome.runtime.lastError) return;
+      chrome.storage.local.get(['pm_audioOffSince'], function (loc) {
+        if (chrome.runtime.lastError) return;
+        var F = globalThis.PMFeedback;
+        var patch = F.offSincePatch(loc && loc.pm_audioOffSince, F.audioOff(sync), Date.now());
+        if (!patch) return;
+        if (patch.remove) chrome.storage.local.remove('pm_audioOffSince');
+        else chrome.storage.local.set({ pm_audioOffSince: patch.set });
+      });
+    });
+  } catch (e) {}
+}
+reconcileAudioOffSince();
+chrome.storage.onChanged.addListener(function (changes, area) {
+  if (area === 'sync' && (changes.pm_enabled || changes.pm_muteAudio)) reconcileAudioOffSince();
+});
 
 
 // ---- toolbar badge + milestone (0.1.33, rewritten 0.1.56) ------------------

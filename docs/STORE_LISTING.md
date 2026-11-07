@@ -48,7 +48,9 @@ a tight window around each one instead of a whole sentence.
 
 PRIVATE BY DESIGN
 - Everything runs locally. Your viewing never leaves your device.
-- No account, no tracking, no analytics, no ads.
+- No account, no tracking or analytics inside the extension, no ads.
+- If you uninstall, an optional one-tap feedback page opens. Its address
+  holds only the version number.
 - The speech model is bundled in the extension. It works with your
   network offline.
 - Open source.
@@ -103,7 +105,12 @@ user's own device, in real time.
 
 ## Data usage disclosures (Privacy tab)
 - Does the item collect or use user data? NO data is collected,
-  transmitted, or sold. All processing is local to the device.
+  transmitted, or sold by the extension. All processing is local to the
+  device. (Uninstalling, or tapping the popup's "Paused?" link, opens our
+  static feedback page; the address holds only version + source. Answers
+  are optional; see the privacy policy.)
+- Privacy policy URL (set in the Privacy tab):
+  https://profanity-muter.github.io/privacy/
 - Personally identifiable information: No
 - Health / financial / authentication / personal communications /
   location / web history / user activity: No to all.
