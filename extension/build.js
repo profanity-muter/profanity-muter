@@ -11,6 +11,40 @@ const fs = require('fs');
 const path = require('path');
 
 const ROOT = __dirname;
+
+// 0.1.60: CWS rejected 0.1.59 (Blue Argon, remotely hosted code) because the
+// bundle contained transformers.js's default ORT wasm CDN path. Neutralize
+// every library default that could download code or models. Each rule must
+// match at least once or the build fails, so a library upgrade cannot silently
+// reintroduce a remote default. Behavior is unchanged: the worker sets
+// wasmPaths to chrome.runtime.getURL('dist/') and allowRemoteModels=false.
+const NO_REMOTE_RULES = [
+  [/`https:\/\/cdn\.jsdelivr\.net\/npm\/onnxruntime-web@\$\{ONNX_ENV\.versions\.web\}\/dist\/`/g, '""'],
+  [/remoteHost: "https:\/\/huggingface\.co\/"/g, 'remoteHost: ""'],
+  // Doc links inside two error-message strings: keep the text, drop the scheme.
+  [/https:\/\/huggingface\.co\/docs\//g, 'huggingface.co/docs/', 1],
+];
+const noRemotePlugin = {
+  name: 'no-remote-defaults',
+  setup(b) {
+    const hits = NO_REMOTE_RULES.map(() => 0);
+    b.onLoad({ filter: /@huggingface[\\/]transformers[\\/].*\.js$/ }, (args) => {
+      let src = fs.readFileSync(args.path, 'utf8');
+      NO_REMOTE_RULES.forEach(([re, rep], i) => {
+        const n = (src.match(re) || []).length;
+        hits[i] += n;
+        src = src.replace(re, rep);
+      });
+      return { contents: src, loader: 'js' };
+    });
+    b.onEnd(() => {
+      hits.forEach((n, i) => {
+        const want = NO_REMOTE_RULES[i][2] || 1;
+        if (n < want) throw new Error('no-remote rule ' + i + ' matched ' + n + 'x (expected at least ' + want + '); transformers.js changed, update NO_REMOTE_RULES');
+      });
+    });
+  }
+};
 const DIST = path.join(ROOT, 'dist');
 fs.mkdirSync(DIST, { recursive: true });
 
@@ -20,7 +54,9 @@ const buildOffscreen = esbuild.build({
   format: 'iife',
   platform: 'browser',
   target: 'chrome110',
-  outfile: path.join(DIST, 'offscreen.bundle.js')
+  outfile: path.join(DIST, 'offscreen.bundle.js'),
+  minifyWhitespace: true,
+  legalComments: 'none'
 });
 
 // Classic (non-module) worker script - matches `new Worker(url)` without
@@ -32,7 +68,12 @@ const buildWorker = esbuild.build({
   format: 'iife',
   platform: 'browser',
   target: 'chrome110',
-  outfile: path.join(DIST, 'whisper.worker.js')
+  outfile: path.join(DIST, 'whisper.worker.js'),
+  plugins: [noRemotePlugin],
+  // Drops library doc comments (they carry huggingface.co doc links); strings,
+  // identifiers and error messages are untouched.
+  minifyWhitespace: true,
+  legalComments: 'none'
 });
 
 Promise.all([buildOffscreen, buildWorker])

@@ -14,15 +14,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { createRequire } from 'node:module';
+
+const { INCLUDE, scan } = createRequire(import.meta.url)('./remote_scan.js');
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'manifest.json'), 'utf8'));
 const OUT = path.resolve(ROOT, '..', `profanity-muter-${manifest.version}.zip`);
 
-const INCLUDE = [
-  'manifest.json', 'background.js', 'captions.js', 'capture.js', 'content.js',
-  'offscreen.html', 'shared', 'dist', 'models', 'icons', 'popup', 'report', 'onboarding',
-];
 
 for (const entry of INCLUDE) {
   if (!fs.existsSync(path.join(ROOT, entry))) {
@@ -33,6 +32,13 @@ for (const entry of INCLUDE) {
 const modelFiles = fs.readdirSync(path.join(ROOT, 'models'));
 if (!modelFiles.length) {
   console.error('models/ is empty. Run "npm run package" first.');
+  process.exit(1);
+}
+
+const remote = scan();
+if (remote.length) {
+  console.error('refusing to build: remote code/model hosts in package (CWS Blue Argon):');
+  for (const h of remote) console.error(`  ${h.file}: ...${h.snippet}...`);
   process.exit(1);
 }
 
