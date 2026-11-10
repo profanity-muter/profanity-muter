@@ -666,6 +666,31 @@
   reviewLinkEl.addEventListener("click", onReviewClicked);
   reviewLaterEl.addEventListener("click", onReviewLater);
   openYouTubeEl.addEventListener("click", openYouTube);
+
+  // 0.1.62: YouTube tabs opened before install have no content script until
+  // they reload. Querying by url needs only the youtube.com host permission.
+  // Reloading does not move focus, and only happens on the button click.
+  var refreshYtEl = document.getElementById("ob-refresh-yt");
+  var refreshYtIds = [];
+  function setRefreshYt(ids) {
+    refreshYtIds = ids;
+    refreshYtEl.classList.toggle("pm-hidden", !ids.length);
+    refreshYtEl.setAttribute("aria-hidden", ids.length ? "false" : "true");
+    if (!ids.length) return;
+    document.getElementById("ob-refresh-yt-text").textContent = window.PMRefreshNotice.COPY.setupLine;
+    document.getElementById("ob-refresh-yt-go").textContent = window.PMRefreshNotice.COPY.setupButton;
+  }
+  document.getElementById("ob-refresh-yt-go").addEventListener("click", function () {
+    refreshYtIds.forEach(function (id) { try { chrome.tabs.reload(id); } catch (e) {} });
+    setRefreshYt([]);
+    setDoneStatus("Refreshed");
+  });
+  try {
+    chrome.tabs.query({ url: "https://www.youtube.com/*" }, function (tabs) {
+      if (chrome.runtime && chrome.runtime.lastError) return;
+      setRefreshYt(window.PMRefreshNotice.tabIds(tabs));
+    });
+  } catch (e) {}
   shareEl.addEventListener("click", shareWithFriend);
   backEl.addEventListener("click", function () { goTo(step - 1); });
   nextEl.addEventListener("click", function () { goTo(step + 1); });

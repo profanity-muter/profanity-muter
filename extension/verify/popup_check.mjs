@@ -44,13 +44,16 @@ function check(name, cond, extra) {
   else { fail++; console.error('FAIL:', name, extra === undefined ? '' : JSON.stringify(extra)); }
 }
 
-const stub = (initialSync, initialLocal, health) => `
+const stub = (initialSync, initialLocal, health, tabsCfg) => `
   window.__pmSync = ${JSON.stringify(initialSync)};
   window.__pmLocal = ${JSON.stringify(initialLocal || {})};
   // Injected reply for the popup's 'pm-health-query' to the active tab.
   // null means "no content script answered", i.e. not a YouTube tab.
   window.__pmHealth = ${JSON.stringify(health === undefined ? null : health)};
   window.__pmHealthQueries = 0;
+  // 0.1.62: active tab url (undefined = no host access) and open YouTube tabs.
+  window.__pmTabsCfg = ${JSON.stringify(tabsCfg || {})};
+  window.__pmReloads = [];
   window.__pmWrites = [];
   function area(bag, label) {
     return {
@@ -87,7 +90,12 @@ const stub = (initialSync, initialLocal, health) => `
     },
     tabs: {
       create: (opts) => { window.__pmTabs.push(opts.url); },
-      query: (q, cb) => { setTimeout(() => cb([{ id: 7 }]), 0); },
+      query: (q, cb) => {
+        const cfg = window.__pmTabsCfg;
+        const out = q && q.url ? (cfg.ytTabs || []) : [{ id: 7, url: cfg.activeUrl }];
+        setTimeout(() => cb(out), 0);
+      },
+      reload: (id) => { window.__pmReloads.push(id); },
       sendMessage: (tabId, msg, cb) => {
         window.__pmHealthQueries++;
         setTimeout(() => {
@@ -129,12 +137,12 @@ const stub = (initialSync, initialLocal, health) => `
   HTMLAnchorElement.prototype.click = function () { window.__pmMailto = this.href; };
 `;
 
-async function open(browser, sync, local, health) {
+async function open(browser, sync, local, health, tabsCfg) {
   const page = await browser.newPage();
   const errors = [];
   page.on('pageerror', e => errors.push(String(e)));
   page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
-  await page.addInitScript(stub(sync, local, health));
+  await page.addInitScript(stub(sync, local, health, tabsCfg));
   await page.goto(URL);
   await page.waitForTimeout(150);
   return { page, errors };
@@ -1274,6 +1282,75 @@ const devlogFixture = {
     check('paused: snoozed stays hidden', (await page.evaluate(nudge)).hidden === true);
     await page.close();
   }
+}
+
+// ===== 0.1.62: refresh notice for tabs open before install/update =====
+const YT_URL = 'https://www.youtube.com/watch?v=abc';
+const refreshSnap = () => ({
+  hidden: document.getElementById('pm-refresh').classList.contains('pm-hidden'),
+  text: document.getElementById('pm-refresh-text').textContent,
+  button: document.getElementById('pm-refresh-go').textContent
+});
+{
+  // YouTube tab, no content script answered: notice + working button.
+  const { page, errors } = await open(browser, { pm_ackNotPerfect: ACK }, {}, null, { activeUrl: YT_URL });
+  const r = await page.evaluate(refreshSnap);
+  check('refresh: shown on a YouTube tab with no content script', r.hidden === false);
+  check('refresh: copy', r.text === 'Refresh this page to start filtering.' && r.button === 'Refresh page', r);
+  await page.click('#pm-refresh-go');
+  check('refresh: button reloads that tab', JSON.stringify(await page.evaluate(() => window.__pmReloads)) === '[7]');
+  check('refresh: no page errors', errors.length === 0, errors);
+  await page.close();
+}
+{
+  // Orphaned after an update but still answering with an invalid context.
+  const { page } = await open(browser, { pm_ackNotPerfect: ACK }, {}, { contextInvalid: true, status: null, message: '', detail: '' }, { activeUrl: YT_URL });
+  check('refresh: shown when the content script reports an invalid context', (await page.evaluate(refreshSnap)).hidden === false);
+  await page.close();
+}
+{
+  const { page } = await open(browser, { pm_ackNotPerfect: ACK }, {}, null, { activeUrl: 'https://example.com/' });
+  check('refresh: nothing new on a non-YouTube tab', (await page.evaluate(refreshSnap)).hidden === true);
+  await page.close();
+}
+{
+  const { page } = await open(browser, { pm_ackNotPerfect: ACK }, {}, null, {});
+  check('refresh: url undefined falls back to showing nothing', (await page.evaluate(refreshSnap)).hidden === true);
+  await page.close();
+}
+{
+  const { page } = await open(browser, { pm_ackNotPerfect: ACK }, {}, { status: 'ok', reason: null, message: '', detail: '' }, { activeUrl: YT_URL });
+  check('refresh: hidden on a YouTube tab that is working', (await page.evaluate(refreshSnap)).hidden === true);
+  await page.close();
+}
+// Setup page: offer to refresh YouTube tabs that were already open.
+{
+  const OBR = pathToFileURL(path.join(EXT, 'onboarding', 'onboarding.html')).href;
+  const obSnap = () => ({
+    hidden: document.getElementById('ob-refresh-yt').classList.contains('pm-hidden'),
+    text: document.getElementById('ob-refresh-yt-text').textContent,
+    button: document.getElementById('ob-refresh-yt-go').textContent
+  });
+  const openOb = async (cfg) => {
+    const page = await browser.newPage();
+    await page.addInitScript(stub({}, {}, null, cfg));
+    await page.goto(OBR);
+    await page.waitForTimeout(120);
+    return page;
+  };
+  let page = await openOb({ ytTabs: [{ id: 11 }, { id: 12 }] });
+  let o = await page.evaluate(obSnap);
+  check('setup refresh: shown when YouTube tabs are open', o.hidden === false);
+  check('setup refresh: copy', o.text === 'You have YouTube open already. Refresh it so Profanity Muter can start.' && o.button === 'Refresh YouTube tabs', o);
+  await page.evaluate(() => { document.getElementById('ob-refresh-yt').scrollIntoView(); });
+  await page.evaluate(() => document.getElementById('ob-refresh-yt-go').click());
+  check('setup refresh: reloads every open YouTube tab', JSON.stringify(await page.evaluate(() => window.__pmReloads)) === '[11,12]');
+  check('setup refresh: opens no tab (no focus change)', (await page.evaluate(() => window.__pmTabs)).length === 0);
+  check('setup refresh: hides after use', (await page.evaluate(obSnap)).hidden === true);
+  await page.close();
+  page = await openOb({ ytTabs: [] });
+  check('setup refresh: nothing shown when no YouTube tab is open', (await page.evaluate(obSnap)).hidden === true);
+  await page.close();
 }
 
 await browser.close();

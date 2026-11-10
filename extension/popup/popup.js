@@ -858,6 +858,23 @@
     healthMessageEl.textContent = health.message;
     healthDetailEl.textContent = health.detail || "";
   }
+  // 0.1.62: tab.url is readable for youtube.com tabs through the host
+  // permission (no "tabs" permission needed); chrome.tabs.reload needs none either.
+  var refreshEl = $("pm-refresh");
+  var refreshTabId = null;
+  function renderRefresh(tab, show) {
+    refreshTabId = show ? tab.id : null;
+    refreshEl.classList.toggle("pm-hidden", !show);
+    refreshEl.setAttribute("aria-hidden", show ? "false" : "true");
+    if (!show) return;
+    $("pm-refresh-text").textContent = window.PMRefreshNotice.COPY.popupNotice;
+    $("pm-refresh-go").textContent = window.PMRefreshNotice.COPY.popupButton;
+  }
+  $("pm-refresh-go").addEventListener("click", function () {
+    if (refreshTabId == null) return;
+    try { chrome.tabs.reload(refreshTabId); } catch (e) {}
+    window.close();
+  });
   function loadHealth() {
     if (typeof chrome === "undefined" || !chrome.tabs || typeof chrome.tabs.query !== "function" || typeof chrome.tabs.sendMessage !== "function") return;
     try {
@@ -867,7 +884,10 @@
         if (!tab || tab.id == null) return;
         try {
           chrome.tabs.sendMessage(tab.id, { type: "pm-health-query" }, function (resp) {
-            if (chrome.runtime && chrome.runtime.lastError) return;
+            var hadError = !!(chrome.runtime && chrome.runtime.lastError);
+            var refresh = window.PMRefreshNotice.needsRefresh(tab, resp, hadError);
+            renderRefresh(tab, refresh);
+            if (hadError || refresh) return;
             renderHealth(resp);
           });
         } catch (e) {}

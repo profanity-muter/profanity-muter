@@ -42,6 +42,14 @@
         <button id="pm-health-report" class="pm-link-button" type="button">Report a problem</button>
       </section>
 
+      <!-- Refresh notice (0.1.62): the active YouTube tab was open before the
+           extension was installed or updated, so nothing is filtering it yet.
+           Copy comes from shared/refresh_notice.js. -->
+      <section class="pm-health pm-hidden" id="pm-refresh" aria-hidden="true" role="alert">
+        <p class="pm-health-title" id="pm-refresh-text"></p>
+        <button id="pm-refresh-go" class="pm-button" type="button"></button>
+      </section>
+
       <!-- Slow-computer notice (0.1.58): audio filtering was auto-paused because
            this computer could not keep up. Copy comes from shared/pace.js so
            the popup, the pill and the tests agree. Captions are unaffected. -->
@@ -364,6 +372,7 @@
   <script src="../shared/moments.js"></script>
   <script src="../shared/pace.js"></script>
   <script src="../shared/feedback.js"></script>
+  <script src="../shared/refresh_notice.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

@@ -508,6 +508,13 @@
         </div>
       </section>
 
+      <!-- 0.1.62: shown only when YouTube tabs were already open, which the
+           extension cannot filter until they are refreshed. -->
+      <div id="ob-refresh-yt" class="ob-refresh-yt pm-hidden" aria-hidden="true">
+        <p id="ob-refresh-yt-text" class="pm-hint"></p>
+        <button id="ob-refresh-yt-go" class="pm-button" type="button"></button>
+      </div>
+
       <div class="ob-done-actions">
         <button id="ob-open-youtube" class="pm-button ob-open-youtube" type="button">Open YouTube&trade;</button>
         <button id="ob-share" class="pm-link-button" type="button">Share with a friend</button>
@@ -530,6 +537,7 @@
   <script src="../shared/wordlist.js"></script>
   <script src="../shared/lock.js"></script>
   <script src="../shared/moments.js"></script>
+  <script src="../shared/refresh_notice.js"></script>
   <script src="onboarding.js"></script>
 </body>
 </html>

@@ -629,6 +629,12 @@ input:focus-visible {
   flex-wrap: wrap;
 }
 
+.ob-refresh-yt {
+  margin-top: 26px;
+  max-width: 46ch;
+}
+.ob-refresh-yt .pm-hint { margin-bottom: 10px; }
+
 .ob-done-hint {
   margin-top: 24px;
   max-width: 46ch;

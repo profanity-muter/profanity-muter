@@ -211,6 +211,13 @@
     }
   }
   loadDebugSettings();
+  // 0.1.62: a word-list edit mid-video re-checks audio that was already
+  // analyzed, from the transcript offscreen already holds (no new audio work).
+  // Needs no timers until an edit happens; see shared/wordsync.js.
+  var wordSync = globalThis.PMWordSync.createScheduler({
+    refresh: function () { return globalThis.PMWordlist.refresh(); },
+    post: function () { if (session) safePortPost({ type: 'resync', videoId: session.videoId }); }
+  });
   try {
     chrome.storage.onChanged.addListener(function (changes, area) {
       if (area !== 'sync') return;
@@ -225,6 +232,7 @@
         // so no re-derivation is needed here either.
         handleCatchupModeChanged(changes.pm_catchupMode.newValue);
       }
+      wordSync.notify(changes, area);
       if (changes.pm_debugOverlay) debugSettings.debugOverlay = !!changes.pm_debugOverlay.newValue;
       if (changes.pm_showStatus) statusSettings.showStatus = changes.pm_showStatus.newValue !== false;
       // A muteAudio toggle-off must release any currently-engaged mute right
@@ -696,15 +704,30 @@
   // for this session (words computed while the port was down must not be
   // silently lost) - this REPLACES local state rather than merging, since it
   // is authoritative.
+  function muteKey(iv) { return iv.start.toFixed(2) + ',' + iv.end.toFixed(2) + ',' + iv.word; }
+
   function handleResync(videoId, words, coveredIntervals) {
     if (!session || session.videoId !== videoId) return;
     TLOG(TAG, 'resync received:', (words || []).length, 'words,', (coveredIntervals || []).length, 'covered intervals');
     var result = applyWordsToIntervals(words || []);
-    session.intervals = result.intervals;
+    // Rebuild with the current word list (so added words apply and removed
+    // ones drop). Intervals older than offscreen's retained transcript are
+    // kept, and the "already counted" marker follows the interval under the
+    // playhead so the rebuild cannot count a mute twice.
+    var vid = getVideo();
+    var rebuilt = globalThis.PMWordSync.rebuild({
+      oldIntervals: session.intervals,
+      words: words || [],
+      applyWords: function () { return result; },
+      playhead: vid ? vid.currentTime : 0,
+      activeKey: session.activeMuteCountKey,
+      keyOf: muteKey
+    });
+    session.intervals = rebuilt.intervals;
+    session.activeMuteCountKey = rebuilt.activeKey;
     session.allWords = [];
     session.allWordKeys = new Set();
     recordAllWords(result.tokens);
-    mergeIntervals();
     session.coveredIntervals = [];
     for (var i = 0; i < (coveredIntervals || []).length; i++) {
       mergeRangeInto(session.coveredIntervals, coveredIntervals[i].start, coveredIntervals[i].end);
@@ -713,23 +736,10 @@
     armSchedule();
   }
 
+  // First-seen category/canonical is kept for a merged interval: it is counted
+  // once by countMute, attributed to its leading word's type (0.1.51).
   function mergeIntervals() {
-    session.intervals.sort(function (a, b) { return a.start - b.start; });
-    var merged = [];
-    for (var i = 0; i < session.intervals.length; i++) {
-      var cur = session.intervals[i];
-      var last = merged[merged.length - 1];
-      if (last && cur.start <= last.end) {
-        last.end = Math.max(last.end, cur.end);
-        if (last.word.indexOf(cur.word) === -1) last.word = last.word + '+' + cur.word;
-        // Keep the first-seen category/canonical for a merged interval - a
-        // merged interval is counted once by countMute, so it is attributed
-        // to its leading word's type (0.1.51).
-      } else {
-        merged.push({ start: cur.start, end: cur.end, word: cur.word, category: cur.category, canonical: cur.canonical });
-      }
-    }
-    session.intervals = merged;
+    session.intervals = globalThis.PMWordSync.merge(session.intervals);
   }
 
   function inMutedInterval(t) {
@@ -3094,7 +3104,7 @@
       // muting was ACTUALLY applied, regardless of which mechanism/reason
       // caused it.
       if (hit && video.muted) {
-        var hitKey = hit.start.toFixed(2) + ',' + hit.end.toFixed(2) + ',' + hit.word;
+        var hitKey = muteKey(hit);
         if (session.activeMuteCountKey !== hitKey) {
           session.activeMuteCountKey = hitKey;
           countMute(hit);
@@ -3318,6 +3328,7 @@
         if (!msg || msg.type !== 'pm-health-query') return undefined;
         var h = currentHealth();
         sendResponse({
+          contextInvalid: !isExtensionContextValid(),
           videoId: session ? session.videoId : null,
           status: h ? h.status : null,
           reason: h ? h.reason : null,

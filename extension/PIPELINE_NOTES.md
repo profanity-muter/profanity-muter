@@ -3738,3 +3738,18 @@ reason (5s flap floor), otherwise once per 10 min per session.
 
 Tests: `test/lifecycle_test.js`, `test/offscreen_gc_test.js` (real bundle in a
 vm), `test/background_idle_test.js` (real background.js in a vm).
+
+## 0.1.62: first-run refresh notice, live word-list resync
+
+- Tabs open before install/update have no live content script. Popup
+  (`shared/refresh_notice.js`, `loadHealth`) shows "Refresh this page to start
+  filtering." when the active tab is youtube.com and the health query fails or
+  reports `contextInvalid`; the setup page offers "Refresh YouTube tabs".
+  Reload only on click. tab.url and tabs.reload need no "tabs" permission
+  (`npm run verify:tabs` proves it in headless Chromium).
+- A word-list edit (`pm_additionalWords`, `pm_strictness`, `pm_allowWords`)
+  triggers one debounced (500ms) `resync` after `PMWordlist.refresh()` resolves
+  (`shared/wordsync.js`). `handleResync` rebuilds intervals from offscreen's
+  `s.allWords` (trailing `ALL_WORDS_CAP` = 2000 words since 0.1.15), keeps
+  intervals older than that window, and moves `activeMuteCountKey` to the
+  interval under the playhead so mutes are not double counted. No idle timers.
