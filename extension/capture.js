@@ -719,6 +719,48 @@
       currentRunSpan.start = Math.min(currentRunSpan.start, gs);
       currentRunSpan.end = Math.max(currentRunSpan.end, ge);
     }
+    // 0.1.63: retained copy of every posted segment (init, synthetic init and media),
+    // newest last, bounded by bytes. A rebuild (stall recovery, idle wake, freed session)
+    // opens a fresh run with the cached init; without the audio that was ALREADY appended
+    // that run is fed nothing until the player appends again, which with a full buffer can
+    // be a minute or more ("run has only been fed audio through nothing yet").
+    // ponytail: 24MB is about 25 minutes of YouTube opus; raise only if long-buffer seeks need more.
+    var REPLAY_MAX_BYTES = 24 * 1024 * 1024;
+    var replayLog = [];
+    var replayBytes = 0;
+    var lastReplayWall = 0;
+    function postSegment(payload) {
+      post(payload);
+      if (!payload.bytes) return;
+      replayLog.push(payload);
+      replayBytes += payload.bytes.byteLength;
+      while (replayBytes > REPLAY_MAX_BYTES && replayLog.length > 1) replayBytes -= replayLog.shift().bytes.byteLength;
+    }
+    function replayRetained(atS) {
+      var vid = currentVideoId();
+      var video = getRealVideo();
+      var now = video && isFinite(video.currentTime) ? video.currentTime : atS;
+      var start = 0;
+      if (typeof atS === 'number') {
+        start = replayLog.length;
+        for (var i = 0; i < replayLog.length; i++) {
+          var ge = replayLog[i].growthAbsEnd;
+          if (typeof ge === 'number' && ge > atS - 1) { start = i; break; }
+        }
+      }
+      var n = 0;
+      for (var j = start; j < replayLog.length; j++) {
+        var p = replayLog[j];
+        if (p.videoId !== vid || (n === 0 && p.isInit)) continue; // the rebuild already posted the init
+        postReplayed(p, now);
+        n++;
+      }
+      return n;
+    }
+    function postReplayed(p, now) {
+      // Posted through post() only: the replayed copy must not be re-retained.
+      post(Object.assign({}, p, { currentTime: now, wallTime: Date.now(), isReplay: true }));
+    }
     var evictionState = { captured: [], recentEvictions: [], queue: [], pending: [] };
     sb.addEventListener('updateend', function () { pumpEvictionQueue(sb, evictionState); });
     // Registered as the "active" audio SourceBuffer for the on-demand
@@ -739,6 +781,15 @@
       // already stalled and producing nothing.
       runBoundaryRateLimited = false;
       runBoundaryTimestamps = [];
+      // 0.1.63: two requests can land back to back (offscreen's mid-stream ask plus the
+      // tab's own wake re-feed); one replay serves both.
+      if (Date.now() - lastReplayWall < 2000) {
+        logLine('[PM-RUN-REBUILD] skipped, a re-feed just ran');
+        return;
+      }
+      lastReplayWall = Date.now();
+      var video0 = getRealVideo();
+      if (typeof atS !== 'number' && video0 && isFinite(video0.currentTime)) atS = video0.currentTime;
       post({
         type: 'segment',
         videoId: currentVideoId(),
@@ -754,6 +805,8 @@
         wallTime: Date.now(),
         isSyntheticRunBoundary: true
       });
+      var replayed = replayRetained(atS);
+      logLine('[PM-RUN-REBUILD] re-fed init + ' + replayed + ' retained segment(s) from ' + (typeof atS === 'number' ? atS.toFixed(2) : 'start'));
       post({
         type: 'run-topology',
         videoId: currentVideoId(),
@@ -914,7 +967,7 @@
           '[PM-RUN-BOUNDARY] NEW-RANGE growth=[' + growth.absStart.toFixed(2) + ',' + growth.absEnd.toFixed(2) +
             ') with no fresh init segment of its own -- opening a new demux run (resending cached init bytes)'
         );
-        post({
+        postSegment({
           type: 'segment',
           videoId: item.vid,
           mime: item.mime,
@@ -975,7 +1028,7 @@
         lastChainLogWall = nowWall;
       }
 
-      post({
+      postSegment({
         type: 'segment',
         videoId: item.vid,
         mime: item.mime,

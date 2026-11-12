@@ -80,14 +80,15 @@ function startSW(br) {
   const sw = { L, sent, ports: {} };
   sw.connectTab = (tabId) => {
     const handlers = { msg: [], disc: [] };
+    const received = [];
     const port = {
       name: "pm-content", sender: { tab: { id: tabId } },
-      postMessage() {},
+      postMessage(m) { received.push(m); },
       onMessage: { addListener: (f) => handlers.msg.push(f) },
       onDisconnect: { addListener: (f) => handlers.disc.push(f) }
     };
     L.connect.forEach((f) => f(port));
-    sw.ports[tabId] = { port, handlers, post: (m) => handlers.msg.forEach((f) => f(m)), drop: () => handlers.disc.forEach((f) => f()) };
+    sw.ports[tabId] = { port, handlers, received, post: (m) => handlers.msg.forEach((f) => f(m)), drop: () => handlers.disc.forEach((f) => f()) };
     return sw.ports[tabId];
   };
   // the offscreen doc's once-a-minute sample, the event that wakes a sleeping worker
@@ -188,6 +189,65 @@ function startSW(br) {
     assert.strictEqual(sw.sent.filter((m) => m.type === "pm-reset").length, 1, "reset still releases the previous video");
     t.post({ type: "reset", videoId: "abcdefghijk" }); await flushAll();
     assert.ok(sw.sent.some((m) => m.type === "pm-config" && m.videoId === "abcdefghijk"));
+  });
+
+  async function parked(tabs) {
+    const br = makeBrowser();
+    const sw = startSW(br); await flushAll();
+    const ts = tabs.map((id) => sw.connectTab(id));
+    await flushAll();
+    ts.forEach((t) => t.post({ type: "playstate", videoId: "aaaaaaaaaaa", playing: false }));
+    await flushAll();
+    br.clock += 11 * MIN; sw.memTick(); await flushAll();
+    assert.strictEqual(br.offscreenOpen, false, "parked");
+    return { br, sw, ts };
+  }
+
+  // 0.1.63: wake is level-triggered. Evidence of an active video wakes the document even
+  // when no play-state CHANGE is ever reported (play carried across an SPA navigation).
+  await test("an audio segment arriving while parked wakes the document and tells every tab it is reborn", async () => {
+    const { br, sw, ts } = await parked([1, 2]);
+    ts[0].post({ type: "reset", videoId: "bbbbbbbbbbb" }); await flushAll();
+    assert.strictEqual(br.offscreenOpen, false, "a reset alone (paused navigation) stays parked");
+    ts[0].post({ type: "segment", videoId: "bbbbbbbbbbb", isInit: false, dataB64: "AA==" }); await flushAll();
+    assert.strictEqual(br.offscreenOpen, true, "segment woke it");
+    ts.forEach((t) => assert.ok(t.received.some((m) => m.type === "offscreen-reborn"), "tab told to re-feed"));
+    br.clock += 1500; sw.warmReady(); await flushAll();
+    assert.ok(sw.memEvents().find((e) => e.k === "idle-wake"), "cold start logged");
+  });
+
+  await test("a repeated playing=true report (heartbeat) wakes a parked document", async () => {
+    const { br, ts } = await parked([1]);
+    ts[0].post({ type: "playstate", videoId: "aaaaaaaaaaa", playing: true }); await flushAll();
+    assert.strictEqual(br.offscreenOpen, true);
+    assert.ok(ts[0].received.some((m) => m.type === "offscreen-reborn"));
+  });
+
+  await test("a segment for a home/channel page does not wake a parked document", async () => {
+    const { br, ts } = await parked([1]);
+    ts[0].post({ type: "segment", videoId: "/", isInit: false, dataB64: "AA==" }); await flushAll();
+    assert.strictEqual(br.offscreenOpen, false);
+  });
+
+  await test("service-worker restart while parked: the next segment still wakes it", async () => {
+    const { br } = await parked([1]);
+    const sw2 = startSW(br); await flushAll();
+    const t = sw2.connectTab(1); await flushAll();
+    assert.strictEqual(br.offscreenOpen, false);
+    t.post({ type: "segment", videoId: "bbbbbbbbbbb", isInit: false, dataB64: "AA==" }); await flushAll();
+    assert.strictEqual(br.offscreenOpen, true);
+  });
+
+  await test("every fresh offscreen document triggers a re-feed request to connected tabs", async () => {
+    const br = makeBrowser();
+    const sw = startSW(br); await flushAll();
+    const t = sw.connectTab(1); await flushAll();
+    assert.ok(t.received.length >= 0);
+    br.offscreenOpen = false; // document died (crash / reclaimed)
+    t.received.length = 0;
+    t.post({ type: "reset", videoId: "bbbbbbbbbbb" }); await flushAll();
+    assert.strictEqual(br.offscreenOpen, true);
+    assert.ok(t.received.some((m) => m.type === "offscreen-reborn"));
   });
 
   console.log(passed + " passed, " + failed + " failed");

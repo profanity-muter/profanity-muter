@@ -116,6 +116,16 @@ const MIN = 60 * 1000;
     assert.strictEqual(req[0].atS, 123);
   });
 
+  await test("a stall restart for a session that was freed (GC / fresh document) asks for a re-feed, rate limited", async () => {
+    const h = await load();
+    h.send({ type: "pm-restart", tabId: 9, videoId: "gcvideo00001" });
+    h.send({ type: "pm-restart", tabId: 9, videoId: "gcvideo00001" });
+    const req = h.state.sent.filter((m) => m.type === "pm-request-run-rebuild");
+    assert.strictEqual(req.length, 1, "one request despite two restarts");
+    assert.strictEqual(req[0].tabId, 9);
+    assert.strictEqual(h.counters().ses, 0, "the restart itself does not create a session");
+  });
+
   await test("repeated PM-NO-WINDOW lines are logged once, then only after 10 minutes", async () => {
     const h = await load();
     open(h, 4, "nowindow0001");

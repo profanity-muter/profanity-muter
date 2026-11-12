@@ -351,6 +351,12 @@ async function ensureOffscreenDocument() {
       // The new document knows no served tab; tell it again (0.1.59).
       currentServedTabId = undefined;
       recomputeActiveTab();
+      // 0.1.63: audio relayed while there was no document (parked, crashed, reclaimed) was
+      // dropped, including the one-time init segment. Tell every tab so capture.js can
+      // re-feed an init segment plus the audio it still holds.
+      portsByTabId.forEach(function (port) {
+        try { port.postMessage({ type: 'offscreen-reborn' }); } catch (e) {}
+      });
     })
     .catch(function (e) {
       // Most common benign case: a create raced with an already-open doc.
@@ -705,6 +711,7 @@ chrome.runtime.onConnect.addListener(function (port) {
       });
     } else if (msg.type === 'restart') {
       console.warn('[PM] [PM-STALL] restart requested by content.js, tabId=' + tabId + ' videoId=' + msg.videoId);
+      idleLoaded.then(function () { if (idleState.parked) idleWake(); }); // a stalled video is an active one (0.1.63)
       ensureOffscreenDocument().then(function () {
         chrome.runtime.sendMessage({ type: 'pm-restart', tabId: tabId, videoId: msg.videoId }).catch(function () {});
       });
@@ -725,6 +732,11 @@ chrome.runtime.onConnect.addListener(function (port) {
         chrome.runtime.sendMessage({ type: 'pm-resync', tabId: tabId, videoId: msg.videoId }).catch(function () {});
       });
     } else if (msg.type === 'segment') {
+      // 0.1.63: wake is level-triggered. A segment from a real video page is proof the
+      // video is active, even when no play-state CHANGE was ever reported (play carried
+      // across an SPA navigation). This segment is dropped by the not-yet-created document;
+      // the tab re-feeds init + retained audio when the new document announces itself.
+      idleLoaded.then(function () { if (idleState.parked) idleWake(); });
       chrome.runtime
         .sendMessage({
           type: 'pm-segment',

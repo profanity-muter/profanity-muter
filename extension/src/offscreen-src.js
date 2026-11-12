@@ -345,6 +345,7 @@ function runSerialized(fn) {
 
 // --- per (tabId, videoId) session -------------------------------------------
 const sessions = new Map(); // key "tabId:videoId" -> session
+const orphanRebuildWall = new Map(); // key -> last re-feed request for a session that no longer exists (0.1.63)
 
 // 0.1.49 ACTIVE-TAB-FOLLOW. The worker and the ~280MB model are shared by
 // every tab, and the worker is a single thread: analyzing two videos at once
@@ -2773,6 +2774,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const s = sessions.get(key);
     if (!s) {
       log('[PM-STALL] restart requested but no session found for', key);
+      // 0.1.63: the session is gone (freed by sweepSessions, or this is a fresh
+      // document after an idle wake) while the tab keeps playing and no new
+      // segment may arrive for a while (buffer already full). Ask the tab to
+      // re-feed init + retained audio; its segments recreate the session.
+      const nowOrph = Date.now();
+      if (nowOrph - (orphanRebuildWall.get(key) || 0) > 15000) {
+        orphanRebuildWall.set(key, nowOrph);
+        if (orphanRebuildWall.size > 20) orphanRebuildWall.delete(orphanRebuildWall.keys().next().value);
+        chrome.runtime.sendMessage({ type: 'pm-request-run-rebuild', tabId: msg.tabId, videoId: msg.videoId, atS: null }).catch(() => {});
+      }
       return;
     }
     if (s.processing) {

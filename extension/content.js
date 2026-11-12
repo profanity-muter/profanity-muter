@@ -286,6 +286,7 @@
     try { resetBadgeState(); } catch (e) {}
     return {
       instanceId: sessionInstanceSeq,
+      createdWall: Date.now(),
       videoId: videoId,
       intervals: [], // merged mute intervals [{start,end,word}]
       coveredIntervals: [], // merged transcribed coverage [{start,end}]
@@ -392,6 +393,10 @@
       settings: devlogSettingsSnapshot()
     });
     safePortPost({ type: 'reset', videoId: videoId });
+    // 0.1.63: the page kind changed under a possibly already-playing video (home preview
+    // to watch page), which produces no play event. Re-report so background can wake.
+    lastReportedPlaying = null;
+    reportPlayState();
     logVideoInfoOnce(videoId);
   }
 
@@ -2631,6 +2636,13 @@
     safePortPost({ type: 'playstate', videoId: session ? session.videoId : null, playing: playing });
   }
 
+  // 0.1.63: level-triggered heartbeat. Play/pause events are edge-triggered and a wake
+  // that missed its edge (service worker restarted, play carried across navigation) would
+  // otherwise never be retried while the video keeps playing.
+  setInterval(function () {
+    if (lastReportedPlaying === true) { lastReportedPlaying = null; reportPlayState(); }
+  }, 10000);
+
   // pm_enabled=false must turn the ENTIRE extension off, not just stop
   // future muting decisions (0.1.13). Called synchronously from the
   // storage.onChanged handler, same pattern as handleCatchupModeChanged.
@@ -3393,6 +3405,18 @@
           costMs: msg.costMs,
           actualCostMs: msg.actualCostMs
         });
+      } else if (msg.type === 'offscreen-reborn') {
+        // 0.1.63: a fresh offscreen document knows nothing about this tab (idle wake,
+        // crash). Whatever was relayed before it existed was dropped, init segment
+        // included. Ask capture.js to re-feed init + the audio it still holds.
+        var rv = getVideo();
+        if (session && rv && !pmAudioPaused) {
+          TLOG(TAG, '[PM-RUN-REBUILD] offscreen document was recreated - re-feeding audio from ' + rv.currentTime.toFixed(2));
+          devlog('logRunTopology', { event: 'rebuild-requested', reason: 'offscreen-reborn', atS: rv.currentTime });
+          try {
+            window.postMessage({ __pmToCapture: 'PM_CONTENT', type: 'force-run-boundary', atS: rv.currentTime }, location.origin);
+          } catch (e) {}
+        }
       } else if (msg.type === 'request-run-rebuild') {
         // 0.1.41: offscreen found that no run can decode the playhead. Only
         // capture.js (MAIN world) holds the cached init bytes needed to
@@ -3612,6 +3636,10 @@
     }
 
     if (data.type === 'reset') {
+      // 0.1.63: capture.js's explicit reset trails the segment-driven "missed reset" by up
+      // to a second on an SPA navigation. A second reset for the same video would wipe the
+      // offscreen session that the wake re-feed just filled, costing a stall-recovery cycle.
+      if (session && session.videoId === data.videoId && session.audioSegments > 0 && Date.now() - session.createdWall < 3000) return;
       resetSession(data.videoId);
       return;
     }
