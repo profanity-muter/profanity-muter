@@ -74,6 +74,11 @@
   // that never load that one.
   var STATUS_UNHEALTHY = "unhealthy";
 
+  // 0.1.64: hover text for a YouTube tab that has no working content script
+  // (open before install, or orphaned by an update). Nothing filters there
+  // until the page is reloaded, and until now the toolbar said nothing.
+  var TITLE_REFRESH = "Profanity Muter: refresh this page to start filtering";
+
   // The pill's presented states that are documented LIMITS rather than
   // states of our filter. See shared/pill.js present(): "shorts" and "live"
   // both come with their own calm on-player notice, and a permanent toolbar
@@ -118,6 +123,13 @@
   // badge since 0.1.33. Nothing added in 0.1.56 may displace it.
   function badgeState(state) {
     state = state || {};
+
+    // 0.1.64: no content script in this tab at all. First, ahead of even the
+    // slow-computer pause: captions are not masked here either, and a
+    // reload is the only thing that fixes it.
+    if (state.needsRefresh === true) {
+      return { text: TEXT_HEALTH, color: COLOR_HEALTH, iconSet: ICON_COLOR, title: TITLE_REFRESH };
+    }
 
     // 0.1.58: audio filtering auto-paused on this computer (chronically too
     // slow). Grey and silent, on every tab: the extension is not listening,
@@ -177,6 +189,7 @@
     COLOR_HEALTH: COLOR_HEALTH,
     COLOR_WORKING: COLOR_WORKING,
     COLOR_PROTECTED: COLOR_PROTECTED,
+    TITLE_REFRESH: TITLE_REFRESH,
     LIMIT_STATES: LIMIT_STATES,
     countText: countText,
     badgeState: badgeState

@@ -300,6 +300,15 @@ test("audio auto-paused: grey and silent on every tab, outranks health", () => {
   assert.strictEqual(B.badgeState({ isWatchPage: true, enabled: true, presented: "audio-paused" }).iconSet, B.ICON_OFF);
 });
 
+test("needs refresh: red ! with a hover title, outranks everything", () => {
+  const r = B.badgeState({ needsRefresh: true, audioPaused: true, isWatchPage: false, enabled: true });
+  assert.strictEqual(r.text, B.TEXT_HEALTH);
+  assert.strictEqual(r.color, B.COLOR_HEALTH);
+  assert.strictEqual(r.iconSet, B.ICON_COLOR);
+  assert.strictEqual(r.title, B.TITLE_REFRESH);
+  assert.strictEqual(B.badgeState({ needsRefresh: false, isWatchPage: true, enabled: true, presented: "protected" }).title, undefined);
+});
+
 // ---- summary -------------------------------------------------------------
 
 console.log("badge_test.js: " + passed + "/" + (passed + failed) + " passed");

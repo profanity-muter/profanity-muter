@@ -16,7 +16,7 @@
 // what "eligible" means (0.1.33). shared/badge.js joined the list in 0.1.56,
 // when the badge became a live mirror of the on-player pill.
 try {
-  importScripts('shared/moments.js', 'shared/badge.js', 'shared/pill.js', 'shared/active_tab.js', 'shared/memlog.js', 'shared/pace.js', 'shared/lifecycle.js', 'shared/feedback.js');
+  importScripts('shared/moments.js', 'shared/badge.js', 'shared/pill.js', 'shared/active_tab.js', 'shared/memlog.js', 'shared/pace.js', 'shared/lifecycle.js', 'shared/feedback.js', 'shared/refresh_notice.js');
 } catch (e) {
   console.warn('[PM-BG] could not load a shared module:', String(e));
 }
@@ -527,6 +527,7 @@ function applyTabBadge(tabId) {
   var known = badgeStateByTabId.get(tabId) || {};
   var decision = api.badgeState({
     audioPaused: autoPausedSlow,
+    needsRefresh: needsRefreshTabs.has(tabId),
     healthStatus: unhealthyTabs.has(tabId) ? 'unhealthy' : null,
     presented: known.presented,
     mutedCount: known.mutedCount,
@@ -539,6 +540,9 @@ function applyTabBadge(tabId) {
       chrome.action.setBadgeBackgroundColor({ tabId: tabId, color: decision.color });
     }
     chrome.action.setIcon({ tabId: tabId, path: ICON_PATHS[decision.iconSet] || ICON_PATHS.off });
+    // Set here, put back to the default in setNeedsRefresh: Chrome keeps a
+    // per-tab title across a reload (verify/tabs_perm_check.mjs).
+    if (decision.title) chrome.action.setTitle({ tabId: tabId, title: decision.title });
   } catch (e) {
     // A tab closed between the message and this call throws; harmless.
   }
@@ -554,6 +558,55 @@ function resetTabBadge(tabId) {
   unhealthyTabs.delete(tabId);
   applyTabBadge(tabId);
 }
+
+// ---- "refresh this tab" badge (0.1.64) ------------------------------------
+//
+// A YouTube tab that was open before install, or whose content script an
+// update orphaned, is not filtered until it reloads. The popup has said so
+// since 0.1.62, but only to someone who opens it. The toolbar now says it
+// too. Decided by asking the tab (the same pm-health-query the popup uses):
+// no answer means no content script. Ids are kept in chrome.storage.session
+// so a sleeping service worker does not forget them.
+var needsRefreshTabs = new Set();
+var needsRefreshReady = Promise.resolve().then(function () {
+  return chrome.storage.session.get(['pm_needsRefresh']);
+}).then(function (items) {
+  ((items && items.pm_needsRefresh) || []).forEach(function (id) { needsRefreshTabs.add(id); });
+}).catch(function () {});
+
+function setNeedsRefresh(tabId, needs) {
+  if (needsRefreshTabs.has(tabId) === needs) return;
+  if (needs) needsRefreshTabs.add(tabId); else needsRefreshTabs.delete(tabId);
+  try { chrome.storage.session.set({ pm_needsRefresh: Array.from(needsRefreshTabs) }).catch(function () {}); } catch (e) {}
+  applyTabBadge(tabId);
+  if (!needs) {
+    chrome.action.getTitle({}).then(function (title) {
+      return chrome.action.setTitle({ tabId: tabId, title: title });
+    }).catch(function () {}); // tab already closed
+  }
+}
+
+function checkTabNeedsRefresh(tab) {
+  if (!tab || tab.id == null || typeof PMRefreshNotice === 'undefined') return;
+  try {
+    chrome.tabs.sendMessage(tab.id, { type: 'pm-health-query' }, function (resp) {
+      var hadError = !!chrome.runtime.lastError;
+      setNeedsRefresh(tab.id, PMRefreshNotice.needsRefresh(tab, resp, hadError));
+    });
+  } catch (e) {}
+}
+
+// Install and update are the only moments a tab can lose its content script.
+// Skipped while the master switch is off: nothing would filter there anyway.
+chrome.runtime.onInstalled.addListener(function () {
+  chrome.storage.sync.get(['pm_enabled'], function (items) {
+    if (chrome.runtime.lastError || (items && items.pm_enabled === false)) return;
+    chrome.tabs.query({ url: 'https://www.youtube.com/*' }, function (tabs) {
+      if (chrome.runtime.lastError || !tabs) return;
+      needsRefreshReady.then(function () { tabs.forEach(checkTabNeedsRefresh); });
+    });
+  });
+});
 
 // Grey by default, everywhere, before any tab has said anything.
 try {
@@ -593,12 +646,23 @@ function refreshReviewNudge(cb) {
 try {
   chrome.tabs.onUpdated.addListener(function (tabId, changeInfo) {
     if (changeInfo && changeInfo.status === 'loading') resetTabBadge(tabId);
+    // A marked tab: repaint (the reset above may have run before the stored
+    // ids loaded), and once a load finishes ask again. A real reload answers
+    // and clears the mark; an in-page YouTube navigation does not.
+    needsRefreshReady.then(function () {
+      if (!needsRefreshTabs.has(tabId)) return;
+      applyTabBadge(tabId);
+      if (changeInfo && changeInfo.status === 'complete') {
+        chrome.tabs.get(tabId, function (tab) { if (!chrome.runtime.lastError) checkTabNeedsRefresh(tab); });
+      }
+    });
   });
 } catch (e) {}
 
 chrome.tabs.onRemoved.addListener(function (tabId) {
   badgeStateByTabId.delete(tabId);
   unhealthyTabs.delete(tabId);
+  if (needsRefreshTabs.has(tabId)) setNeedsRefresh(tabId, false);
 });
 
 // 0.1.56: the storage listener and the twice-daily alarm that used to keep

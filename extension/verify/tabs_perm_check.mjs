@@ -80,6 +80,14 @@ check('tab.url readable for the YouTube tab', p.ytUrl === 'https://www.youtube.c
 check('tab.url hidden for the non-host tab (no tabs permission in effect)',
   p.otherUrls.includes('undefined') && !p.otherUrls.includes('https://example.com/'), p.otherUrls);
 
+// 0.1.64: the toolbar flags the unrefreshed YouTube tab, and only that tab.
+const badge = (id) => ui.evaluate(async (tid) => ({ text: await chrome.action.getBadgeText({ tabId: tid }), title: await chrome.action.getTitle({ tabId: tid }) }), id);
+const exId = await ui.evaluate(async () => (await chrome.tabs.query({})).find((t) => t.url === undefined && !t.active)?.id);
+const flagged = await badge(p.ytId);
+check('unrefreshed YouTube tab shows the ! badge', flagged.text === '!', flagged);
+check('and a hover title that says to refresh', /refresh this page/i.test(flagged.title), flagged);
+check('a non-YouTube tab is not flagged', exId != null && (await badge(exId)).text === '', exId);
+
 const before = await ask(p.ytId);
 check('tab open before install: no content script, sendMessage fails', before.err !== null && before.resp === null, before);
 
@@ -88,6 +96,21 @@ await yt.waitForLoadState('load');
 await new Promise((r) => setTimeout(r, 1200));
 const healed = await ask(p.ytId);
 check('chrome.tabs.reload works without the tabs permission; fresh page answers', !!(healed.resp && !healed.err), healed);
+const cleared = await badge(p.ytId);
+check('the ! badge and refresh title are gone after the reload', cleared.text !== '!' && !/refresh this page/i.test(cleared.title), cleared);
+
+// An update orphans the tab's content script: same badge, without a reinstall.
+// (Loading the same folder again is how an unpacked extension updates.)
+await cdp.send('Extensions.loadUnpacked', { path: EXT });
+await new Promise((r) => setTimeout(r, 3000));
+const ui2 = await ctx.newPage();
+await ui2.goto(`chrome-extension://${extId}/popup/popup.html`);
+const afterUpdate = await ui2.evaluate(async (tid) => ({ text: await chrome.action.getBadgeText({ tabId: tid }), title: await chrome.action.getTitle({ tabId: tid }) }), p.ytId);
+check('after an extension update the open YouTube tab is flagged again', afterUpdate.text === '!' && /refresh this page/i.test(afterUpdate.title), afterUpdate);
+await ui2.evaluate((id) => chrome.tabs.reload(id), p.ytId);
+await new Promise((r) => setTimeout(r, 2500));
+const afterUpdateReload = await ui2.evaluate(async (tid) => chrome.action.getBadgeText({ tabId: tid }), p.ytId);
+check('and cleared again by a reload', afterUpdateReload !== '!', afterUpdateReload);
 
 await browser.close().catch(() => {});
 await ctx.close();
