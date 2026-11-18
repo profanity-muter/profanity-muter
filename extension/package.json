@@ -1,6 +1,6 @@
 {
   "name": "profanity-muter-extension",
-  "version": "0.1.64",
+  "version": "0.1.65",
   "private": true,
   "type": "commonjs",
   "scripts": {
@@ -14,7 +14,8 @@
     "verify:tabs": "node verify/tabs_perm_check.mjs",
     "verify:offline": "node verify/verify-offline.mjs",
     "verify:pages": "node verify/pages_dark_check.mjs",
-    "verify:wake": "node verify/run_wake.mjs paused && node verify/run_wake.mjs spa"
+    "verify:wake": "node verify/run_wake.mjs paused && node verify/run_wake.mjs spa",
+    "verify:speedcheck": "node verify/speed_check.mjs"
   },
   "dependencies": {
     "@huggingface/transformers": "^4.2.0",

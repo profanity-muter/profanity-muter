@@ -972,14 +972,15 @@
 
   function copyDevlog() {
     if (!hasLocalStorage) { setStatus("Storage unavailable"); return; }
-    chrome.storage.local.get(["pm_devlog", "pm_memlog", "pm_paceHistory", "pm_autoPausedSlow"], function (items) {
+    chrome.storage.local.get(["pm_devlog", "pm_memlog", "pm_paceHistory", "pm_autoPausedSlow", "pm_speedCheck"], function (items) {
       if (chrome.runtime && chrome.runtime.lastError) { setStatus("Copy failed"); return; }
       var log = items && items.pm_devlog;
       var mem = items && items.pm_memlog;
       // 0.1.58: the chronic slow-computer summary (per-video RTF history and
       // the auto-pause flag, if any).
-      var pace = items && (items.pm_paceHistory || items.pm_autoPausedSlow)
-        ? { history: items.pm_paceHistory || [], autoPaused: items.pm_autoPausedSlow || null }
+      // 0.1.65: plus the setup computer check result, if one ran.
+      var pace = items && (items.pm_paceHistory || items.pm_autoPausedSlow || items.pm_speedCheck)
+        ? { history: items.pm_paceHistory || [], autoPaused: items.pm_autoPausedSlow || null, speedCheck: items.pm_speedCheck || null }
         : null;
       var hasVideos = !!(log && log.videos && log.videos.length);
       if (!hasVideos && !mem && !pace) { setStatus("No debug log yet"); return; }

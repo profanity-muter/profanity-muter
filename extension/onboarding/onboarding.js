@@ -342,6 +342,7 @@
       var el = document.getElementById("ob-step-" + i);
       if (el) show(el, i === step);
     }
+    renderSpeed();
     var done = step === DONE_STEP;
     // On the completion view the rail and the whole header are stale:
     // there is no step 5 of 4, and the "set this up" tagline is finished
@@ -633,6 +634,175 @@
     );
   }
 
+  // ---- computer check (0.1.65) -------------------------------------------
+  //
+  // background.js runs the check (it outlives this tab) and stores the result
+  // as pm_speedCheck in chrome.storage.local; a too-slow result also sets
+  // pm_autoPausedSlow there. This page only asks for it and renders what
+  // storage says, so closing the tab mid-check loses nothing. The check runs
+  // by itself only on a first install (?firstRun=1, set by background.js);
+  // a guide reopened later shows the stored result with "Check again".
+  var P = window.PMPace;
+  var speedEl = document.getElementById("ob-speed");
+  var speedSlotParent = speedEl.parentNode;
+  var speedBtns = {
+    "captions-only": document.getElementById("ob-speed-captions"),
+    "try-anyway": document.getElementById("ob-speed-try"),
+    remove: document.getElementById("ob-speed-remove"),
+    again: document.getElementById("ob-speed-again"),
+    start: document.getElementById("ob-speed-start")
+  };
+  var speed = { loaded: false, running: false, busy: false, error: false, record: null, paused: false, past: false, chosen: false };
+  var speedTimer = null;
+  var hasLocal = hasStorage && chrome.storage.local;
+
+  function speedText(id, text) {
+    var el = document.getElementById(id);
+    el.textContent = text || "";
+    el.classList.toggle("pm-hidden", !text);
+  }
+
+  function renderSpeed() {
+    if (!P || !P.speedCheckView || !speed.loaded) return; // stays hidden until storage has answered
+    var v = P.speedCheckView(speed);
+    speedEl.setAttribute("data-state", v.state);
+    show(speedEl, true);
+    speedText("ob-speed-text", v.text);
+    speedText("ob-speed-hint", v.hint);
+    speedText("ob-speed-title", v.title);
+    speedText("ob-speed-body", v.body);
+    speedText("ob-speed-state", "");
+    if (v.state === "too-slow") {
+      // In the notice the title leads; the state line goes under the body.
+      speedText("ob-speed-text", "");
+      speedText("ob-speed-state", v.text);
+    }
+    var labels = {
+      "captions-only": P.COPY.speedCaptionsOnly,
+      "try-anyway": P.COPY.speedTryAnyway,
+      remove: P.COPY.remove,
+      again: P.COPY.speedAgain,
+      start: P.COPY.speedIdle
+    };
+    Object.keys(speedBtns).forEach(function (k) {
+      var on = v.actions.indexOf(k) !== -1;
+      speedBtns[k].textContent = labels[k];
+      speedBtns[k].classList.toggle("pm-hidden", !on);
+    });
+    placeSpeed(v.state);
+  }
+
+  // Step 1 is home. A too-slow result nobody has answered yet follows the
+  // reader to whatever step is showing, so it cannot be missed.
+  function placeSpeed(state) {
+    var target = speedSlotParent;
+    var here = document.getElementById("ob-step-" + step);
+    // Once it is on this step it stays until the step changes, so answering
+    // it does not make the confirmation vanish from under the click.
+    if (step !== 1 && state === "too-slow" && ((speed.paused && !speed.chosen) || speedEl.parentNode === here)) {
+      target = here;
+    }
+    if (speedEl.parentNode === target) return;
+    var title = target.querySelector(".ob-step-title, .ob-done-title");
+    if (target === speedSlotParent) target.appendChild(speedEl);
+    else target.insertBefore(speedEl, title ? title.nextSibling : target.firstChild);
+  }
+
+  function speedStart() {
+    if (!hasLocal) return;
+    speed.record = null; // a failed re-check shows the failure, not the old result
+    speed.running = true;
+    speed.busy = false;
+    speed.error = false;
+    renderSpeed();
+    try {
+      chrome.runtime.sendMessage({ type: "pm-speed-check-start" }, function (resp) {
+        var failed = !!(chrome.runtime && chrome.runtime.lastError) || !resp;
+        if (failed || resp.status === "error" || resp.status === "busy") {
+          speed.running = false;
+          speed.busy = !failed && resp.status === "busy";
+          speed.error = !speed.busy;
+          renderSpeed();
+          return;
+        }
+        // Started. The offscreen side gives up on its own after these limits;
+        // this is the backstop for a document that died without a word.
+        window.clearTimeout(speedTimer);
+        speedTimer = window.setTimeout(function () {
+          if (!speed.running) return;
+          chrome.runtime.sendMessage({ type: "pm-speed-check-timeout" });
+        }, P.C.SPEED_MODEL_READY_MS + P.C.SPEED_WINDOW_TIMEOUT_MS + P.C.SPEED_UI_GRACE_MS);
+      });
+    } catch (e) {
+      speed.running = false;
+      speed.error = true;
+      renderSpeed();
+    }
+  }
+
+  function speedLocked() {
+    var api = lockApi();
+    return !!(api && api.isLockRecord && api.isLockRecord(lockRecord) && !unlockedThisSession);
+  }
+
+  speedBtns.start.addEventListener("click", speedStart);
+  speedBtns.again.addEventListener("click", function () {
+    speed.past = false;
+    speed.chosen = false;
+    speedStart();
+  });
+  speedBtns["captions-only"].addEventListener("click", function () {
+    if (speed.paused) { speed.chosen = true; renderSpeed(); return; }
+    // Turning audio muting OFF is a settings change: same lock rule as persist().
+    if (speedLocked()) { setStatus("Locked - unlock on the Set it up step first"); return; }
+    speed.chosen = true;
+    chrome.storage.local.set({ pm_autoPausedSlow: P.makeSetupPauseFlag(speed.record, Date.now()) });
+  });
+  speedBtns["try-anyway"].addEventListener("click", function () {
+    // Same patch as the popup's "Try again": clears the flag and the history.
+    chrome.storage.local.remove(P.tryAgainPatch().remove);
+  });
+  speedBtns.remove.addEventListener("click", function () {
+    // Same mechanism and the same lock rule as the popup's notice.
+    if (speedLocked()) { setStatus("Locked - unlock on the Set it up step first"); return; }
+    try {
+      chrome.management.uninstallSelf({ showConfirmDialog: true }, function () {
+        void (chrome.runtime && chrome.runtime.lastError);
+      });
+    } catch (e) { setStatus("Could not open the remove dialog"); }
+  });
+
+  function speedInit() {
+    if (!hasLocal || !P) return;
+    var firstRun = /[?&]firstRun=1\b/.test(location.search);
+    chrome.storage.local.get(["pm_speedCheck", "pm_autoPausedSlow"], function (items) {
+      if (chrome.runtime && chrome.runtime.lastError) return;
+      items = items || {};
+      speed.loaded = true;
+      speed.paused = !!items.pm_autoPausedSlow;
+      if (items.pm_speedCheck) {
+        speed.record = items.pm_speedCheck;
+        speed.past = true;
+        renderSpeed();
+      } else if (firstRun) {
+        speedStart();
+      } else {
+        renderSpeed();
+      }
+    });
+    chrome.storage.onChanged.addListener(function (changes, area) {
+      if (area !== "local") return;
+      if (changes.pm_autoPausedSlow) speed.paused = !!changes.pm_autoPausedSlow.newValue;
+      if (changes.pm_speedCheck && changes.pm_speedCheck.newValue) {
+        speed.record = changes.pm_speedCheck.newValue;
+        speed.running = false;
+        speed.past = false;
+        window.clearTimeout(speedTimer);
+      }
+      if (changes.pm_autoPausedSlow || changes.pm_speedCheck) renderSpeed();
+    });
+  }
+
   // ---- wiring -------------------------------------------------------------
 
   // Opened in a new tab rather than navigating: someone mid-setup who
@@ -718,4 +888,5 @@
   updateFinishEnabled();
   renderLockState();
   load();
+  speedInit();
 })();

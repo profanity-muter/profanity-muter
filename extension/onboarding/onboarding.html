@@ -82,6 +82,28 @@
           heard.
         </li>
       </ul>
+      <!-- 0.1.65: the computer check. Runs by itself on a first install while
+           this step is read; never blocks Next. Text comes from
+           shared/pace.js speedCheckView so the copy follows the real state.
+           If a too-slow result lands after the reader has moved on,
+           onboarding.js moves this block into whatever step is showing. -->
+      <div class="ob-speed pm-hidden" id="ob-speed" data-state="idle" role="status" aria-live="polite">
+        <div class="ob-speed-line">
+          <span class="ob-speed-bar" aria-hidden="true"></span>
+          <p class="ob-speed-text" id="ob-speed-text"></p>
+        </div>
+        <p class="ob-speed-hint pm-hint" id="ob-speed-hint"></p>
+        <h3 class="ob-speed-title" id="ob-speed-title"></h3>
+        <p class="ob-speed-body" id="ob-speed-body"></p>
+        <p class="ob-speed-state" id="ob-speed-state"></p>
+        <div class="ob-speed-actions">
+          <button id="ob-speed-captions" class="pm-button" type="button"></button>
+          <button id="ob-speed-try" class="pm-button pm-button--secondary" type="button"></button>
+          <button id="ob-speed-remove" class="pm-link-button" type="button"></button>
+          <button id="ob-speed-again" class="pm-link-button" type="button"></button>
+          <button id="ob-speed-start" class="pm-link-button" type="button"></button>
+        </div>
+      </div>
     </section>
 
     <!-- ===== 2. Plain limits =====
@@ -538,6 +560,7 @@
   <script src="../shared/lock.js"></script>
   <script src="../shared/moments.js"></script>
   <script src="../shared/refresh_notice.js"></script>
+  <script src="../shared/pace.js"></script>
   <script src="onboarding.js"></script>
 </body>
 </html>

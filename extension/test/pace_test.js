@@ -273,6 +273,78 @@ test("thread cap is half the cores, at least 1, never above the current value", 
   assert.strictEqual(P.threadCap(16, undefined), 8);
 });
 
+// ---- setup speed check (0.1.65) ---------------------------------------------------------
+
+test("speed verdict: thresholds on the inference ratio", () => {
+  const v = (ms) => P.speedVerdict({ windowMs: ms, audioS: 18, deviceMemory: 8, hardwareConcurrency: 8 });
+  assert.strictEqual(v(3400).verdict, "ok");
+  assert.strictEqual(v(3400).ratio, 0.189);
+  assert.strictEqual(v(12600).verdict, "ok", "0.7 exactly is ok");
+  assert.strictEqual(v(12601).verdict, "borderline");
+  assert.strictEqual(v(18000).verdict, "borderline", "1.0 exactly is borderline");
+  assert.strictEqual(v(18001).verdict, "too-slow");
+  assert.strictEqual(v(18001).reason, "ratio");
+  assert.strictEqual(v(3400).cores, 8);
+  assert.strictEqual(v(3400).memGb, 8);
+});
+
+test("speed verdict thresholds sit under the busy machine's constants", () => {
+  assert.ok(P.C.SPEED_OK_MAX < P.C.BUSY_EXIT_RTF);
+  assert.strictEqual(P.C.SPEED_TOO_SLOW_RTF, P.C.BUSY_ENTER_RTF);
+  assert.strictEqual(P.C.SPEED_WINDOW_TIMEOUT_MS, 3 * 18000);
+});
+
+test("speed verdict: timeout and low memory are too-slow, no measurement is an error", () => {
+  assert.strictEqual(P.speedVerdict({ timedOut: true, audioS: 18 }).verdict, "too-slow");
+  assert.strictEqual(P.speedVerdict({ timedOut: true }).reason, "timeout");
+  const lowMem = P.speedVerdict({ windowMs: 2000, audioS: 18, deviceMemory: 2 });
+  assert.strictEqual(lowMem.verdict, "too-slow");
+  assert.strictEqual(lowMem.reason, "memory");
+  assert.strictEqual(P.speedVerdict({ deviceMemory: 0.5 }).verdict, "too-slow", "memory alone decides, no model run needed");
+  assert.strictEqual(P.speedVerdict({ windowMs: 2000, audioS: 18, deviceMemory: 4 }).verdict, "ok");
+  assert.strictEqual(P.speedVerdict({ windowMs: 2000, audioS: 18 }).verdict, "ok", "unknown memory does not block");
+  assert.strictEqual(P.speedVerdict({}).verdict, "error");
+  assert.strictEqual(P.speedVerdict({ windowMs: 0, audioS: 18 }).verdict, "error");
+});
+
+test("setup pause flag marks its source and ratio; the popup notice adapts to it", () => {
+  const rec = P.speedVerdict({ windowMs: 27000, audioS: 18 });
+  const flag = P.makeSetupPauseFlag(rec, 123);
+  assert.deepStrictEqual(flag, { at: 123, source: "setup-check", ratio: 1.5, reason: "ratio" });
+  assert.ok(!P.audioAllowed({ pm_autoPausedSlow: flag }));
+  const n = P.noticeModel(flag);
+  assert.ok(/check during setup/.test(n.body));
+  assert.ok(!/right now/.test(n.body), "a measurement is not a 'right now' state");
+  assert.ok(/captions are still censored/i.test(n.body));
+  assert.ok(/right now/.test(P.noticeModel({ at: 1, chronicCount: 3 }).body), "chronic pause keeps its copy");
+});
+
+test("speed check view: one state per situation", () => {
+  const V = P.speedCheckView;
+  const rec = (verdict, extra) => Object.assign({ verdict, ratio: 0.19, windowMs: 3400, reason: null }, extra);
+  assert.strictEqual(V({ running: true }).text, "Checking that this computer can keep up…");
+  assert.strictEqual(V({ record: rec("ok") }).text, "This computer can keep up.");
+  assert.deepStrictEqual(V({ record: rec("ok") }).actions, []);
+  assert.deepStrictEqual(V({ record: rec("ok"), past: true }).actions, ["again"]);
+  assert.strictEqual(V({ record: rec("borderline") }).state, "borderline");
+  assert.strictEqual(V({ busy: true }).state, "busy");
+  assert.strictEqual(V({ error: true }).state, "error");
+  assert.deepStrictEqual(V({}).actions, ["start"], "reopened with no result: offer, do not auto-run");
+  const slow = V({ record: rec("too-slow", { ratio: 1.5, windowMs: 27000, reason: "ratio" }), paused: true });
+  assert.strictEqual(slow.title, "This computer is probably too slow for audio muting");
+  assert.ok(slow.body.indexOf("Profanity Muter is fully private: it runs only on your device and never sends anything you watch or hear anywhere. That means it uses your computer's own processing power") === 0);
+  assert.ok(/27 seconds to work through 18 seconds/.test(slow.body));
+  assert.ok(/Captions are still censored/.test(slow.body));
+  assert.deepStrictEqual(slow.actions, ["captions-only", "try-anyway", "remove"]);
+  const chosen = V({ record: rec("too-slow", { reason: "ratio", windowMs: 27000 }), paused: true, chosen: true });
+  assert.deepStrictEqual(chosen.actions, []);
+  const trying = V({ record: rec("too-slow", { reason: "ratio", windowMs: 27000 }), paused: false });
+  assert.ok(/chose to try/.test(trying.text), "copy follows the real flag state");
+  assert.deepStrictEqual(trying.actions, ["captions-only", "remove"]);
+  assert.ok(/memory/.test(V({ record: rec("too-slow", { reason: "memory", memGb: 2, windowMs: null }), paused: true }).body));
+  assert.ok(/in time/.test(V({ record: rec("too-slow", { reason: "timeout", windowMs: null }), paused: true }).body));
+});
+
 // ---- copy rules ----------------------------------------------------------------------
 
 test("copy has no em-dashes, banned words or absolute claims", () => {

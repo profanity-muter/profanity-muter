@@ -1052,3 +1052,81 @@ input:focus-visible {
     animation: none;
   }
 }
+
+/* ---- Computer check (0.1.65) ----------------------------------------
+   A quiet line while it runs and when it passes; a raised card with a gold
+   rule only when this computer is too slow. Page tokens only (never the
+   popup's --pm-warn-*, which go dark with the OS on this light page). */
+.ob-speed {
+  margin: 22px 0 40px; /* bottom: clears the fixed nav and its fade at narrow widths (page padding is 64px there) */
+  padding-top: 18px;
+  border-top: 1px solid var(--hairline);
+}
+/* Moved to a later step (an unanswered too-slow result): sits under the title. */
+.ob-step:not(#ob-step-1) > .ob-speed { margin: 0 0 24px; }
+.ob-speed-line {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ob-speed-text {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+.ob-speed-hint { margin: 6px 0 0 30px; font-size: 12.5px; color: var(--ink-60); }
+.ob-speed-bar {
+  display: none;
+  flex: 0 0 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 2px solid var(--hairline);
+  border-top-color: var(--gold-deep);
+  animation: ob-speed-spin 1.4s linear infinite;
+}
+.ob-speed[data-state="running"] .ob-speed-bar { display: block; }
+.ob-speed[data-state="ok"] .ob-speed-text::before,
+.ob-speed[data-state="borderline"] .ob-speed-text::before {
+  content: "\2713";
+  display: inline-block;
+  width: 20px;
+  margin-right: 10px;
+  text-align: center;
+  font-weight: 700;
+  color: #1e8e3e;
+}
+.ob-speed[data-state="borderline"] .ob-speed-text { display: flex; color: var(--ink-60); }
+.ob-speed[data-state="borderline"] .ob-speed-text::before { content: "!"; color: var(--gold-deep); flex: 0 0 20px; }
+.ob-speed[data-state="busy"] .ob-speed-text,
+.ob-speed[data-state="error"] .ob-speed-text { color: var(--ink-60); }
+.ob-speed[data-state="too-slow"] {
+  padding: 18px 20px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--gold-deep);
+  border-radius: 6px;
+  background: var(--paper-raised);
+}
+.ob-speed-title { margin: 0 0 8px; font-size: 16px; font-weight: 600; line-height: 1.4; color: var(--ink); }
+.ob-speed-body,
+.ob-speed-state { margin: 0 0 10px; font-size: 14px; line-height: 1.6; color: var(--ink-60); }
+.ob-speed-state { color: var(--ink); font-weight: 550; }
+.ob-speed-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+.ob-speed-actions:not(:has(button:not(.pm-hidden))) { display: none; }
+.ob-speed-actions .pm-button { border-radius: 4px; padding: 9px 18px; font-size: 13.5px; }
+.ob-speed-actions .pm-link-button { font-size: 13px; }
+.ob-speed[data-state="ok"] .ob-speed-actions,
+.ob-speed[data-state="borderline"] .ob-speed-actions,
+.ob-speed[data-state="busy"] .ob-speed-actions,
+.ob-speed[data-state="error"] .ob-speed-actions,
+.ob-speed[data-state="idle"] .ob-speed-actions { margin: 6px 0 0 30px; }
+.ob-speed[data-state="idle"] .ob-speed-actions { margin-left: 0; }
+@keyframes ob-speed-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ob-speed-bar { animation: none; border-top-color: var(--hairline); border-color: var(--gold-deep) var(--hairline) var(--hairline) var(--hairline); }
+}

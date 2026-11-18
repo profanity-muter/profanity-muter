@@ -34,6 +34,7 @@
   // race a second storage read, and so "copy again" reproduces exactly
   // what was copied the first time.
   var devlog = null;
+  var speedCheck = null; // pm_speedCheck (0.1.65), machine facts only
 
   function reportApi() {
     return (typeof window !== "undefined" && window.PMReport) || null;
@@ -101,12 +102,13 @@
       renderLogSummary();
       return;
     }
-    chrome.storage.local.get(["pm_devlog"], function (items) {
+    chrome.storage.local.get(["pm_devlog", "pm_speedCheck"], function (items) {
       if (chrome.runtime && chrome.runtime.lastError) {
         renderLogSummary();
         return;
       }
       devlog = (items && items.pm_devlog) || null;
+      speedCheck = (items && items.pm_speedCheck) || null;
       var api = reportApi();
       // Prefill the video field from the newest devlog entry, so the user
       // doesn't have to go back and find the video they were watching.
@@ -127,6 +129,7 @@
       videoUrl: videoEl.value.trim(),
       includeLog: consentEl.checked,
       devlog: devlog,
+      speedCheck: speedCheck,
       now: Date.now()
     });
   }
@@ -153,6 +156,7 @@
       whatHappened: whatEl.value,
       videoUrl: videoEl.value.trim(),
       devlog: consentEl.checked ? devlog : null,
+      speedCheck: speedCheck,
       logWithheld: !consentEl.checked
     });
   }

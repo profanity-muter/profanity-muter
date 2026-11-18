@@ -3753,3 +3753,40 @@ vm), `test/background_idle_test.js` (real background.js in a vm).
   `s.allWords` (trailing `ALL_WORDS_CAP` = 2000 words since 0.1.15), keeps
   intervals older than that window, and moves `activeMuteCountKey` to the
   interval under the playhead so mutes are not double counted. No idle timers.
+
+## 0.1.65: setup computer check
+
+Uninstall comment on 0.1.64: "almost killed my chromebook". The busy back-off
+and the chronic auto-pause (0.1.58) only protect a slow machine after it has
+suffered. Now the first step of a first-install onboarding (`?firstRun=1`)
+times one real window and warns before any video is played.
+
+- **Measurement.** `assets/speedcheck-18s.pcm`: 18 s of plain speech, 16 kHz
+  mono s16le (576000 bytes), made with macOS `say` (no profanity). Offscreen
+  `pm-speed-check-run` waits for the worker's `warm-ready`, then runs the clip
+  through `transcribeInWorker` with `WINDOW_TRANSCRIBE_OPTIONS` (the same
+  object real windows use) inside `runSerialized`. windowMs = the worker's own
+  inference time (model resolve excluded). Limits: model ready 180 s, window
+  54 s (3x realtime); either is "too slow". A video being analyzed (in-flight
+  compute, a processing session, or a segment in the last 30 s) answers
+  `busy` instead of queueing.
+- **Plumbing.** onboarding `pm-speed-check-start` -> background
+  `startSpeedCheck` (memory <= 2 GB: decided without the model; paused: same
+  patch as Try again; `idleWake('speed check')` un-parks and restarts the idle
+  clock; `ensureOffscreenDocument`; up to 5 tries) -> offscreen ack -> later
+  `pm-speed-check-result` -> `recordSpeedCheck` writes `pm_speedCheck`
+  `{at, verdict, reason, ratio, windowMs, loadMs, cores, memGb}` and, on
+  too-slow, `pm_autoPausedSlow {at, source: "setup-check", ratio, reason}`.
+  The existing flag listener closes the document. Onboarding only renders
+  storage, so closing the tab mid-check loses nothing.
+- **Verdict** (`PMPace.speedVerdict`): ratio <= 0.7 ok, <= 1.0 borderline,
+  above 1.0 too-slow. 0.7 sits 0.1 under BUSY_EXIT_RTF because a real window
+  also pays demux + resample; 1.0 = BUSY_ENTER_RTF.
+- Measured in headless Chromium on this M1: ratio ~0.23-0.31, ~10 s from
+  install to verdict. Renderer on background QoS (`taskpolicy -b`): ratio
+  ~1.45, too-slow. CDP CPU throttling does not reach dedicated workers.
+- Result rides in "Copy debug log" (`pace.speedCheck`) and in the problem
+  report (`speedCheck`, plus a `speed check:` line in the mail summary).
+
+Tests: `test/pace_test.js`, `test/autopause_test.js`, `test/report_test.js`;
+browser: `npm run verify:speedcheck` (part C uses real YouTube).

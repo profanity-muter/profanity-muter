@@ -299,17 +299,62 @@ async function idleCheck() {
   }
 }
 
-// A tab reported (or resumed) playing. Un-park and recreate the document.
-function idleWake() {
-  idleLoaded.then(function () {
+// A tab reported (or resumed) playing, or the setup speed check needs the
+// model. Un-park and recreate the document; also restarts the idle clock.
+function idleWake(why) {
+  return idleLoaded.then(function () {
     idleState.idleSince = null;
     if (!idleState.parked) { persistIdle(); return; }
     idleState.parked = false;
     wakeStartWall = Date.now();
     persistIdle();
-    console.log('[PM-BG] [PM-IDLE-WAKE] play event, recreating offscreen document');
-    ensureOffscreenDocument();
+    console.log('[PM-BG] [PM-IDLE-WAKE] ' + (why || 'play event') + ', recreating offscreen document');
+    return ensureOffscreenDocument();
   });
+}
+
+// ---- setup speed check (0.1.65) ----------------------------------------------
+// Onboarding asks (pm-speed-check-start); this wakes or creates the offscreen
+// document through the normal path and asks it to time one bundled window
+// (pm-speed-check-run). The measurement comes back as pm-speed-check-result and
+// is stored here as pm_speedCheck; too-slow also sets pm_autoPausedSlow, which
+// the listener above turns into a closed document and a grey toolbar. The
+// result is recorded even if the onboarding tab was closed meanwhile.
+function deviceInfo() {
+  var n = self.navigator || {};
+  return { deviceMemory: n.deviceMemory, hardwareConcurrency: n.hardwareConcurrency };
+}
+function recordSpeedCheck(m) {
+  var P = globalThis.PMPace;
+  var rec = Object.assign({ at: Date.now() }, P.speedVerdict(Object.assign({}, m, deviceInfo())));
+  var patch = { pm_speedCheck: rec };
+  if (rec.verdict === 'too-slow') patch.pm_autoPausedSlow = P.makeSetupPauseFlag(rec, rec.at);
+  console.log('[PM-BG] [PM-SPEEDCHECK] ' + JSON.stringify(rec) + (m.text ? ' heard=[' + m.text + ']' : '') + (m.stage ? ' stage=' + m.stage : ''));
+  return chrome.storage.local.set(patch);
+}
+async function startSpeedCheck() {
+  var P = globalThis.PMPace;
+  await autoPauseLoaded;
+  var dev = deviceInfo();
+  if (typeof dev.deviceMemory === 'number' && dev.deviceMemory <= P.C.SPEED_MIN_MEM_GB) {
+    await recordSpeedCheck({}); // too little memory: decided without loading the model
+    return { status: 'started' };
+  }
+  if (autoPausedSlow) {
+    // "Check again" after a pause: measure for real. A too-slow result pauses again.
+    autoPausedSlow = false;
+    await chrome.storage.local.remove(P.tryAgainPatch().remove);
+  }
+  await idleWake('speed check');
+  for (var i = 0; i < 5; i++) {
+    await ensureOffscreenDocument();
+    try {
+      var ack = await chrome.runtime.sendMessage({ type: 'pm-speed-check-run' });
+      if (ack && ack.status) return ack;
+    } catch (e) {}
+    await new Promise(function (r) { setTimeout(r, 1000); }); // a document still being created or replaced
+  }
+  return { status: 'error' };
 }
 
 // Offscreen reports its model warm: that is the end of a cold start.
@@ -429,7 +474,7 @@ chrome.runtime.onInstalled.addListener(function (details) {
       if (reason === 'install' && items.pm_onboarded !== true) {
         chrome.storage.sync.set({ pm_onboarded: true }, function () {
           try {
-            chrome.tabs.create({ url: chrome.runtime.getURL('onboarding/onboarding.html') });
+            chrome.tabs.create({ url: chrome.runtime.getURL('onboarding/onboarding.html?firstRun=1') }); // ?firstRun=1: the computer check runs by itself only here (0.1.65)
           } catch (e) {
             console.warn('[PM-BG] could not open onboarding tab:', String(e));
           }
@@ -887,6 +932,19 @@ chrome.tabs.onRemoved.addListener(function (tabId) {
 // routed to the right tab's port by tabId.
 chrome.runtime.onMessage.addListener(function (msg, sender, sendResponse) {
   if (!msg || !msg.type) return;
+  if (msg.type === 'pm-speed-check-start') {
+    startSpeedCheck().then(sendResponse, function () { sendResponse({ status: 'error' }); });
+    return true; // async response
+  }
+  if (msg.type === 'pm-speed-check-result') {
+    recordSpeedCheck(msg.error ? {} : msg).catch(function () {});
+    return;
+  }
+  if (msg.type === 'pm-speed-check-timeout') {
+    // Onboarding heard nothing well past both limits (the document died or hung).
+    recordSpeedCheck({ timedOut: true }).catch(function () {});
+    return;
+  }
   // Health transitions from a tab's content script (0.1.33). Only genuinely
   // broken statuses reach the badge; badgeDecision enforces that.
   if (msg.type === 'pm-health') {

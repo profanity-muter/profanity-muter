@@ -7,7 +7,7 @@ const path = require('path');
 const ROOT = path.resolve(__dirname, '..');
 const INCLUDE = [
   'manifest.json', 'background.js', 'captions.js', 'capture.js', 'content.js',
-  'offscreen.html', 'shared', 'dist', 'models', 'icons', 'popup', 'report', 'onboarding',
+  'offscreen.html', 'shared', 'dist', 'models', 'assets', 'icons', 'popup', 'report', 'onboarding',
 ];
 const BAD = [
   /(?:jsdelivr|unpkg|cdnjs|esm\.sh|skypack)\.(?:net|com|org|dev|io|cloudflare\.com)/i,
@@ -16,7 +16,7 @@ const BAD = [
   /raw\.githubusercontent/i,
   /https?:\/\/[^\s"'`)]*\.(?:m?js|wasm)(?=[\s"'`)?#;,]|$)/i,
 ];
-const SKIP_EXT = /\.(png|jpe?g|gif|ico|webp|onnx|ttf|woff2?)$/i;
+const SKIP_EXT = /\.(png|jpe?g|gif|ico|webp|onnx|pcm|ttf|woff2?)$/i; // pcm: assets/speedcheck-18s.pcm, raw audio (0.1.65)
 
 function* walk(p) {
   const st = fs.statSync(p);

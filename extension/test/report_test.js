@@ -537,5 +537,17 @@ test("the paste instruction now frames the clipboard log as optional", () => {
 
 // ---- summary -------------------------------------------------------------
 
+test("0.1.65: the setup computer check reaches both tiers, even with the log withheld", () => {
+  const sc = { at: 1, verdict: "too-slow", reason: "ratio", ratio: 1.455, windowMs: 26198, loadMs: 1705, cores: 8, memGb: 4 };
+  assert.strictEqual(R.speedCheckLine(sc), "speed check: too-slow reason=ratio ratio=1.455 window=26198ms load=1705ms cores=8 mem=4GB");
+  assert.strictEqual(R.speedCheckLine(null), "speed check: not run");
+  const withheld = R.buildSummary({ extensionVersion: "0.1.65", userAgent: "", logWithheld: true, speedCheck: sc });
+  assert.ok(withheld.indexOf("ratio=1.455") !== -1, withheld);
+  assert.deepStrictEqual(R.buildReport({ includeLog: false, speedCheck: sc }).speedCheck, sc);
+  assert.strictEqual(R.buildReport({}).speedCheck, null);
+  const url = R.buildMailto({ email: "a@b.c", extensionVersion: "0.1.65", speedCheck: sc });
+  assert.ok(decodeURIComponent(url).indexOf("speed check: too-slow") !== -1);
+});
+
 console.log("report_test.js: " + passed + "/" + (passed + failed) + " passed");
 if (failed) process.exit(1);

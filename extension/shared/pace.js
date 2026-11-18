@@ -38,7 +38,18 @@
     CHRONIC_TRIP: 3,
     HISTORY_CAP: 10,
     COMPLETED_SPANS_CAP: 64,
-    REPEAT_COOLDOWN_MS: 30000
+    REPEAT_COOLDOWN_MS: 30000,
+    // 0.1.65 setup speed check (see speedVerdict). The ratio is pure Whisper
+    // inference ms for one 18 s window / 18000. A real window's RTF also pays
+    // for demux + resample, so "ok" stops a clear 0.1 below BUSY_EXIT_RTF:
+    // a machine measured above 0.7 would, once busy, struggle to bring a
+    // probe in under 0.8 and so could stay stuck in back-off.
+    SPEED_OK_MAX: 0.7,
+    SPEED_TOO_SLOW_RTF: 1.0, // = BUSY_ENTER_RTF: above this, muting cannot keep up even with nothing else running
+    SPEED_MIN_MEM_GB: 2, // navigator.deviceMemory at or below this: the model alone needs more than 1 GB, do not load it
+    SPEED_MODEL_READY_MS: 180000, // first model load on a slow disk can be long; this is the generous limit
+    SPEED_WINDOW_TIMEOUT_MS: 54000, // 3x realtime for the 18 s clip
+    SPEED_UI_GRACE_MS: 15000 // onboarding gives up on a silent check this long after both limits
   };
 
   // ---- 1. window start --------------------------------------------------
@@ -228,6 +239,39 @@
     return { remove: ["pm_autoPausedSlow", "pm_paceHistory"] };
   }
 
+  // ---- setup speed check (0.1.65) ------------------------------------------------
+  // o: {windowMs, audioS, loadMs, timedOut, deviceMemory, hardwareConcurrency}
+  // Returns the record stored as pm_speedCheck (minus `at`). verdict is one of
+  // "ok" | "borderline" | "too-slow" | "error" (no measurement and no timeout).
+  function speedVerdict(o) {
+    o = o || {};
+    var num = function (x) { return typeof x === "number" && isFinite(x) ? x : null; };
+    var mem = num(o.deviceMemory);
+    var windowMs = num(o.windowMs), audioS = num(o.audioS);
+    var ratio = windowMs != null && windowMs > 0 && audioS > 0 ? windowMs / (audioS * 1000) : null;
+    var verdict, reason = null;
+    if (mem != null && mem <= C.SPEED_MIN_MEM_GB) { verdict = "too-slow"; reason = "memory"; }
+    else if (o.timedOut) { verdict = "too-slow"; reason = "timeout"; }
+    else if (ratio == null) { verdict = "error"; }
+    else if (ratio > C.SPEED_TOO_SLOW_RTF) { verdict = "too-slow"; reason = "ratio"; }
+    else if (ratio > C.SPEED_OK_MAX) verdict = "borderline";
+    else verdict = "ok";
+    return {
+      verdict: verdict,
+      reason: reason,
+      ratio: ratio == null ? null : Math.round(ratio * 1000) / 1000,
+      windowMs: windowMs == null ? null : Math.round(windowMs),
+      loadMs: num(o.loadMs) == null ? null : Math.round(o.loadMs),
+      cores: num(o.hardwareConcurrency),
+      memGb: mem
+    };
+  }
+  // The pm_autoPausedSlow flag a too-slow setup check sets. `source` lets the
+  // popup word its notice for a measurement rather than a run of slow videos.
+  function makeSetupPauseFlag(record, now) {
+    return { at: now, source: "setup-check", ratio: record && record.ratio != null ? record.ratio : null, reason: (record && record.reason) || null };
+  }
+
   // ---- copy -------------------------------------------------------------------------
   // WHY it exists, in plain words: fully private, runs only on the device, and
   // the price is the computer's own processing power.
@@ -246,11 +290,63 @@
       "Audio filtering is paused; captions are still censored. Closing other programs may help.",
     tryAgain: "Try again",
     remove: "Remove extension",
-    onboarding: "Profanity Muter is fully private: it runs only on your device and never sends anything you watch or hear anywhere. That means it uses your computer's own processing power, and older or very busy computers may struggle to keep up."
+    onboarding: "Profanity Muter is fully private: it runs only on your device and never sends anything you watch or hear anywhere. That means it uses your computer's own processing power, and older or very busy computers may struggle to keep up.",
+    // 0.1.65: a pause set by the setup speed check is a measurement, not "right now".
+    noticeBodySetup:
+      "Profanity Muter is fully private: it runs only on your device and never sends anything you watch or hear anywhere. " +
+      "That means it uses your computer's own processing power, and a check during setup found this computer can't keep up. " +
+      "Audio filtering is paused; captions are still censored.",
+    speedRunning: "Checking that this computer can keep up…",
+    speedRunningHint: "This can take up to a minute. You can keep reading or move on.",
+    speedOk: "This computer can keep up.",
+    speedBorderline: "This computer can keep up, but only just. Muting may fall behind when other programs are busy.",
+    speedBusy: "A video is being filtered right now, so the check did not run. Check again when it has finished.",
+    speedError: "The check could not run this time.",
+    speedIdle: "Check that this computer can keep up",
+    speedAgain: "Check again",
+    speedTitle: "This computer is probably too slow for audio muting",
+    speedCaptions: "Captions are still censored either way.",
+    speedPaused: "Audio muting is paused for now.",
+    speedPausedChosen: "Audio muting is paused and captions are still censored. You can try audio muting again from the toolbar popup.",
+    speedTrying: "Audio muting is on because you chose to try it. If it falls behind, Profanity Muter will say so.",
+    speedCaptionsOnly: "Continue with captions only",
+    speedTryAnyway: "Try audio muting anyway"
   };
   function noticeModel(flag) {
     if (!flag) return null;
-    return { title: COPY.noticeTitle, body: COPY.noticeBody, buttons: [COPY.tryAgain, COPY.remove] };
+    var body = flag.source === "setup-check" ? COPY.noticeBodySetup : COPY.noticeBody;
+    return { title: COPY.noticeTitle, body: body, buttons: [COPY.tryAgain, COPY.remove] };
+  }
+
+  // Why a setup check said too-slow, in plain words, from the stored record.
+  function speedReasonText(r) {
+    if (r.reason === "memory") {
+      return "This computer reports " + r.memGb + " GB of memory, and the speech model alone needs more than 1 GB, so it was not loaded.";
+    }
+    if (r.reason === "timeout" || r.windowMs == null) {
+      return "During a quick check, this computer could not finish working through " + CLIP_S + " seconds of speech in time.";
+    }
+    return "During a quick check, this computer took " + Math.round(r.windowMs / 1000) + " seconds to work through " + CLIP_S + " seconds of speech, so muting would fall behind the video.";
+  }
+  var CLIP_S = 18;
+
+  // The onboarding status block, as data. st: {running, busy, error, record,
+  // paused, past, chosen}. `actions` are ids the page maps to handlers.
+  function speedCheckView(st) {
+    st = st || {};
+    var again = st.past ? ["again"] : [];
+    if (st.running) return { state: "running", text: COPY.speedRunning, hint: COPY.speedRunningHint, actions: [] };
+    if (st.busy) return { state: "busy", text: COPY.speedBusy, actions: ["again"] };
+    var r = st.record;
+    if (!r) return st.error ? { state: "error", text: COPY.speedError, actions: ["again"] } : { state: "idle", text: "", actions: ["start"] };
+    if (r.verdict === "ok") return { state: "ok", text: COPY.speedOk, actions: again };
+    if (r.verdict === "borderline") return { state: "borderline", text: COPY.speedBorderline, actions: again };
+    if (r.verdict !== "too-slow") return { state: "error", text: COPY.speedError, actions: ["again"] };
+    var v = { state: "too-slow", title: COPY.speedTitle, body: WHY + " " + speedReasonText(r) + " " + COPY.speedCaptions };
+    if (!st.paused) { v.text = COPY.speedTrying; v.actions = ["captions-only", "remove"].concat(again); }
+    else if (st.chosen) { v.text = COPY.speedPausedChosen; v.actions = again; }
+    else { v.text = COPY.speedPaused; v.actions = ["captions-only", "try-anyway", "remove"].concat(again); }
+    return v;
   }
 
   // ---- 4. thread cap --------------------------------------------------------------------
@@ -281,6 +377,9 @@
     makeAutoPauseFlag: makeAutoPauseFlag,
     tryAgainPatch: tryAgainPatch,
     noticeModel: noticeModel,
+    speedVerdict: speedVerdict,
+    makeSetupPauseFlag: makeSetupPauseFlag,
+    speedCheckView: speedCheckView,
     threadCap: threadCap
   };
 

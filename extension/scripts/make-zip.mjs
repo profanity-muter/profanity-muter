@@ -6,7 +6,7 @@
 //
 // Ships: manifest, the content/background scripts, shared/, dist/ (bundles +
 // ORT wasm), models/ (fetched by scripts/fetch-models.mjs), icons, popup,
-// report, onboarding, offscreen.html. Leaves out sources, tests, tooling,
+// report, onboarding, assets/ (the 0.1.65 check clip), offscreen.html. Leaves out sources, tests, tooling,
 // notes, node_modules. Refuses to run if models/ is missing, since a zip
 // without the model is the 0.1.43 store incident again.
 

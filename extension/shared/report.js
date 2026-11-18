@@ -174,8 +174,24 @@
       debugLogNote: debugLogNote(includeLog, trim),
       // Null rather than omitted: an explicit "no log here" reads
       // unambiguously, an absent key reads like a bug in the reporter.
-      debugLog: includeLog ? trim.devlog : null
+      debugLog: includeLog ? trim.devlog : null,
+      // 0.1.65: the setup computer check. Describes the machine, not what was
+      // watched, so it rides along like the version and browser do.
+      speedCheck: input.speedCheck || null
     };
+  }
+
+  // One line for the mail summary: "speed check: ok ratio=0.19 ...".
+  function speedCheckLine(r) {
+    if (!r || !r.verdict) return "speed check: not run";
+    var parts = ["speed check: " + r.verdict];
+    if (r.reason) parts.push("reason=" + r.reason);
+    if (r.ratio != null) parts.push("ratio=" + r.ratio);
+    if (r.windowMs != null) parts.push("window=" + r.windowMs + "ms");
+    if (r.loadMs != null) parts.push("load=" + r.loadMs + "ms");
+    if (r.cores != null) parts.push("cores=" + r.cores);
+    if (r.memGb != null) parts.push("mem=" + r.memGb + "GB");
+    return parts.join(" ");
   }
 
   function reportToJson(report) {
@@ -288,6 +304,7 @@
     var lines = [];
     lines.push("--- diagnostic summary (auto-filled) ---");
     lines.push("v" + (input.extensionVersion || "unknown") + " | " + shortenUserAgent(input.userAgent));
+    lines.push(speedCheckLine(input.speedCheck));
 
     if (input.logWithheld === true) {
       // The consent checkbox governs per-video data in BOTH tiers, not
@@ -348,6 +365,7 @@
           userAgent: input.userAgent,
           devlog: input.devlog,
           logWithheld: input.logWithheld === true,
+          speedCheck: input.speedCheck,
           maxVideos: videoCount
         })
       );
@@ -400,6 +418,7 @@
     SUMMARY_MAX_VIDEOS: SUMMARY_MAX_VIDEOS,
     shortenUserAgent: shortenUserAgent,
     settingsLine: settingsLine,
+    speedCheckLine: speedCheckLine,
     buildSummary: buildSummary,
     truncateDevlog: truncateDevlog,
     debugLogNote: debugLogNote,

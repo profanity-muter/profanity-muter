@@ -315,6 +315,25 @@ setTimeout(() => emitMem('create', 'offscreen document start', true), 0); // def
 // check that used to run against it on this side now runs INSIDE the
 // worker instead, which is why the worker's result carries `rms` per
 // chunk).
+// The options every real window is transcribed with. One object, shared by
+// transcribeWindow and the 0.1.65 setup speed check, so the check times
+// exactly the work a real window does.
+const WINDOW_TRANSCRIBE_OPTIONS = {
+  return_timestamps: 'word',
+  chunk_length_s: 30,
+  // Repetition mitigation (0.1.13), best-effort: each window is already
+  // its own independent transcribe call with no prior window's text fed
+  // back in, so cross-window conditioning is already effectively off
+  // (transformers.js's ASR pipeline doesn't expose a direct
+  // condition_on_previous_text toggle to set this explicitly). A SINGLE
+  // window's own decode can still degenerate into a repetition loop on
+  // ambiguous/quiet audio (the "it's him" x40 case) - no_repeat_ngram_size
+  // is passed through in case the underlying generate() call honors it;
+  // NOT verified against this exact transformers.js version, so the
+  // guaranteed defense is collapseHallucinationLoops() below, not this.
+  no_repeat_ngram_size: 3
+};
+
 function transcribeInWorker(modelId, float16k, options) {
   return new Promise((resolve, reject) => {
     const requestId = nextWorkerRequestId++;
@@ -1834,21 +1853,7 @@ async function transcribeWindow(s, run, absStart, absEnd) {
     // 0.1.54: the inference gets a stage timeout like every decode stage.
     // Sized off this window's audio, whether the worker is cold, and the
     // session's measured compute-only rtf, so a slow machine is never cut off.
-    return withStageTimeout(transcribeInWorker(effectiveModelId, float16k, {
-      return_timestamps: 'word',
-      chunk_length_s: 30,
-      // Repetition mitigation (0.1.13), best-effort: each window is already
-      // its own independent transcribe call with no prior window's text fed
-      // back in, so cross-window conditioning is already effectively off
-      // (transformers.js's ASR pipeline doesn't expose a direct
-      // condition_on_previous_text toggle to set this explicitly). A SINGLE
-      // window's own decode can still degenerate into a repetition loop on
-      // ambiguous/quiet audio (the "it's him" x40 case) - no_repeat_ngram_size
-      // is passed through in case the underlying generate() call honors it;
-      // NOT verified against this exact transformers.js version, so the
-      // guaranteed defense is collapseHallucinationLoops() below, not this.
-      no_repeat_ngram_size: 3
-    }), 'whisper inference [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ')', inferenceTimeoutMsFor(absEnd - absStart, isColdInference, s.lastKnownRtf));
+    return withStageTimeout(transcribeInWorker(effectiveModelId, float16k, WINDOW_TRANSCRIBE_OPTIONS), 'whisper inference [' + absStart.toFixed(2) + ',' + absEnd.toFixed(2) + ')', inferenceTimeoutMsFor(absEnd - absStart, isColdInference, s.lastKnownRtf));
     });
   } catch (e) {
     if (e && e.isCancelledWhileQueued) {
@@ -2652,8 +2657,69 @@ setInterval(() => {
   }
 }, 2000);
 
+// ---- setup speed check (0.1.65) ---------------------------------------------
+// One bundled 18 s clip of plain speech (assets/, made with macOS `say`)
+// through the real worker, serialized with real windows, timed by the
+// worker's own inference clock. The result goes back as a separate message so
+// a service worker that slept meanwhile is woken by it; background.js stores
+// it and decides.
+//
+// A video being analyzed wins: the check answers "busy" rather than queueing,
+// because 3+ s of worker time taken from a playing video is exactly when a
+// word slips through, and a measurement taken while the worker is shared would
+// be wrong anyway.
+let speedCheckRunning = false;
+function pipelineBusy() {
+  if (inFlightCompute) return true;
+  const now = Date.now();
+  for (const s of sessions.values()) {
+    if (s.processing || (!s.disabled && now - (s.lastSegWallTime || 0) < 30000)) return true;
+  }
+  return false;
+}
+async function runSpeedCheck() {
+  const C = globalThis.PMPace.C;
+  const t0 = Date.now();
+  let audioS = null;
+  const report = (r) => {
+    log('[PM-SPEEDCHECK] ' + JSON.stringify(r));
+    chrome.runtime.sendMessage(Object.assign({ type: 'pm-speed-check-result', audioS }, r)).catch(() => {});
+  };
+  try {
+    const pcm = new Int16Array(await (await fetch(chrome.runtime.getURL('assets/speedcheck-18s.pcm'))).arrayBuffer());
+    const f = new Float32Array(pcm.length);
+    for (let i = 0; i < pcm.length; i++) f[i] = pcm[i] / 32768;
+    audioS = f.length / 16000;
+    // ponytail: polls warmInfo; a model that fails to load reads as a timeout (too slow).
+    while (!warmInfo) {
+      if (Date.now() - t0 > C.SPEED_MODEL_READY_MS) { report({ timedOut: true, stage: 'model' }); return; }
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    const loadMs = warmInfo.modelLoadMs;
+    let r;
+    try {
+      r = await runSerialized(() => withStageTimeout(transcribeInWorker(DEFAULT_MODEL, f, WINDOW_TRANSCRIBE_OPTIONS), 'speed check', C.SPEED_WINDOW_TIMEOUT_MS));
+    } catch (e) {
+      if (e && e.isStageTimeout) { report({ timedOut: true, stage: 'window', loadMs }); return; }
+      throw e;
+    }
+    report({ windowMs: Math.round(r.transcribeMs), loadMs, waitMs: Date.now() - t0, inferenceIndex: r.inferenceIndex, text: String(r.text || '').slice(0, 80) });
+  } catch (e) {
+    report({ error: String(e && e.message ? e.message : e) });
+  } finally {
+    speedCheckRunning = false;
+  }
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg || !msg.type) return;
+
+  if (msg.type === 'pm-speed-check-run') {
+    if (!speedCheckRunning && pipelineBusy()) { sendResponse({ status: 'busy' }); return; }
+    if (!speedCheckRunning) { speedCheckRunning = true; runSpeedCheck(); }
+    sendResponse({ status: 'started' });
+    return;
+  }
 
   if (msg.type === 'pm-prepare-teardown') {
     // 0.1.59: the service worker is about to close this document (idle).
